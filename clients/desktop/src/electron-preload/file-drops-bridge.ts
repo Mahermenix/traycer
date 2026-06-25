@@ -1,5 +1,6 @@
 import { ipcRenderer, webUtils } from "electron";
 import { RunnerHostInvoke } from "../ipc-contracts/ipc-channels";
+import type { FileSaveInput } from "../ipc-contracts/platform-types";
 
 export interface FileDropWriteTemporaryInput {
   readonly name: string;
@@ -11,6 +12,7 @@ export interface FileDropsBridgeSurface {
   getPathForFile(file: File): string;
   writeTemporaryFile(input: FileDropWriteTemporaryInput): Promise<string>;
   copyTemporaryFiles(paths: readonly string[]): Promise<readonly string[]>;
+  saveFile(input: FileSaveInput): Promise<string | null>;
 }
 
 export function buildFileDropsBridge(): FileDropsBridgeSurface {
@@ -26,5 +28,9 @@ export function buildFileDropsBridge(): FileDropsBridgeSurface {
         RunnerHostInvoke.fileDropCopyTemporary,
         paths,
       ) as Promise<readonly string[]>,
+    saveFile: (input) =>
+      ipcRenderer.invoke(RunnerHostInvoke.fileSave, input) as Promise<
+        string | null
+      >,
   };
 }
