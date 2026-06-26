@@ -11,6 +11,7 @@ import { Editor } from "@tiptap/core";
 import { EditorContent, EditorContext } from "@tiptap/react";
 import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import { buildArtifactExtensions, deriveCollabUser } from "@/editor-core";
 import { saveBlobToDisk } from "@/lib/files/save-blob-to-disk";
 
@@ -35,6 +36,7 @@ vi.mock("@/editor-core/nodes/mermaid/mermaid-service", () => {
     svgToPngBlob: vi
       .fn()
       .mockResolvedValue(new Blob(["mock-png"], { type: "image/png" })),
+    getSvgIntrinsicSize: vi.fn().mockReturnValue({ width: 10, height: 10 }),
     subscribeMermaidTheme: vi.fn().mockReturnValue(() => undefined),
     getMermaidThemeVersion: vi.fn().mockReturnValue(0),
     deriveMermaidAriaLabel: (code: string): string => {
@@ -108,9 +110,11 @@ function renderMermaidEditor(editor: Editor) {
   const queryClient = makeQueryClient();
   render(
     <QueryClientProvider client={queryClient}>
-      <EditorContext.Provider value={{ editor }}>
-        <EditorContent editor={editor} />
-      </EditorContext.Provider>
+      <TooltipProvider>
+        <EditorContext.Provider value={{ editor }}>
+          <EditorContent editor={editor} />
+        </EditorContext.Provider>
+      </TooltipProvider>
     </QueryClientProvider>,
   );
   return queryClient;
@@ -138,7 +142,9 @@ describe("MermaidNodeView", () => {
       editable: true,
     });
     renderMermaidEditor(editor);
-    const region = await screen.findByRole("img", { name: /graph TD/ });
+    const region = await screen.findByRole("button", {
+      name: /open fullscreen preview/i,
+    });
     await waitFor(() => {
       expect(region.querySelector("svg")).not.toBeNull();
     });
@@ -157,6 +163,7 @@ describe("MermaidNodeView", () => {
     expect(
       await screen.findByRole("button", { name: /download png/i }),
     ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Fullscreen" })).toBeNull();
     expect(
       await screen.findByRole("button", { name: /edit source/i }),
     ).toBeTruthy();
@@ -195,6 +202,22 @@ describe("MermaidNodeView", () => {
     editor.destroy();
   });
 
+  it("opens the fullscreen dialog when the rendered diagram is clicked", async () => {
+    const editor = mountMermaidEditor({
+      code: "graph TD\n  A --> B",
+      editable: true,
+    });
+    renderMermaidEditor(editor);
+    const preview = await screen.findByRole("button", {
+      name: /open fullscreen preview/i,
+    });
+    fireEvent.click(preview);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeTruthy();
+    expect(dialog.textContent).toContain("graph TD");
+    editor.destroy();
+  });
+
   it("ignores overlapping download clicks while the save picker is open", async () => {
     const saveBlobToDiskMock = vi.mocked(saveBlobToDisk);
     let resolveSave = (_value: string | null): void => undefined;
@@ -211,7 +234,9 @@ describe("MermaidNodeView", () => {
     const download = await screen.findByRole("button", {
       name: /download png/i,
     });
-    const region = await screen.findByRole("img", { name: /graph TD/ });
+    const region = await screen.findByRole("button", {
+      name: /open fullscreen preview/i,
+    });
     await waitFor(() => {
       expect(region.querySelector("svg")).not.toBeNull();
       expect((download as HTMLButtonElement).disabled).toBe(false);

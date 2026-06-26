@@ -140,8 +140,12 @@ function MermaidRenderSession(props: {
     enabled: render.status === "ready",
   });
 
+  const handleOpenFullscreen = useCallback(() => {
+    if (render.status !== "ready") return;
+    onFullscreenOpenChange(true);
+  }, [onFullscreenOpenChange, render.status]);
+
   const downloadDisabled = render.status !== "ready" || isDownloading;
-  const fullscreenDisabled = render.status !== "ready";
   const renderedSvg = useMemo(
     () =>
       render.status === "ready"
@@ -158,15 +162,11 @@ function MermaidRenderSession(props: {
         onToggleEdit={noop}
         onCopyCode={handleCopy}
         onDownloadPng={downloadMermaidPng}
-        onOpenFullscreen={() => onFullscreenOpenChange(true)}
         downloadDisabled={downloadDisabled}
-        fullscreenDisabled={fullscreenDisabled}
       />
 
       <figure
         className="tc-node-mermaid__preview m-0"
-        role="img"
-        aria-label={ariaLabel}
       >
         {render.status === "pending" ? (
           <div className="tc-node-block__skeleton" aria-hidden="true">
@@ -178,7 +178,14 @@ function MermaidRenderSession(props: {
           </div>
         ) : null}
         {render.status === "ready" ? (
-          <div className="tc-node-mermaid__svg">{renderedSvg}</div>
+          <button
+            type="button"
+            className="tc-node-mermaid__svg-button"
+            onClick={handleOpenFullscreen}
+            aria-label={`Open fullscreen preview: ${ariaLabel}`}
+          >
+            <span className="tc-node-mermaid__svg">{renderedSvg}</span>
+          </button>
         ) : null}
         {render.status === "error" ? (
           <div className="tc-node-block__error" role="alert">

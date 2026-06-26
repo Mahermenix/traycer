@@ -261,6 +261,25 @@
   padding: 0.5rem;
 }
 
+.tc-node-mermaid__svg-button {
+  display: block;
+  width: 100%;
+  margin: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: zoom-in;
+}
+
+.tc-node-mermaid__svg-button:focus-visible {
+  outline: 2px solid var(--color-ring, hsl(240 5% 64%));
+  outline-offset: 2px;
+  border-radius: var(--radius-sm, 0.375rem);
+}
+
 .tc-node-mermaid__svg {
   display: flex;
   justify-content: center;

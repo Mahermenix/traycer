@@ -165,6 +165,11 @@ export function MermaidNodeView(props: NodeViewProps) {
     enabled: render.status === "ready",
   });
 
+  const handleOpenFullscreen = useCallback(() => {
+    if (render.status !== "ready") return;
+    setFullscreenOpen(true);
+  }, [render.status]);
+
   const handleToggleEdit = useCallback(() => {
     setEditing((prev) => {
       if (prev) {
@@ -208,15 +213,11 @@ export function MermaidNodeView(props: NodeViewProps) {
           onToggleEdit={handleToggleEdit}
           onCopyCode={handleCopy}
           onDownloadPng={downloadMermaidPng}
-          onOpenFullscreen={() => setFullscreenOpen(true)}
           downloadDisabled={render.status !== "ready" || isDownloading}
-          fullscreenDisabled={render.status !== "ready"}
         />
 
         <figure
           className="tc-node-mermaid__preview m-0"
-          role="img"
-          aria-label={ariaLabel}
         >
           {render.status === "pending" && (
             <div className="tc-node-block__skeleton" aria-hidden="true">
@@ -228,7 +229,14 @@ export function MermaidNodeView(props: NodeViewProps) {
             </div>
           )}
           {render.status === "ready" && (
-            <div className="tc-node-mermaid__svg">{renderedSvg}</div>
+            <button
+              type="button"
+              className="tc-node-mermaid__svg-button"
+              onClick={handleOpenFullscreen}
+              aria-label={`Open fullscreen preview: ${ariaLabel}`}
+            >
+              <span className="tc-node-mermaid__svg">{renderedSvg}</span>
+            </button>
           )}
           {render.status === "error" && (
             <div className="tc-node-block__error" role="alert">
