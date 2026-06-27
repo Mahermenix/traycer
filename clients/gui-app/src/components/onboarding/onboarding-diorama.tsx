@@ -350,6 +350,12 @@ const PROVIDERS: ReadonlyArray<{
     capabilities: ["gui"],
   },
   {
+    harnessId: "kiro",
+    label: "Kiro",
+    status: "Kiro login / API key",
+    capabilities: ["gui"],
+  },
+  {
     harnessId: "droid",
     label: "Droid",
     status: "Factory account",

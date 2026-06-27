@@ -675,6 +675,14 @@ export const grokUserMessageAnchorResolvedSchema = z.object({
   grokSessionId: z.string().nullable(),
 });
 
+export const kiroUserMessageAnchorResolvedSchema = z.object({
+  harnessId: z.literal("kiro"),
+  sessionId: z.string(),
+  // The ACP session id the `kiro-cli acp` process assigned for this turn.
+  // Null until `session/new` resolves; used to resume the same ACP session.
+  kiroSessionId: z.string().nullable(),
+});
+
 export const droidUserMessageAnchorResolvedSchema = z.object({
   harnessId: z.literal("droid"),
   sessionId: z.string(),
@@ -719,6 +727,7 @@ export const userMessageAnchorResolvedEventSchema = z.object({
     cursorUserMessageAnchorResolvedSchema,
     traycerUserMessageAnchorResolvedSchema,
     grokUserMessageAnchorResolvedSchema,
+    kiroUserMessageAnchorResolvedSchema,
     droidUserMessageAnchorResolvedSchema,
     kimiUserMessageAnchorResolvedSchema,
     copilotUserMessageAnchorResolvedSchema,

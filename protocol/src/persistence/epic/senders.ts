@@ -137,6 +137,17 @@ export const grokChatSessionAnchorSchema = z.object({
 });
 export type GrokChatSessionAnchor = z.infer<typeof grokChatSessionAnchorSchema>;
 
+// Kiro (ACP) resumes at session granularity only — `session/load` reloads the
+// whole ACP session, with no per-message truncation/fork point.
+export const kiroChatSessionAnchorSchema = z.object({
+  harnessId: z.literal("kiro"),
+  hostId: z.string(),
+  sessionId: z.string(),
+  sessionWorkspaceSnapshot: sessionWorkspaceSnapshotSchema,
+  createdAt: z.number(),
+});
+export type KiroChatSessionAnchor = z.infer<typeof kiroChatSessionAnchorSchema>;
+
 export const droidChatSessionAnchorSchema = z.object({
   harnessId: z.literal("droid"),
   hostId: z.string(),
@@ -192,6 +203,7 @@ export const chatSessionAnchorSchema = z.discriminatedUnion("harnessId", [
   cursorChatSessionAnchorSchema,
   traycerChatSessionAnchorSchema,
   grokChatSessionAnchorSchema,
+  kiroChatSessionAnchorSchema,
   droidChatSessionAnchorSchema,
   kimiChatSessionAnchorSchema,
   copilotChatSessionAnchorSchema,

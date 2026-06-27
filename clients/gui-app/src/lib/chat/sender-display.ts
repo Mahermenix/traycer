@@ -148,6 +148,8 @@ function agentProviderLabel(provider: GuiHarnessId): string {
       return "Cursor";
     case "grok":
       return "Grok";
+    case "kiro":
+      return "Kiro";
     case "droid":
       return "Droid";
     case "kimi":

@@ -1,5 +1,6 @@
 const POST_V1_GUI_HARNESS_IDS = new Set([
   "grok",
+  "kiro",
   "kimi",
   "droid",
   "copilot",
