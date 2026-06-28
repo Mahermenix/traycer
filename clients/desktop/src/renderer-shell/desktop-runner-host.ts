@@ -1,8 +1,9 @@
 import type {
-  AuthCallbackResult,
   AuthTokenRefreshResult,
   AuthTokenValidationResult,
   CliInstallManifestSnapshot,
+  DeviceFlowSession,
+  IDeviceFlowHost,
   HostAvailableSnapshot,
   HostAvailableVersionsInput,
   HostDoctorReport,
@@ -34,7 +35,6 @@ import type {
   LocalHostSnapshot,
   MigrationRunningSnapshot,
   ServiceStatusSnapshot,
-  StoredAuthTokens,
   TrayEpic,
   TrayIndicatorState,
   TraycerHostStatusSnapshot,
@@ -131,10 +131,6 @@ export interface DesktopPreloadBridge {
     token: string,
     refreshToken: string,
   ): Promise<AuthTokenRefreshResult>;
-  exchangeAuthCode(
-    code: string,
-    codeVerifier: string,
-  ): Promise<StoredAuthTokens | null>;
   openExternalLink(url: string): Promise<void>;
   getRegisteredUrlSchemes(
     schemes: readonly string[],
@@ -142,8 +138,11 @@ export interface DesktopPreloadBridge {
   requestMicrophoneAccess(): Promise<"granted" | "denied">;
   openMicrophoneSettings(): Promise<void>;
   beginAuthAttempt(): void;
-  onAuthCallback(handler: (result: AuthCallbackResult) => void): {
+  onAuthCallback(handler: () => void): {
     dispose: () => void;
+  };
+  deviceFlow: {
+    start(): Promise<DeviceFlowSession | null>;
   };
   notifications: {
     show(title: string, body: string, payload: unknown): Promise<void>;
@@ -498,6 +497,7 @@ export class DesktopRunnerHost implements IRunnerHost {
   readonly power: DesktopPowerBridge;
   readonly hostManagement: IHostManagement;
   readonly hostTray: IHostTray;
+  readonly deviceFlow: IDeviceFlowHost;
 
   private readonly bridge: DesktopPreloadBridge;
   private cachedLocalHost: LocalHostSnapshot | null = null;
@@ -650,6 +650,12 @@ export class DesktopRunnerHost implements IRunnerHost {
       onCommand: (handler) =>
         toDisposable(this.bridge.hostTray.onCommand(handler)),
     };
+    // The preload bridge already returns a `DeviceFlowSession`-shaped handle
+    // (authorize result + per-attempt `onResult` + `cancel`), so this forwards
+    // straight through - the CORS-safe authorize + poll loop lives in main.
+    this.deviceFlow = {
+      start: () => this.bridge.deviceFlow.start(),
+    };
   }
 
   requestMicrophoneAccess(): Promise<"granted" | "denied"> {
@@ -691,18 +697,11 @@ export class DesktopRunnerHost implements IRunnerHost {
     return this.bridge.refreshAuthToken(token, refreshToken);
   }
 
-  exchangeAuthCode(
-    code: string,
-    codeVerifier: string,
-  ): Promise<StoredAuthTokens | null> {
-    return this.bridge.exchangeAuthCode(code, codeVerifier);
-  }
-
   beginAuthAttempt(): void {
     this.bridge.beginAuthAttempt();
   }
 
-  onAuthCallback(handler: (result: AuthCallbackResult) => void): Disposable {
+  onAuthCallback(handler: () => void): Disposable {
     return toDisposable(this.bridge.onAuthCallback(handler));
   }
 

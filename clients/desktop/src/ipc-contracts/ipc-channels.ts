@@ -11,8 +11,18 @@
 export const RunnerHostInvoke = {
   validateAuthToken: "runnerHost:auth:validateToken",
   validateAuthTokenIdentity: "runnerHost:auth:validateTokenIdentity",
+  // Device Authorization Grant (RFC 8628) - the only interactive login. `start`
+  // runs `/device/authorize` + the `/device/token` poll loop in main (CORS-safe,
+  // resilient to renderer sleep) and returns the authorization; the terminal
+  // outcome is pushed on `deviceFlowResult`. The attempt is owned by the window
+  // that started it: when that `webContents` is destroyed the attempt is
+  // cancelled, so closing a window mid device-flow never leaks the poll loop.
+  // `pollNow` nudges the named attempt's loop to poll immediately (the
+  // browser-return deep link uses it). `cancel` aborts the named attempt's loop.
+  deviceFlowStart: "runnerHost:auth:deviceFlowStart",
+  deviceFlowPollNow: "runnerHost:auth:deviceFlowPollNow",
+  deviceFlowCancel: "runnerHost:auth:deviceFlowCancel",
   refreshAuthToken: "runnerHost:auth:refreshToken",
-  exchangeAuthCode: "runnerHost:auth:exchangeAuthCode",
   openExternalLink: "runnerHost:openExternalLink",
   getRegisteredUrlSchemes: "runnerHost:getRegisteredUrlSchemes",
   requestMicrophoneAccess: "runnerHost:requestMicrophoneAccess",
@@ -166,6 +176,9 @@ export const RunnerHostInvoke = {
 
 export const RunnerHostEvent = {
   authCallback: "runnerHost:event:authCallback",
+  // Terminal outcome of a device-flow attempt, keyed by `attemptId` so a
+  // superseded attempt's late result can't be mistaken for the live one.
+  deviceFlowResult: "runnerHost:event:deviceFlowResult",
   localHostChange: "runnerHost:event:localHostChange",
   // OS wake pulse (powerMonitor `resume` / `unlock-screen`) bridged to the
   // renderer so it force-reconnects its host streams - re-registering the
