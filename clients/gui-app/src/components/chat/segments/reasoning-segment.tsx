@@ -130,6 +130,7 @@ export function ReasoningSegment(props: ReasoningSegmentProps) {
     <div className="text-ui-sm text-muted-foreground">
       <button
         type="button"
+        data-find-include="true"
         onClick={toggle}
         aria-expanded={expanded}
         aria-controls={bodyShown ? bodyId : undefined}

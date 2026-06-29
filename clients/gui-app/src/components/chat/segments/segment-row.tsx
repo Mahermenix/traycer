@@ -68,6 +68,7 @@ function ExpandableSegmentRow(props: SegmentRowProps) {
       className={cn("group/work-row", className)}
     >
       <CollapsibleTrigger
+        data-find-include="true"
         className={cn(
           "flex w-full items-center gap-2 rounded-sm px-1 py-1 text-left text-ui-sm transition-colors",
           // The sticky header floats over scrolled content, so its hover tint

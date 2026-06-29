@@ -47,6 +47,7 @@ export function InterviewSegment(props: InterviewSegmentProps) {
       className="text-ui-sm text-muted-foreground"
     >
       <CollapsibleTrigger
+        data-find-include="true"
         className={cn(
           "group/interview flex max-w-full items-center gap-2 rounded-sm py-1 pr-1 text-left transition-colors",
           "hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",

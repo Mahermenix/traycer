@@ -1,4 +1,9 @@
 import { ChatEmptyState } from "@/components/chat/chat-empty-state";
+import {
+  buildChatFindRows,
+  type ChatFindAdapter,
+  createChatFindAdapter,
+} from "@/components/chat/chat-find";
 import { ChatMeasuredItemChangeContext } from "@/components/chat/chat-measured-item-change-context";
 import {
   ChatMessage,
@@ -26,6 +31,7 @@ import {
   type ChatUserMinimapItem,
 } from "@/components/chat/chat-user-message-minimap-items";
 import { ScrollToBottomChip } from "@/components/chat/scroll-to-bottom-chip";
+import { TileFindContext } from "@/components/epic-canvas/tile-find/tile-find-adapter-context";
 import type { NextStepActionHandler } from "@/components/chat/segments/next-steps-action-group";
 import { useAnimationFrameThrottle } from "@/hooks/use-animation-frame-throttle";
 import { cn } from "@/lib/utils";
@@ -44,6 +50,7 @@ import {
   type VirtuosoMessageListProps,
 } from "@virtuoso.dev/message-list";
 import {
+  use,
   useCallback,
   useLayoutEffect,
   useMemo,
@@ -213,6 +220,8 @@ export function ChatMessages(props: ChatMessagesProps) {
     () => buildMessageIdToIndex(messages),
     [messages],
   );
+  const messageIndexByIdRef = useRef(messageIndexById);
+  const chatFindRows = useMemo(() => buildChatFindRows(messages), [messages]);
 
   const [listDataState, setListDataState] = useState<ChatListDataState>(() =>
     createInitialChatListDataState(messages, restoredScrollState),
@@ -221,6 +230,10 @@ export function ChatMessages(props: ChatMessagesProps) {
   useLayoutEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useLayoutEffect(() => {
+    messageIndexByIdRef.current = messageIndexById;
+  }, [messageIndexById]);
 
   let effectiveBottomFollowing = bottomFollowing;
   let listData = listDataState.value;
@@ -566,6 +579,95 @@ export function ChatMessages(props: ChatMessagesProps) {
     ],
   );
 
+  const scrollToMessageForFind = useCallback(
+    (messageId: string): void => {
+      lastScrollGestureRef.current = null;
+      cancelScrollRestorationRetry();
+      setBottomFollowingIfChanged(false);
+      setScrolledActiveUserMessageIdIfChanged(
+        selectActiveUserMessageId(messagesRef.current, messageId, false),
+      );
+      const location = chatScrollLocationForMessage(
+        messageId,
+        messageIndexByIdRef.current,
+        "auto",
+      );
+      if (location === null) return;
+      virtuosoRef.current?.scrollToItem(location);
+    },
+    [
+      cancelScrollRestorationRetry,
+      setBottomFollowingIfChanged,
+      setScrolledActiveUserMessageIdIfChanged,
+    ],
+  );
+
+  const getMountedMessageRoot = useCallback(
+    (messageId: string): HTMLElement | null => {
+      const scroller = virtuosoRef.current?.scrollerElement() ?? null;
+      if (scroller === null) return null;
+      for (const row of scroller.querySelectorAll<HTMLElement>(
+        "[data-message-id]",
+      )) {
+        if (row.dataset.messageId === messageId) return row;
+      }
+      return null;
+    },
+    [],
+  );
+
+  const scrollToMessageForFindRef = useRef<(messageId: string) => void>(
+    () => undefined,
+  );
+  const getMountedMessageRootRef = useRef<
+    (messageId: string) => HTMLElement | null
+  >(() => null);
+
+  useLayoutEffect(() => {
+    scrollToMessageForFindRef.current = scrollToMessageForFind;
+  }, [scrollToMessageForFind]);
+
+  useLayoutEffect(() => {
+    getMountedMessageRootRef.current = getMountedMessageRoot;
+  }, [getMountedMessageRoot]);
+
+  const tileFindContext = use(TileFindContext);
+  const chatFindRowsRef = useRef(chatFindRows);
+  const chatFindAdapterRef = useRef<ChatFindAdapter | null>(null);
+
+  useLayoutEffect(() => {
+    chatFindRowsRef.current = chatFindRows;
+    chatFindAdapterRef.current?.updateRows(chatFindRows);
+  }, [chatFindRows]);
+
+  useLayoutEffect(() => {
+    if (tileFindContext === null) return undefined;
+
+    const adapter = createChatFindAdapter({
+      tileInstanceId: instanceId,
+      scrollToMessage: (messageId) =>
+        scrollToMessageForFindRef.current(messageId),
+      getMountedMessageRoot: (messageId) =>
+        getMountedMessageRootRef.current(messageId),
+    });
+    chatFindAdapterRef.current = adapter;
+    adapter.updateRows(chatFindRowsRef.current);
+    const unregisterAdapter = tileFindContext.registerAdapter(adapter);
+
+    return () => {
+      unregisterAdapter();
+      if (chatFindAdapterRef.current === adapter) {
+        chatFindAdapterRef.current = null;
+      }
+      adapter.dispose();
+    };
+  }, [instanceId, tileFindContext]);
+
+  const handleRenderedDataChangeWithFind = useCallback((): void => {
+    handleRenderedDataChange();
+    chatFindAdapterRef.current?.syncMountedHighlight();
+  }, [handleRenderedDataChange]);
+
   return (
     <ActivityGroupOpenStoreProvider>
       <ChatMeasuredItemChangeContext.Provider value={requestMeasuredItemChange}>
@@ -600,7 +702,7 @@ export function ChatMessages(props: ChatMessagesProps) {
               onTouchMoveCapture={handleTouchMoveCapture}
               onTouchEndCapture={handleTouchEndCapture}
               onTouchCancelCapture={handleTouchEndCapture}
-              onRenderedDataChange={handleRenderedDataChange}
+              onRenderedDataChange={handleRenderedDataChangeWithFind}
             />
           </VirtuosoMessageListLicense>
           <div

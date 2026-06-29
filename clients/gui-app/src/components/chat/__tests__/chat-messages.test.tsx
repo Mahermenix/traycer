@@ -1,6 +1,7 @@
 import "../../../../__tests__/test-browser-apis";
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -16,12 +17,17 @@ vi.mock("@/hooks/editor/use-editor-open-mutation", () => ({
   useEditorOpen: () => ({ mutate: () => undefined }),
 }));
 import { ChatMessages } from "@/components/chat/chat-messages";
+import {
+  TileFindContext,
+  type TileFindContextValue,
+} from "@/components/epic-canvas/tile-find/tile-find-adapter-context";
 import { ChatUserMessageMinimap } from "@/components/chat/chat-user-message-minimap";
 import {
   chatMinimapClipRegionProps,
   type ChatUserMinimapItem,
 } from "@/components/chat/chat-user-message-minimap-items";
 import type { ChatMessage as ChatMessageModel } from "@/stores/composer/chat-store";
+import { useTileFindStore, type TileFindAdapter } from "@/stores/tile-find";
 
 import {
   makeAssistantMessage,
@@ -34,7 +40,17 @@ const VIRTUOSO_TEST_CONTEXT = {
   itemHeight: 100,
   viewportHeight: 500,
 };
+const TILE_FIND_TEST_INSTANCE_ID = "test-instance";
 let scrollStateKeySequence = 0;
+let restoreHighlights: (() => void) | null = null;
+
+class TestHighlight {
+  readonly ranges: ReadonlyArray<Range>;
+
+  constructor(...ranges: ReadonlyArray<Range>) {
+    this.ranges = ranges;
+  }
+}
 
 function minimapItemsFor(
   messages: ReadonlyArray<ChatMessageModel>,
@@ -65,7 +81,7 @@ function chatMessagesJsx(
         scrollStateKey={opts.scrollStateKey}
         getMessageActions={() => null}
         nextStepActions={null}
-        instanceId="test-instance"
+        instanceId={TILE_FIND_TEST_INSTANCE_ID}
         visible={opts.visible}
       />
     </VirtuosoMessageListTestingContext.Provider>
@@ -81,6 +97,39 @@ function renderChatMessages(
   },
 ) {
   return render(chatMessagesJsx(messages, opts));
+}
+
+function renderChatMessagesWithTileFind(
+  messages: ReadonlyArray<ChatMessageModel>,
+  opts: {
+    minimapItems: ReadonlyArray<ChatUserMinimapItem>;
+    scrollStateKey: string;
+    visible: boolean;
+  },
+) {
+  const registerAdapter: TileFindContextValue["registerAdapter"] = (
+    adapter: TileFindAdapter,
+  ) =>
+    useTileFindStore.getState().registerTarget({
+      tileInstanceId: TILE_FIND_TEST_INSTANCE_ID,
+      contentId: "chat-1",
+      viewTabId: "view-tab-1",
+      tileId: "tile-1",
+      epicId: "epic-1",
+      tileKind: "chat",
+      isEligible: true,
+      adapter,
+    });
+  return render(
+    <TileFindContext.Provider
+      value={{
+        tileInstanceId: TILE_FIND_TEST_INSTANCE_ID,
+        registerAdapter,
+      }}
+    >
+      {chatMessagesJsx(messages, opts)}
+    </TileFindContext.Provider>,
+  );
 }
 
 function makeDefaultOpts(
@@ -113,6 +162,9 @@ function rerenderChatMessages(
 
 describe("ChatMessages Virtuoso renderer", () => {
   afterEach(() => {
+    useTileFindStore.getState().resetForTests();
+    restoreHighlights?.();
+    restoreHighlights = null;
     vi.restoreAllMocks();
     cleanup();
   });
@@ -188,6 +240,101 @@ describe("ChatMessages Virtuoso renderer", () => {
       expect(ids).toContain("message-99");
       expect(ids).not.toContain("message-0");
     });
+  });
+
+  it("searches a virtualized row and paints after the target mounts", async () => {
+    const registry = installMockHighlights();
+    const messages = makeMessages(100);
+    const { container } = renderChatMessagesWithTileFind(
+      messages,
+      makeDefaultOpts({ minimapItems: minimapItemsFor(messages) }),
+    );
+
+    await waitFor(() => {
+      expect(rowIds(container)).toContain("message-99");
+      expect(rowIds(container)).not.toContain("message-0");
+    });
+    await waitFor(() => {
+      expect(
+        useTileFindStore.getState().targetsByTileInstanceId[
+          TILE_FIND_TEST_INSTANCE_ID
+        ]?.adapter.tileKind,
+      ).toBe("chat");
+    });
+
+    act(() => {
+      const store = useTileFindStore.getState();
+      store.setQuery(TILE_FIND_TEST_INSTANCE_ID, "User message 0");
+      store.search(TILE_FIND_TEST_INSTANCE_ID);
+    });
+
+    expect(
+      useTileFindStore.getState().uiByTileInstanceId[TILE_FIND_TEST_INSTANCE_ID]
+        ?.lastSnapshot,
+    ).toMatchObject({
+      total: 1,
+      activeUnitId: "message-0",
+      exactHighlight: "pending",
+    });
+
+    await waitFor(() => {
+      expect(rowIds(container)).toContain("message-0");
+    });
+    await waitFor(() => {
+      expect(
+        useTileFindStore.getState().uiByTileInstanceId[
+          TILE_FIND_TEST_INSTANCE_ID
+        ]?.lastSnapshot.exactHighlight,
+      ).toBe("painted");
+    });
+
+    const activeEntry = Array.from(registry.values.entries()).find(([name]) =>
+      name.includes("active"),
+    );
+    const activeRange = activeEntry?.[1].ranges[0];
+    const activeRow =
+      activeRange?.startContainer.parentElement?.closest(MESSAGE_ROW_SELECTOR);
+    expect(activeRow?.getAttribute("data-message-id")).toBe("message-0");
+  });
+
+  it("paints activity-group header matches inside content-bearing trigger buttons", async () => {
+    const registry = installMockHighlights();
+    const messages = [makeAssistantMessage("assistant-1", "activity-1")];
+    renderChatMessagesWithTileFind(
+      messages,
+      makeDefaultOpts({ minimapItems: [] }),
+    );
+
+    await waitFor(() => {
+      expect(
+        useTileFindStore.getState().targetsByTileInstanceId[
+          TILE_FIND_TEST_INSTANCE_ID
+        ]?.adapter.tileKind,
+      ).toBe("chat");
+    });
+
+    act(() => {
+      const store = useTileFindStore.getState();
+      store.setQuery(TILE_FIND_TEST_INSTANCE_ID, "Ran 1 command");
+      store.search(TILE_FIND_TEST_INSTANCE_ID);
+    });
+
+    await waitFor(() => {
+      expect(
+        useTileFindStore.getState().uiByTileInstanceId[
+          TILE_FIND_TEST_INSTANCE_ID
+        ]?.lastSnapshot.exactHighlight,
+      ).toBe("painted");
+    });
+
+    const activeEntry = Array.from(registry.values.entries()).find(([name]) =>
+      name.includes("active"),
+    );
+    const activeButton =
+      activeEntry?.[1].ranges[0]?.startContainer.parentElement?.closest(
+        "button",
+      );
+    expect(activeButton?.getAttribute("data-find-include")).toBe("true");
   });
 
   it("samples the minimap rail for long chats", async () => {
@@ -535,4 +682,55 @@ function testDomRect(input: {
     left: input.left,
     toJSON: () => ({}),
   };
+}
+
+function installMockHighlights(): {
+  readonly values: ReadonlyMap<string, TestHighlight>;
+} {
+  const globalWithHighlights: {
+    readonly CSS?: typeof CSS;
+    readonly Highlight?: typeof Highlight;
+  } = globalThis;
+  const previousCss = globalWithHighlights.CSS;
+  const previousHighlight = globalWithHighlights.Highlight;
+  const values = new Map<string, TestHighlight>();
+  Object.defineProperty(globalThis, "Highlight", {
+    configurable: true,
+    writable: true,
+    value: TestHighlight,
+  });
+  Object.defineProperty(globalThis, "CSS", {
+    configurable: true,
+    writable: true,
+    value: {
+      highlights: {
+        set: (name: string, highlight: TestHighlight) => {
+          values.set(name, highlight);
+        },
+        delete: (name: string) => {
+          values.delete(name);
+        },
+      },
+    },
+  });
+  restoreHighlights = () => {
+    if (previousCss === undefined) Reflect.deleteProperty(globalThis, "CSS");
+    else {
+      Object.defineProperty(globalThis, "CSS", {
+        configurable: true,
+        writable: true,
+        value: previousCss,
+      });
+    }
+    if (previousHighlight === undefined) {
+      Reflect.deleteProperty(globalThis, "Highlight");
+      return;
+    }
+    Object.defineProperty(globalThis, "Highlight", {
+      configurable: true,
+      writable: true,
+      value: previousHighlight,
+    });
+  };
+  return { values };
 }

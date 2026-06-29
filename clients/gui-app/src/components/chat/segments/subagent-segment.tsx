@@ -307,6 +307,7 @@ function PromotedSubagentTrigger(props: PromotedSubagentTriggerProps) {
   return (
     <CollapsibleTrigger
       aria-label="Subagent"
+      data-find-include="true"
       className={cn(
         "group/subagent flex w-full gap-2 px-3 py-2 text-left transition-colors",
         showHeaderSummary ? "items-start" : "items-center",
