@@ -1787,7 +1787,7 @@ describe("createChatSessionStore", () => {
         planId: null,
         actions: [],
         requestedAt: 2,
-        suggestedRule: null,
+        suggestedRules: [],
         commandPreview: null,
       },
     });

@@ -1955,7 +1955,7 @@ describe("useRenderedMessages", () => {
               kind: "tool",
               planId: null,
               actions: [],
-              suggestedRule: null,
+              suggestedRules: [],
               commandPreview: null,
             },
           ],

@@ -255,7 +255,6 @@ function normalizeApprovalDecision(
   return {
     approved: decision.approved,
     reason: decision.reason ?? null,
-    autoApproved: decision.autoApproved ?? false,
   };
 }
 
@@ -1212,7 +1211,9 @@ export function accumulateEvent(
               ? event.beforeHash
               : existing.beforeHash,
           afterHash:
-            event.afterHash !== undefined ? event.afterHash : existing.afterHash,
+            event.afterHash !== undefined
+              ? event.afterHash
+              : existing.afterHash,
         });
       }
       return [

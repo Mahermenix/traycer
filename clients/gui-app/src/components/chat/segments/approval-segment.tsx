@@ -1,4 +1,4 @@
-import { Check, ShieldCheck, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { useState } from "react";
 import type { ApprovalDecision } from "@traycer/protocol/persistence/epic/schemas";
 import type { ToolInputDetail } from "@traycer/protocol/host/agent/gui/tool-input-detail";
@@ -73,16 +73,9 @@ function ResolvedApprovalHeader(props: {
   decision: ApprovalDecision;
 }) {
   const { label, decision } = props;
-  const verdictLabel = decision.autoApproved
-    ? "Auto-approved"
-    : decision.approved
-      ? "Approved"
-      : "Denied";
-  const VerdictIcon = decision.autoApproved
-    ? ShieldCheck
-    : decision.approved
-      ? Check
-      : X;
+  // Auto-approved is still an approval — a plain check reads cleaner than a
+  // shield. Only the denied case diverges to an ✕.
+  const VerdictIcon = decision.approved ? Check : X;
   return (
     <>
       <VerdictIcon
@@ -98,7 +91,7 @@ function ResolvedApprovalHeader(props: {
           decision.approved ? "text-foreground/85" : "text-destructive",
         )}
       >
-        {verdictLabel}
+        {decision.approved ? "Approved" : "Denied"}
       </span>
       <span aria-hidden className="shrink-0 text-muted-foreground/40">
         ·

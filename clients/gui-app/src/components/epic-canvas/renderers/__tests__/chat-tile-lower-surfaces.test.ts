@@ -51,7 +51,7 @@ function approval(
     kind,
     planId: kind === "plan" ? "plan-1" : null,
     actions: [],
-    suggestedRule: null,
+    suggestedRules: [],
     commandPreview: null,
   };
 }

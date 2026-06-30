@@ -62,10 +62,14 @@ function partitionRules(
   openPaths: ReadonlySet<string>,
 ): {
   readonly global: readonly CommandAllowRule[];
-  readonly workspaces: ReadonlyArray<{
+  readonly activeWorkspaces: ReadonlyArray<{
     readonly path: string;
     readonly label: string;
-    readonly open: boolean;
+    readonly rules: readonly CommandAllowRule[];
+  }>;
+  readonly otherWorkspaces: ReadonlyArray<{
+    readonly path: string;
+    readonly label: string;
     readonly rules: readonly CommandAllowRule[];
   }>;
 } {
@@ -77,20 +81,37 @@ function partitionRules(
       ),
     ),
   ];
-  const workspaces = workspacePaths.map((path) => ({
-    path,
-    label: folderName(path),
-    open: openPaths.has(path),
-    rules: rules.filter(
-      (rule) => rule.scope.kind === "workspace" && rule.scope.path === path,
-    ),
-  }));
+
+  const activeWorkspaces: Array<{
+    path: string;
+    label: string;
+    rules: readonly CommandAllowRule[];
+  }> = [];
+  const otherWorkspaces: Array<{
+    path: string;
+    label: string;
+    rules: readonly CommandAllowRule[];
+  }> = [];
+
+  for (const path of workspacePaths) {
+    const ws = {
+      path,
+      label: folderName(path),
+      rules: rules.filter(
+        (rule) => rule.scope.kind === "workspace" && rule.scope.path === path,
+      ),
+    };
+    if (openPaths.has(path)) {
+      activeWorkspaces.push(ws);
+    } else {
+      otherWorkspaces.push(ws);
+    }
+  }
+
   return {
     global,
-    // Stable sort: open workspaces first, original order preserved within each.
-    workspaces: [...workspaces].sort(
-      (a, b) => Number(b.open) - Number(a.open),
-    ),
+    activeWorkspaces,
+    otherWorkspaces,
   };
 }
 
@@ -219,48 +240,104 @@ function CommandAllowlistBody(props: {
     );
   }
 
-  const { global, workspaces } = partitionRules(props.rules, props.openPaths);
+  const { global, activeWorkspaces, otherWorkspaces } = partitionRules(
+    props.rules,
+    props.openPaths,
+  );
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-6">
       {global.length > 0 ? (
-        <ScopeCard
-          icon={<Globe className="size-4 shrink-0 text-primary" aria-hidden />}
-          title="Global"
-          subtitle="Applies to every workspace on this host"
-          subtitleMono={false}
-          open={false}
-          scope={{ kind: "global" }}
-          count={global.length}
-          rules={global}
-          onRemove={props.onRemove}
-          removingKey={props.removingKey}
-          onClear={props.onClearScope}
-          clearing={props.clearingScopeKey === "global"}
-          busy={props.busy}
-        />
-      ) : null}
-      {workspaces.length > 0 ? (
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-2">
-            <h3 className="m-0 text-ui-xs font-medium tracking-wide text-muted-foreground uppercase">
-              Workspaces
+            <h3 className="m-0 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+              Global
             </h3>
-            <Badge variant="secondary">{workspaces.length}</Badge>
+          </div>
+          <ScopeCard
+            icon={
+              <Globe className="size-3.5 text-muted-foreground" aria-hidden />
+            }
+            title="All Workspaces"
+            subtitle="Applies to every workspace on this host"
+            subtitleMono={false}
+            scope={{ kind: "global" }}
+            count={global.length}
+            rules={global}
+            onRemove={props.onRemove}
+            removingKey={props.removingKey}
+            onClear={props.onClearScope}
+            clearing={props.clearingScopeKey === "global"}
+            busy={props.busy}
+          />
+        </div>
+      ) : null}
+      {activeWorkspaces.length > 0 ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <h3 className="m-0 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+              Active Workspaces
+            </h3>
+            <Badge
+              variant="secondary"
+              className="px-1.5 py-0 h-4 min-w-4 justify-center text-[10px] bg-muted/80"
+            >
+              {activeWorkspaces.length}
+            </Badge>
           </div>
           <div className="flex flex-col gap-3">
-            {workspaces.map((workspace) => (
+            {activeWorkspaces.map((workspace) => (
               <ScopeCard
                 key={workspace.path}
                 icon={
                   <Folder
-                    className="size-4 shrink-0 text-muted-foreground"
+                    className="size-3.5 text-muted-foreground"
                     aria-hidden
                   />
                 }
                 title={workspace.label}
                 subtitle={workspace.path}
                 subtitleMono
-                open={workspace.open}
+                scope={{ kind: "workspace", path: workspace.path }}
+                count={workspace.rules.length}
+                rules={workspace.rules}
+                onRemove={props.onRemove}
+                removingKey={props.removingKey}
+                onClear={props.onClearScope}
+                clearing={
+                  props.clearingScopeKey === `workspace:${workspace.path}`
+                }
+                busy={props.busy}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {otherWorkspaces.length > 0 ? (
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-2">
+            <h3 className="m-0 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
+              Other Workspaces
+            </h3>
+            <Badge
+              variant="secondary"
+              className="px-1.5 py-0 h-4 min-w-4 justify-center text-[10px] bg-muted/80"
+            >
+              {otherWorkspaces.length}
+            </Badge>
+          </div>
+          <div className="flex flex-col gap-3">
+            {otherWorkspaces.map((workspace) => (
+              <ScopeCard
+                key={workspace.path}
+                icon={
+                  <Folder
+                    className="size-3.5 text-muted-foreground"
+                    aria-hidden
+                  />
+                }
+                title={workspace.label}
+                subtitle={workspace.path}
+                subtitleMono
                 scope={{ kind: "workspace", path: workspace.path }}
                 count={workspace.rules.length}
                 rules={workspace.rules}
@@ -285,7 +362,6 @@ function ScopeCard(props: {
   readonly title: string;
   readonly subtitle: string;
   readonly subtitleMono: boolean;
-  readonly open: boolean;
   readonly scope: CommandAllowScope;
   readonly count: number;
   readonly rules: readonly CommandAllowRule[];
@@ -296,26 +372,28 @@ function ScopeCard(props: {
   readonly busy: boolean;
 }) {
   return (
-    <div className="group/card flex flex-col overflow-hidden rounded-lg border border-border/60 bg-card/30">
-      <div className="flex min-w-0 items-center gap-2 px-3 py-2">
-        {props.icon}
-        <div className="flex min-w-0 flex-1 flex-col">
+    <div className="group/card flex flex-col overflow-hidden rounded-md border border-border/50 bg-card shadow-sm">
+      <div className="flex min-w-0 items-center gap-3 border-b border-border/40 bg-muted/20 px-3 py-2.5">
+        <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-muted/50 border border-border/50">
+          {props.icon}
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col justify-center">
           <div className="flex items-center gap-2">
-            <span className="truncate font-medium text-ui-sm text-foreground">
+            <span className="truncate font-medium text-ui-sm text-foreground/90">
               {props.title}
             </span>
-            <Badge variant="secondary">{props.count}</Badge>
-            {props.open ? (
-              <Badge variant="outline" className="border-primary/40 text-primary">
-                Open
-              </Badge>
-            ) : null}
+            <Badge
+              variant="secondary"
+              className="px-1.5 py-0 h-4 leading-none text-[10px] min-w-4 justify-center bg-muted border-border/50 text-muted-foreground"
+            >
+              {props.count}
+            </Badge>
           </div>
           <span
             className={
               props.subtitleMono
-                ? "truncate font-mono text-ui-xs text-muted-foreground"
-                : "truncate text-ui-xs text-muted-foreground"
+                ? "truncate font-mono text-[11px] text-muted-foreground/80 mt-0.5"
+                : "truncate text-[11px] text-muted-foreground/80 mt-0.5"
             }
           >
             {props.subtitle}
@@ -348,7 +426,7 @@ function ScopeCard(props: {
           </Button>
         </TooltipWrapper>
       </div>
-      <ul className="m-0 flex list-none flex-col divide-y divide-border/30 border-t border-border/40 p-0">
+      <ul className="m-0 flex list-none flex-col divide-y divide-border/30 bg-muted/5 p-0">
         {props.rules.map((rule) => (
           <RuleRow
             key={ruleKey(rule)}
@@ -370,11 +448,11 @@ function RuleRow(props: {
   readonly busy: boolean;
 }) {
   return (
-    <li className="group flex items-center justify-between gap-3 px-3 py-1.5">
-      <code className="min-w-0 truncate font-mono text-code-sm text-foreground/85">
+    <li className="group flex items-center justify-between gap-3 px-3 py-2 transition-colors hover:bg-muted/30">
+      <code className="min-w-0 truncate rounded-md bg-muted/40 border border-border/40 px-2 py-1 font-mono text-code-sm text-foreground/80 shadow-sm">
         {props.rule.tokens.join(" ")}
         {props.rule.match === "prefix" ? (
-          <span className="text-primary"> *</span>
+          <span className="text-primary font-bold"> *</span>
         ) : null}
       </code>
       <TooltipWrapper

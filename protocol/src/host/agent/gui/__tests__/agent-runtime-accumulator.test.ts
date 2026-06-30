@@ -609,7 +609,6 @@ describe("accumulateEvent", () => {
     expect((blocks[0] as ApprovalBlock).decision).toEqual({
       approved: true,
       reason: "Looks good",
-      autoApproved: false,
     });
   });
 
@@ -630,7 +629,6 @@ describe("accumulateEvent", () => {
     expect((blocks[0] as ApprovalBlock).decision).toEqual({
       approved: false,
       reason: "Denied",
-      autoApproved: false,
     });
   });
 
@@ -664,7 +662,6 @@ describe("accumulateEvent", () => {
     expect(block.decision).toEqual({
       approved: false,
       reason: "Auto-denied by permission rules",
-      autoApproved: false,
     });
   });
 

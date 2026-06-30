@@ -154,10 +154,6 @@ export const runtimeApprovalDecisionSchema = z.object({
   // derives the rule tokens from the trusted request and resolves `"workspace"`
   // to the active primary-workspace path, so the client can't forge either.
   remember: z.object({ scope: z.enum(["global", "workspace"]) }).optional(),
-  // Stamped by the host on an auto-resolved approval (command allowlist /
-  // Traycer-artifact rule) so the resolved row can render "Auto-approved". The
-  // GUI never sets this; additive + optional for older peers.
-  autoApproved: z.boolean().optional(),
 });
 export type RuntimeApprovalDecision = z.infer<
   typeof runtimeApprovalDecisionSchema
