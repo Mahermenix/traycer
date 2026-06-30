@@ -437,6 +437,14 @@ function replayRegisteredAdapterSearch(
   const ui = state.uiByTileInstanceId[tileInstanceId];
   if (target === undefined || target.adapter !== adapter) return;
   if (ui === undefined) return;
+  // Replay exists to restore an OPEN search when a tile's adapter is swapped
+  // (e.g. a diff tile going loading -> loaded). A closed bar has nothing to
+  // restore: close() keeps query/currentRequestId so reopening remembers the
+  // last query, but does not reset them - so without this guard a fresh adapter
+  // (requestId 0) registering after close (e.g. on an isActive flip) would
+  // replay the stale query and re-run search, re-painting chat highlights with
+  // no visible find bar.
+  if (!ui.isOpen) return;
   if (ui.currentRequestId <= adapterSnapshot.requestId) return;
 
   runAdapterCommand(

@@ -265,6 +265,8 @@ describe("useTileFindStore", () => {
     });
     register(loadingAdapter, true);
 
+    // The bar is open while the adapter swaps (the real loading -> loaded case).
+    useTileFindStore.getState().openForTile("tile-a");
     useTileFindStore.getState().setMatchCase("tile-a", true);
     useTileFindStore.getState().setQuery("tile-a", "Needle");
     useTileFindStore.getState().search("tile-a");
@@ -280,6 +282,51 @@ describe("useTileFindStore", () => {
       useTileFindStore.getState().uiByTileInstanceId["tile-a"]
         ?.currentRequestId,
     ).toBe(1);
+  });
+
+  it("does not replay the search onto a fresh adapter after the bar is closed", () => {
+    const firstAdapter = createTestAdapter({
+      tileInstanceId: "tile-a",
+      tileKind: "spec",
+      capabilities: FIND_CAPABILITY,
+    });
+    const unregisterFirst = register(firstAdapter, true);
+
+    // User opens find, searches (and cycles - all immediate).
+    useTileFindStore.getState().openForTile("tile-a");
+    useTileFindStore.getState().setQuery("tile-a", "needle");
+    useTileFindStore.getState().search("tile-a");
+    expect(firstAdapter.searchInputs).toEqual([
+      { requestId: 1, query: "needle", matchCase: false },
+    ]);
+
+    // User closes the search bar.
+    useTileFindStore.getState().close("tile-a");
+    const uiAfterClose =
+      useTileFindStore.getState().uiByTileInstanceId["tile-a"];
+    // close() keeps query + currentRequestId (so reopening remembers the query)
+    // but flips isOpen false - the only thing that must stop the replay below.
+    expect(uiAfterClose?.isOpen).toBe(false);
+    expect(uiAfterClose?.query).toBe("needle");
+    expect(uiAfterClose?.currentRequestId).toBe(1);
+
+    // The tile's adapter is re-created while the bar is closed (real trigger: an
+    // isActive flip changes tileFindContext identity -> chat re-runs its adapter
+    // effect). A fresh adapter starts at requestId 0.
+    unregisterFirst();
+    const freshAdapter = createTestAdapter({
+      tileInstanceId: "tile-a",
+      tileKind: "spec",
+      capabilities: FIND_CAPABILITY,
+    });
+    register(freshAdapter, true);
+
+    // No replay onto the closed-bar adapter: the search is NOT re-run, so the
+    // real chat adapter never re-paints highlights with the bar shut.
+    expect(freshAdapter.searchInputs).toEqual([]);
+    expect(
+      useTileFindStore.getState().uiByTileInstanceId["tile-a"]?.isOpen,
+    ).toBe(false);
   });
 
   it("ignores stale async command failures from earlier requests", async () => {
@@ -522,6 +569,8 @@ describe("useTileFindStore", () => {
       capabilities: FIND_CAPABILITY,
     });
     const unregisterFirst = register(firstAdapter, true);
+    // Find is open during the keep-alive remount, so the session search replays.
+    useTileFindStore.getState().openForTile("tile-a");
     useTileFindStore.getState().setMatchCase("tile-a", true);
     useTileFindStore.getState().setQuery("tile-a", "needle");
     useTileFindStore.getState().search("tile-a");
