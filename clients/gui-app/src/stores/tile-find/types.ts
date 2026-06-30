@@ -3,12 +3,7 @@ import type { TileKindId } from "@/stores/epics/canvas/tile-kinds";
 export type TileFindCapability = "find" | "replace" | "replaceAll";
 
 export type TileFindStatus =
-  | "idle"
-  | "searching"
-  | "ready"
-  | "partial"
-  | "unavailable"
-  | "error";
+  "idle" | "searching" | "ready" | "partial" | "unavailable" | "error";
 
 export type TileFindExactHighlight = "none" | "pending" | "painted";
 

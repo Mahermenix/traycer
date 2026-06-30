@@ -837,12 +837,10 @@ function GitBundleDiffTileBody(props: GitBundleDiffTileBodyProps): ReactNode {
   );
   const bundleFindNavigationFiles = useMemo(
     () =>
-      bundleFindFiles.map(
-        (file): BundleDiffFindFileNavigationInput => ({
-          id: file.id,
-          filePath: file.filePath,
-        }),
-      ),
+      bundleFindFiles.map((file): BundleDiffFindFileNavigationInput => ({
+        id: file.id,
+        filePath: file.filePath,
+      })),
     [bundleFindFiles],
   );
   const collapsedBundleFindFileIds = useMemo(

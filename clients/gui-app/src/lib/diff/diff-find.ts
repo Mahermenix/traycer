@@ -70,21 +70,19 @@ export function buildDiffFindIndexFromPatch(args: {
 export function buildDiffFindMetadataUnits(
   units: ReadonlyArray<DiffFindMetadataUnitInput>,
 ): ReadonlyArray<DiffFindUnit> {
-  return units.map(
-    (unit): DiffFindUnit => ({
-      id: `metadata:${unit.id}`,
-      kind: "file",
-      side: "none",
-      filePath: unit.filePath,
-      scopeId: unit.scopeId,
-      text: unit.text,
-      hunkIndex: null,
-      unifiedLineIndex: null,
-      splitLineIndex: null,
-      oldLineNumber: null,
-      newLineNumber: null,
-    }),
-  );
+  return units.map((unit): DiffFindUnit => ({
+    id: `metadata:${unit.id}`,
+    kind: "file",
+    side: "none",
+    filePath: unit.filePath,
+    scopeId: unit.scopeId,
+    text: unit.text,
+    hunkIndex: null,
+    unifiedLineIndex: null,
+    splitLineIndex: null,
+    oldLineNumber: null,
+    newLineNumber: null,
+  }));
 }
 
 export function findDiffMatches(args: {

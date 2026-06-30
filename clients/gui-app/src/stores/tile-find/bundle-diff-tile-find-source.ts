@@ -10,12 +10,7 @@ import {
 } from "@/stores/tile-find/diff-tile-find-adapter";
 
 export type BundleDiffFindCoverageState =
-  | "unloaded"
-  | "collapsed"
-  | "large"
-  | "binary"
-  | "truncated"
-  | "failed";
+  "unloaded" | "collapsed" | "large" | "binary" | "truncated" | "failed";
 
 export interface BundleDiffFindFileInput {
   readonly id: string;

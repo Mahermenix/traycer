@@ -87,13 +87,11 @@ export function useRegisterBundleDiffTileFindAdapter(args: {
 
   const files = useMemo(
     () =>
-      args.files.map(
-        (file): BundleDiffFindFileInput => ({
-          ...file,
-          coverageState:
-            activeSession.coverageByFileId.get(file.id) ?? file.coverageState,
-        }),
-      ),
+      args.files.map((file): BundleDiffFindFileInput => ({
+        ...file,
+        coverageState:
+          activeSession.coverageByFileId.get(file.id) ?? file.coverageState,
+      })),
     [activeSession.coverageByFileId, args.files],
   );
   const source = useMemo(() => {
