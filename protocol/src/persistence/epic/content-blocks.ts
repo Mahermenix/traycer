@@ -258,6 +258,11 @@ export type SubAgentBlock = z.infer<typeof subAgentBlockSchema>;
 export const approvalDecisionSchema = z.object({
   approved: z.boolean(),
   reason: z.string().nullable(),
+  // True when the host resolved this approval automatically (command allowlist
+  // or Traycer-artifact rule) instead of a human clicking Approve — lets the
+  // resolved row render "Auto-approved" rather than "Approved". Additive +
+  // defaulted so approval blocks persisted before this field parse cleanly.
+  autoApproved: z.boolean().default(false),
 });
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
 

@@ -1,4 +1,4 @@
-import { Check, X } from "lucide-react";
+import { Check, ShieldCheck, X } from "lucide-react";
 import { useState } from "react";
 import type { ApprovalDecision } from "@traycer/protocol/persistence/epic/schemas";
 import type { ToolInputDetail } from "@traycer/protocol/host/agent/gui/tool-input-detail";
@@ -73,8 +73,16 @@ function ResolvedApprovalHeader(props: {
   decision: ApprovalDecision;
 }) {
   const { label, decision } = props;
-  const verdictLabel = decision.approved ? "Approved" : "Denied";
-  const VerdictIcon = decision.approved ? Check : X;
+  const verdictLabel = decision.autoApproved
+    ? "Auto-approved"
+    : decision.approved
+      ? "Approved"
+      : "Denied";
+  const VerdictIcon = decision.autoApproved
+    ? ShieldCheck
+    : decision.approved
+      ? Check
+      : X;
   return (
     <>
       <VerdictIcon

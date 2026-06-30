@@ -18,6 +18,7 @@ import type {
 } from "@traycer/protocol/persistence/epic/schemas";
 import type { TokenUsage } from "@traycer/protocol/persistence/epic/foundation";
 import type { ChatRunSettings } from "@traycer/protocol/host/agent/gui/subscribe";
+import type { RuntimeApprovalDecision } from "@traycer/protocol/host/agent/gui/agent-runtime";
 import type { WorktreeBinding } from "@traycer/protocol/host/worktree-schemas";
 import { ChatMessages } from "@/components/chat/chat-messages";
 import { ChatMarkdownLinkProvider } from "@/components/chat/chat-markdown-link-provider";
@@ -997,8 +998,8 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
   // share one canonical surface. Inline rendering for pending approvals
   // is suppressed; resolved approvals stay inline as turn history.
   const dispatchApprovalDecision = useCallback(
-    (approvalId: string, approved: boolean) => {
-      chatActions.approvalDecision(approvalId, { approved });
+    (approvalId: string, decision: RuntimeApprovalDecision) => {
+      chatActions.approvalDecision(approvalId, decision);
     },
     [chatActions],
   );

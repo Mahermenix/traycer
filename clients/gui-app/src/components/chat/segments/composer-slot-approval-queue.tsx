@@ -1,11 +1,32 @@
-import { Check, ShieldAlert, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Folder,
+  Globe,
+  ShieldAlert,
+  ShieldCheck,
+  X,
+} from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import type { ChatApprovalState } from "@traycer/protocol/host/agent/gui/subscribe";
+import type { RuntimeApprovalDecision } from "@traycer/protocol/host/agent/gui/agent-runtime";
 
 interface ComposerSlotApprovalQueueProps {
   readonly approvals: ReadonlyArray<ChatApprovalState>;
   readonly canAct: boolean;
-  readonly onDecision: (approvalId: string, approved: boolean) => void;
+  readonly onDecision: (
+    approvalId: string,
+    decision: RuntimeApprovalDecision,
+  ) => void;
 }
 
 /**
@@ -47,7 +68,7 @@ export function ComposerSlotApprovalQueue(
                 disabled={!canAct}
                 onClick={() => {
                   for (const approval of approvals) {
-                    onDecision(approval.approvalId, false);
+                    onDecision(approval.approvalId, { approved: false });
                   }
                 }}
               >
@@ -61,7 +82,7 @@ export function ComposerSlotApprovalQueue(
                 disabled={!canAct}
                 onClick={() => {
                   for (const approval of approvals) {
-                    onDecision(approval.approvalId, true);
+                    onDecision(approval.approvalId, { approved: true });
                   }
                 }}
               >
@@ -89,39 +110,139 @@ export function ComposerSlotApprovalQueue(
 interface ApprovalRowProps {
   readonly approval: ChatApprovalState;
   readonly canAct: boolean;
-  readonly onDecision: (approvalId: string, approved: boolean) => void;
+  readonly onDecision: (
+    approvalId: string,
+    decision: RuntimeApprovalDecision,
+  ) => void;
 }
 
 function ApprovalRow(props: ApprovalRowProps) {
   const { approval, canAct, onDecision } = props;
-  const headline =
-    approval.description.length > 0 ? approval.description : approval.toolName;
+  // The exact invocation being approved (`ls -la /x`). When the host couldn't
+  // resolve one (non-command tools), fall back to the description so the prompt
+  // is never empty about what it's asking for.
+  const commandPreview =
+    approval.commandPreview !== null && approval.commandPreview.length > 0
+      ? approval.commandPreview
+      : null;
+  // Generic per-tool description (e.g. "Traycer requests bash permission").
+  // Demoted to muted context once a concrete command is shown above it.
+  const description =
+    approval.description.length > 0 ? approval.description : null;
+  // "Always allow" is offered only when the host attached a concrete rule it
+  // would save (`suggestedRule`): command tools whose command tokenizes safely.
+  // Non-command tools and un-tokenizable commands send `null` and get no
+  // affordance, mirroring that the host would persist nothing.
+  const suggestedRule = approval.suggestedRule;
   return (
-    <div className="flex flex-col gap-1.5 py-2 first:pt-0 last:pb-0">
-      <span className="font-mono text-code-sm text-foreground/80">
-        {approval.toolName}
-      </span>
-      <p className="m-0 text-foreground/85">{headline}</p>
-      <div className="flex items-center justify-end gap-2">
+    <div className="flex flex-col gap-2 py-2.5 first:pt-0 last:pb-0">
+      <div className="flex min-w-0 items-center gap-2">
+        <Badge variant="outline" className="font-mono">
+          {approval.toolName}
+        </Badge>
+        {description !== null ? (
+          <span className="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">
+            {description}
+          </span>
+        ) : null}
+      </div>
+      {commandPreview !== null ? (
+        <div className="flex max-h-[min(30vh,9rem)] gap-2.5 overflow-auto rounded-md border border-canvas-border/30 bg-canvas/40 px-3 py-2">
+          <span className="shrink-0 select-none font-mono text-code-sm leading-relaxed text-muted-foreground/60">
+            $
+          </span>
+          <code className="min-w-0 flex-1 font-mono text-code-sm leading-relaxed break-words whitespace-pre-wrap text-foreground/90">
+            {commandPreview}
+          </code>
+        </div>
+      ) : null}
+      {commandPreview === null && description === null ? (
+        <p className="m-0 text-foreground/85">{approval.toolName}</p>
+      ) : null}
+      <div className="flex flex-wrap items-center justify-end gap-2">
         <Button
           type="button"
           size="sm"
           variant="outline"
           disabled={!canAct}
           onClick={() => {
-            onDecision(approval.approvalId, false);
+            onDecision(approval.approvalId, { approved: false });
           }}
         >
           <X className="size-3.5" aria-hidden />
           Deny
         </Button>
+        {suggestedRule !== null ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!canAct}
+              >
+                <ShieldCheck className="size-3.5" aria-hidden />
+                Always allow
+                <ChevronDown className="size-3.5" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="min-w-[min(80vw,13rem)]"
+            >
+              <DropdownMenuLabel className="font-normal">
+                <span className="text-ui-xs text-muted-foreground">
+                  Always allow{" "}
+                  <code className="font-mono text-code-sm text-foreground">
+                    {suggestedRule}
+                  </code>
+                </span>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                className="gap-2"
+                onSelect={() => {
+                  onDecision(approval.approvalId, {
+                    approved: true,
+                    remember: { scope: "workspace" },
+                  });
+                }}
+              >
+                <Folder className="size-3.5 shrink-0" aria-hidden />
+                <div className="flex min-w-0 flex-col">
+                  <span>This workspace</span>
+                  <span className="text-ui-xs text-muted-foreground">
+                    Only for this workspace
+                  </span>
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                className="gap-2"
+                onSelect={() => {
+                  onDecision(approval.approvalId, {
+                    approved: true,
+                    remember: { scope: "global" },
+                  });
+                }}
+              >
+                <Globe className="size-3.5 shrink-0" aria-hidden />
+                <div className="flex min-w-0 flex-col">
+                  <span>All workspaces</span>
+                  <span className="text-ui-xs text-muted-foreground">
+                    Across all workspaces
+                  </span>
+                </div>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
         <Button
           type="button"
           size="sm"
           variant="default"
           disabled={!canAct}
           onClick={() => {
-            onDecision(approval.approvalId, true);
+            onDecision(approval.approvalId, { approved: true });
           }}
         >
           <Check className="size-3.5" aria-hidden />

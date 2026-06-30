@@ -7,6 +7,7 @@ import type {
   ChatRunSettings,
 } from "@traycer/protocol/host/agent/gui/subscribe";
 import type { InterviewAnswer } from "@traycer/protocol/persistence/epic/schemas";
+import type { RuntimeApprovalDecision } from "@traycer/protocol/host/agent/gui/agent-runtime";
 import {
   ChatComposer,
   type ChatComposerSubmitInput,
@@ -83,7 +84,10 @@ export interface ChatLowerApprovalsState {
   readonly pendingFileEditApprovals: ReadonlyArray<ChatFileEditApprovalState>;
   readonly pendingApprovals: ReadonlyArray<ChatApprovalState>;
   readonly onFileEditDecision: (approvalId: string, approved: boolean) => void;
-  readonly onApprovalDecision: (approvalId: string, approved: boolean) => void;
+  readonly onApprovalDecision: (
+    approvalId: string,
+    decision: RuntimeApprovalDecision,
+  ) => void;
 }
 
 export interface ChatLowerQueueState {
@@ -447,7 +451,10 @@ function PendingApprovalQueues(props: {
   readonly pendingApprovals: ReadonlyArray<ChatApprovalState>;
   readonly canAct: boolean;
   readonly onFileEditDecision: (approvalId: string, approved: boolean) => void;
-  readonly onApprovalDecision: (approvalId: string, approved: boolean) => void;
+  readonly onApprovalDecision: (
+    approvalId: string,
+    decision: RuntimeApprovalDecision,
+  ) => void;
 }) {
   return (
     <div className="flex flex-col gap-2">

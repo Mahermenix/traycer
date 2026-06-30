@@ -222,6 +222,14 @@ import {
   type ProviderCliState,
   type ProviderCliStateV10,
 } from "@traycer/protocol/host/provider-schemas";
+import {
+  commandAllowlistClearRequestSchema,
+  commandAllowlistClearResponseSchema,
+  commandAllowlistListRequestSchema,
+  commandAllowlistListResponseSchema,
+  commandAllowlistRemoveRequestSchema,
+  commandAllowlistRemoveResponseSchema,
+} from "@traycer/protocol/host/command-allowlist-schemas";
 
 export { hostGetRuntimeCapabilitiesV10 };
 export { hostGetRateLimitUsageV10 };
@@ -271,6 +279,29 @@ export const snapshotsReadSnapshotDiffV10 = defineRpcContract({
   schemaVersion: { major: 1, minor: 0 } as const,
   requestSchema: snapshotsReadSnapshotDiffRequestSchema,
   responseSchema: snapshotsReadSnapshotDiffResponseSchema,
+});
+
+// `commandAllowlist.*@1.0` - per-device "always allow this command" rules saved
+// from approval prompts. Schemas live in `protocol/host/command-allowlist-schemas.ts`.
+export const commandAllowlistListV10 = defineRpcContract({
+  method: "commandAllowlist.list",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: commandAllowlistListRequestSchema,
+  responseSchema: commandAllowlistListResponseSchema,
+});
+
+export const commandAllowlistRemoveV10 = defineRpcContract({
+  method: "commandAllowlist.remove",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: commandAllowlistRemoveRequestSchema,
+  responseSchema: commandAllowlistRemoveResponseSchema,
+});
+
+export const commandAllowlistClearV10 = defineRpcContract({
+  method: "commandAllowlist.clear",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: commandAllowlistClearRequestSchema,
+  responseSchema: commandAllowlistClearResponseSchema,
 });
 
 // `worktree.*@1.0` - local-only worktree binding lifecycle. Contracts land
@@ -465,7 +496,8 @@ function downgradeProviderRequestForV10<T>(
   request: { readonly providerId: ProviderCliState["providerId"] },
 ): DowngradeResult<T> {
   const parsed = schema.safeParse(request);
-  if (!parsed.success) return unsupportedProviderStateDowngrade(request.providerId);
+  if (!parsed.success)
+    return unsupportedProviderStateDowngrade(request.providerId);
   return { ok: true, value: parsed.data };
 }
 
@@ -525,7 +557,10 @@ export const providersSetSelectionDowngradeV2ToV1 = defineDowngradePath<
   from: { major: 2, minor: 0 },
   to: { major: 1, minor: 0 },
   downgradeRequest: (request) =>
-    downgradeProviderRequestForV10(providersSetSelectionRequestSchemaV10, request),
+    downgradeProviderRequestForV10(
+      providersSetSelectionRequestSchemaV10,
+      request,
+    ),
   downgradeResponse: (response) => {
     const state = downgradeProviderStateForV10(response.state);
     if (!state.ok) return state;
@@ -569,7 +604,10 @@ export const providersAddCustomPathDowngradeV2ToV1 = defineDowngradePath<
   from: { major: 2, minor: 0 },
   to: { major: 1, minor: 0 },
   downgradeRequest: (request) =>
-    downgradeProviderRequestForV10(providersAddCustomPathRequestSchemaV10, request),
+    downgradeProviderRequestForV10(
+      providersAddCustomPathRequestSchemaV10,
+      request,
+    ),
   downgradeResponse: (response) => {
     const state = downgradeProviderStateForV10(response.state);
     if (!state.ok) return state;
@@ -674,7 +712,10 @@ export const providersAwaitLoginDowngradeV2ToV1 = defineDowngradePath<
   from: { major: 2, minor: 0 },
   to: { major: 1, minor: 0 },
   downgradeRequest: (request) =>
-    downgradeProviderRequestForV10(providersAwaitLoginRequestSchemaV10, request),
+    downgradeProviderRequestForV10(
+      providersAwaitLoginRequestSchemaV10,
+      request,
+    ),
   downgradeResponse: (response) => {
     if (response.state === null) {
       return {
@@ -731,7 +772,10 @@ export const providersSetEnabledDowngradeV2ToV1 = defineDowngradePath<
   from: { major: 2, minor: 0 },
   to: { major: 1, minor: 0 },
   downgradeRequest: (request) =>
-    downgradeProviderRequestForV10(providersSetEnabledRequestSchemaV10, request),
+    downgradeProviderRequestForV10(
+      providersSetEnabledRequestSchemaV10,
+      request,
+    ),
   downgradeResponse: (response) => {
     const state = downgradeProviderStateForV10(response.state);
     if (!state.ok) return state;
@@ -819,7 +863,10 @@ export const providersClearApiKeyDowngradeV2ToV1 = defineDowngradePath<
   from: { major: 2, minor: 0 },
   to: { major: 1, minor: 0 },
   downgradeRequest: (request) =>
-    downgradeProviderRequestForV10(providersClearApiKeyRequestSchemaV10, request),
+    downgradeProviderRequestForV10(
+      providersClearApiKeyRequestSchemaV10,
+      request,
+    ),
   downgradeResponse: (response) => {
     const state = downgradeProviderStateForV10(response.state);
     if (!state.ok) return state;
@@ -856,29 +903,28 @@ export const providersSetTerminalAgentArgsUpgradeV1ToV2 = defineUpgradePath<
   upgradeResponse: (response) => response,
 });
 
-export const providersSetTerminalAgentArgsDowngradeV2ToV1 =
-  defineDowngradePath<
-    typeof providersSetTerminalAgentArgsV20,
-    typeof providersSetTerminalAgentArgsV10
-  >({
-    from: { major: 2, minor: 0 },
-    to: { major: 1, minor: 0 },
-    downgradeRequest: (request) =>
-      downgradeProviderRequestForV10(
-        providersSetTerminalAgentArgsRequestSchemaV10,
-        request,
-      ),
-    downgradeResponse: (response) => {
-      const state = downgradeProviderStateForV10(response.state);
-      if (!state.ok) return state;
-      return {
-        ok: true,
-        value: providersSetTerminalAgentArgsResponseSchemaV10.parse({
-          state: state.value,
-        }),
-      };
-    },
-  });
+export const providersSetTerminalAgentArgsDowngradeV2ToV1 = defineDowngradePath<
+  typeof providersSetTerminalAgentArgsV20,
+  typeof providersSetTerminalAgentArgsV10
+>({
+  from: { major: 2, minor: 0 },
+  to: { major: 1, minor: 0 },
+  downgradeRequest: (request) =>
+    downgradeProviderRequestForV10(
+      providersSetTerminalAgentArgsRequestSchemaV10,
+      request,
+    ),
+  downgradeResponse: (response) => {
+    const state = downgradeProviderStateForV10(response.state);
+    if (!state.ok) return state;
+    return {
+      ok: true,
+      value: providersSetTerminalAgentArgsResponseSchemaV10.parse({
+        state: state.value,
+      }),
+    };
+  },
+});
 
 export const providersSetEnvOverrideV10 = defineRpcContract({
   method: "providers.setEnvOverride",
@@ -911,7 +957,10 @@ export const providersSetEnvOverrideDowngradeV2ToV1 = defineDowngradePath<
   from: { major: 2, minor: 0 },
   to: { major: 1, minor: 0 },
   downgradeRequest: (request) =>
-    downgradeProviderRequestForV10(providersSetEnvOverrideRequestSchemaV10, request),
+    downgradeProviderRequestForV10(
+      providersSetEnvOverrideRequestSchemaV10,
+      request,
+    ),
   downgradeResponse: (response) => {
     const state = downgradeProviderStateForV10(response.state);
     if (!state.ok) return state;
@@ -2417,8 +2466,7 @@ export const hostRpcRegistry = defineVersionedRpcRegistry({
       versions: {
         0: {
           contract: providersDeleteEnvOverrideV20,
-          upgradeFromPreviousVersion:
-            providersDeleteEnvOverrideUpgradeV1ToV2,
+          upgradeFromPreviousVersion: providersDeleteEnvOverrideUpgradeV1ToV2,
         },
       },
       downgradePathsFromLatest: {
@@ -2482,6 +2530,42 @@ export const hostRpcRegistry = defineVersionedRpcRegistry({
       versions: {
         0: {
           contract: speechEnsureModelV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "commandAllowlist.list": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: commandAllowlistListV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "commandAllowlist.remove": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: commandAllowlistRemoveV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "commandAllowlist.clear": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: commandAllowlistClearV10,
           upgradeFromPreviousVersion: null,
         },
       },

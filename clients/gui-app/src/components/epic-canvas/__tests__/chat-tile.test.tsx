@@ -992,6 +992,8 @@ describe("<ChatTile />", () => {
           planId: null,
           actions: [],
           requestedAt: 2,
+          suggestedRule: null,
+          commandPreview: null,
         },
       });
     });
@@ -1060,6 +1062,8 @@ describe("<ChatTile />", () => {
           planId: null,
           actions: [],
           requestedAt: 3,
+          suggestedRule: null,
+          commandPreview: null,
         },
       });
     });

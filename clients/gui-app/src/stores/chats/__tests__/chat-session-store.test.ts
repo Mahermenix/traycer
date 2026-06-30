@@ -1787,6 +1787,8 @@ describe("createChatSessionStore", () => {
         planId: null,
         actions: [],
         requestedAt: 2,
+        suggestedRule: null,
+        commandPreview: null,
       },
     });
     callbacks.onTurnStateChanged({

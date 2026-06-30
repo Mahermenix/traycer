@@ -255,6 +255,7 @@ function normalizeApprovalDecision(
   return {
     approved: decision.approved,
     reason: decision.reason ?? null,
+    autoApproved: decision.autoApproved ?? false,
   };
 }
 
