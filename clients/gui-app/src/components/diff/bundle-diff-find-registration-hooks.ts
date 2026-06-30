@@ -152,6 +152,18 @@ export function useRegisterBundleDiffTileFindAdapter(args: {
     (entry: BundleDiffFindLoadedPatchInput): void => {
       setSession((current) =>
         ensureSession(current, args.contentIdentity, (next) => {
+          // Idempotent: a virtualized section remounting and re-registering an
+          // identical patch must not churn `loadedPatches` identity (which the
+          // source memo keys on), so bail when the entry is unchanged.
+          const existing = next.loadedPatches.get(entry.fileId);
+          if (
+            existing !== undefined &&
+            existing.patch === entry.patch &&
+            existing.cacheKey === entry.cacheKey &&
+            existing.isTruncated === entry.isTruncated
+          ) {
+            return next;
+          }
           const loadedPatches = new Map(next.loadedPatches);
           loadedPatches.set(entry.fileId, entry);
           return {

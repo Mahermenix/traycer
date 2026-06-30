@@ -19,7 +19,7 @@ export function cleanSubagentNotificationText(
   if (input === null) return null;
   const trimmed = input.trim();
   if (trimmed.length === 0) return null;
-  if (!trimmed.includes("<task-notification")) return trimmed;
+  if (!trimmed.toLowerCase().includes("<task-notification")) return trimmed;
   const message =
     extractTagText(trimmed, "message") ??
     extractTagText(trimmed, "prompt") ??

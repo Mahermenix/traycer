@@ -496,12 +496,16 @@ function GitFileDiffPanel(props: GitFileDiffPanelProps): ReactNode {
         diff: diffQuery.data ?? null,
         loading: diffQuery.isPending,
         errored: diffQuery.error !== null,
+        headSha: props.headSha,
+        ignoreWhitespace: props.diffViewerPreferences.ignoreWhitespace,
       }),
     [
       diffQuery.data,
       diffQuery.error,
       diffQuery.isPending,
+      props.diffViewerPreferences.ignoreWhitespace,
       props.file,
+      props.headSha,
       props.node,
     ],
   );
@@ -614,6 +618,8 @@ function gitFileDiffFindSource(args: {
   readonly diff: GitGetFileDiffResponse | null;
   readonly loading: boolean;
   readonly errored: boolean;
+  readonly headSha: string;
+  readonly ignoreWhitespace: boolean;
 }): DiffTileFindSource {
   const metadataUnits = gitFileDiffMetadataUnits({
     node: args.node,
@@ -650,9 +656,12 @@ function gitFileDiffFindSource(args: {
       args.node.instanceId,
       args.node.diff.runningDir,
       args.file.path,
+      args.file.previousPath ?? "none",
       args.file.stage,
+      args.headSha,
       args.diff.stagedOid ?? "none",
       args.diff.worktreeOid ?? "none",
+      args.ignoreWhitespace ? "ignore-ws" : "with-ws",
       args.diff.isTruncated ? "truncated" : "full",
     ].join(":"),
     isPartial: args.diff.isTruncated,

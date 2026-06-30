@@ -83,7 +83,7 @@ function firstMeaningfulLine(markdown: string): string {
         .replace(/^[-*]\s*/, "")
         .trim(),
     )
-    .find((part) => part.length > 0);
+    .find((part) => part.length > 0 && !isGenericPlanTitle(part));
   return line ?? "Review the proposed plan before continuing.";
 }
 

@@ -334,7 +334,7 @@ describe("<TileFindBar />", () => {
     expect(screen.getByLabelText("Replace with")).toBeTruthy();
 
     fireEvent.click(screen.getByLabelText("Close find"));
-    expect(screen.queryByTestId("tile-find-bar")).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Find in tile" })).toBeNull();
 
     act(() => {
       useTileFindStore.getState().openForTile("tile-1");

@@ -58,21 +58,22 @@ export function createBundleDiffFindSource(args: {
   readonly files: ReadonlyArray<BundleDiffFindFileInput>;
   readonly loadedPatches: ReadonlyMap<string, BundleDiffFindLoadedPatchInput>;
 }): BundleDiffFindSourceResult {
-  const knownFileIds = new Set(args.files.map((file) => file.id));
-  const metadataUnits = args.files.flatMap((file) => file.metadataUnits);
-  const loadedPatchUnits = Array.from(args.loadedPatches.values()).flatMap(
-    (entry) => {
-      if (!knownFileIds.has(entry.fileId)) return [];
-      return buildDiffFindIndexFromPatch({
-        patch: entry.patch,
-        metadataUnits: [],
-        cacheKey: entry.cacheKey,
-        unitScopeId: entry.fileId,
-      }).units;
-    },
-  );
+  // Build the index grouped by file in visual (document) order: each file's
+  // metadata units followed by its loaded patch units, so find-next walks files
+  // top-to-bottom instead of all-metadata-then-all-loaded-patches.
   const index: DiffFindIndex = {
-    units: [...buildDiffFindMetadataUnits(metadataUnits), ...loadedPatchUnits],
+    units: args.files.flatMap((file) => {
+      const fileMetadataUnits = buildDiffFindMetadataUnits(file.metadataUnits);
+      const loaded = args.loadedPatches.get(file.id);
+      if (loaded === undefined) return fileMetadataUnits;
+      const patchUnits = buildDiffFindIndexFromPatch({
+        patch: loaded.patch,
+        metadataUnits: [],
+        cacheKey: loaded.cacheKey,
+        unitScopeId: loaded.fileId,
+      }).units;
+      return [...fileMetadataUnits, ...patchUnits];
+    }),
   };
   const coverageCounts = bundleCoverageCounts(args);
   const coverageMessage = bundleCoverageMessage(coverageCounts);

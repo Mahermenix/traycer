@@ -366,11 +366,14 @@ describe("PlanSegment", () => {
       </ChatPlanActionsContext.Provider>,
     );
 
-    const card = screen.getByTestId("plan-segment");
-    // The card IS the find-unit anchor; its mounted text must equal what the
-    // projection indexes - headline, status label, subtitle, first four steps.
-    expect(card.dataset.chatFindUnit).toBe("plan-find-unit");
-    const text = card.textContent;
+    // The card IS the find-unit anchor; reach it from the visible headline.
+    // Its mounted text must equal what the projection indexes - headline,
+    // status label, subtitle, first four steps.
+    const card = screen
+      .getByRole("heading", { name: "Refactor the search index" })
+      .closest<HTMLElement>("[data-chat-find-unit]");
+    expect(card?.dataset.chatFindUnit).toBe("plan-find-unit");
+    const text = card?.textContent ?? "";
     expect(text).toContain("Refactor the search index");
     expect(text).toContain("Approved");
     expect(text).toContain("Split projection from rendering");

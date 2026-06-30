@@ -228,7 +228,7 @@ export function findNearestArtifactFindMatchIndex(
   if (matches.length === 0) return -1;
   if (position === null) return 0;
   const exactIndex = matches.findIndex(
-    (match) => match.from <= position && position <= match.to,
+    (match) => match.from <= position && position < match.to,
   );
   if (exactIndex !== -1) return exactIndex;
   return matches.reduce((nearestIndex, match, index) => {
@@ -354,7 +354,16 @@ function collectIndexedText(doc: ProseMirrorNode): IndexedText {
     }
     sawTextBlock = true;
     node.descendants((child, childOffset) => {
-      if (!child.isText) return true;
+      if (!child.isText) {
+        // Inline leaf nodes (hard breaks, atoms) break up visible text runs;
+        // index a boundary so a search can't match across them (e.g.
+        // "foo<HardBreak/>bar" must not be a hit for "foobar").
+        if (child.isLeaf) {
+          chars.push("\n");
+          positions.push(null);
+        }
+        return true;
+      }
       const text = child.text;
       if (typeof text !== "string" || text.length === 0) return true;
       const from = pos + 1 + childOffset;

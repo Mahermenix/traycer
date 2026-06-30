@@ -214,8 +214,12 @@ function SnapshotBundleFileSection(props: {
     toggleCollapsed(props.viewTabId, props.node.id, props.entry.filePath);
   }, [props.entry.filePath, props.node.id, props.viewTabId, toggleCollapsed]);
   useEffect(() => {
+    // Re-notify when a collapsed section expands (find-driven or manual): the
+    // diff body only mounts while expanded, so a mount-only effect would leave
+    // a freshly-revealed match stuck pending.
+    if (collapsed) return;
     bundleFindRegistration.notifySectionMounted(bundleFindFileId);
-  }, [bundleFindFileId, bundleFindRegistration]);
+  }, [bundleFindFileId, bundleFindRegistration, collapsed]);
   const headerRow = useMemo(
     () => (
       <SnapshotBundleFileRow
@@ -380,12 +384,24 @@ function snapshotBundleDiffFindFileInput(args: {
   return {
     id: fileId,
     filePath: args.entry.filePath,
-    coverageState: args.collapsed ? "collapsed" : "unloaded",
+    coverageState: snapshotBundleFileCoverageState(args),
     metadataUnits: snapshotBundleDiffMetadataUnits({
       entry: args.entry,
       fileId,
     }),
   };
+}
+
+// Only snapshot-reason entries ever load a diff patch; every other reason
+// renders a terminal "unavailable" body, so account for it as a final (failed)
+// coverage state instead of a pending "unloaded" one.
+function snapshotBundleFileCoverageState(args: {
+  readonly entry: SnapshotBundleSectionEntry;
+  readonly collapsed: boolean;
+}): "failed" | "collapsed" | "unloaded" {
+  if (args.entry.reason !== "snapshot") return "failed";
+  if (args.collapsed) return "collapsed";
+  return "unloaded";
 }
 
 function snapshotBundleDiffMetadataUnits(args: {

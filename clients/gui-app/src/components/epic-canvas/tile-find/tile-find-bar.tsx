@@ -430,9 +430,14 @@ function statusLabel(
     return snapshot.errorMessage ?? "Error";
   }
   if (snapshot.query.length === 0) return null;
-  if (snapshot.total === 0) return noMatchesLabel;
+  // Partial coverage with zero loaded matches is not a definitive no-match:
+  // more may exist in unloaded content, so don't show the exhaustive label.
   if (snapshot.status === "partial") {
+    if (snapshot.total === 0) {
+      return snapshot.coverageMessage ?? `${noMatchesLabel} in loaded content`;
+    }
     return `${snapshot.current} of ${snapshot.total} partial`;
   }
+  if (snapshot.total === 0) return noMatchesLabel;
   return `${snapshot.current} of ${snapshot.total}`;
 }

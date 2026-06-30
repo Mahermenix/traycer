@@ -232,13 +232,6 @@ function tileSnapshot(): TileFindStateSnapshot {
 const ACTIVE_ATTR = "data-traycer-diff-find-active";
 const MATCH_ATTR = "data-traycer-diff-find-match";
 const ADDITION_LINE = "2,1";
-const NAV_FILES: ReadonlyArray<{
-  readonly id: string;
-  readonly filePath: string;
-}> = [
-  { id: "app", filePath: "src/app.ts" },
-  { id: "lib", filePath: "src/lib.ts" },
-];
 const NO_COLLAPSED: ReadonlySet<string> = new Set<string>();
 
 interface NavSection {
@@ -375,7 +368,7 @@ function NavHarness(props: {
   readonly sections: ReadonlyArray<NavSection>;
 }): ReactNode {
   const renderer = useBundleDiffFindNavigation({
-    files: NAV_FILES,
+    files: props.files,
     collapsedFileIds: props.collapsedFileIds,
     expandFile: props.expandFile,
     virtuosoRef: props.virtuosoRef,

@@ -147,10 +147,8 @@ function hasBlockingDomDialog(): boolean {
   const dialogs = document.querySelectorAll(
     '[role="dialog"][data-state="open"]',
   );
-  for (const dialog of dialogs) {
+  return Array.from(dialogs).some((dialog) => {
     if (!(dialog instanceof HTMLElement)) return true;
-    if (dialog.closest("[data-tile-find-scope]") !== null) continue;
-    return true;
-  }
-  return false;
+    return dialog.closest("[data-tile-find-scope]") === null;
+  });
 }

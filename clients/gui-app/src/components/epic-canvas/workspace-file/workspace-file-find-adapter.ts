@@ -248,6 +248,7 @@ export function createWorkspaceFileFindAdapter(args: {
     previewEngine.scrollActiveIntoView();
     const result = previewEngine.getResult();
     if (result === null) return;
+    const hasMatches = result.total > 0;
     publish(
       createSearchableSnapshot({
         requestId: snapshot.requestId,
@@ -257,8 +258,8 @@ export function createWorkspaceFileFindAdapter(args: {
         truncated: environment.truncated,
         current: result.current,
         total: result.total,
-        activeUnitId: "markdown-preview",
-        exactHighlight: "painted",
+        activeUnitId: hasMatches ? "markdown-preview" : null,
+        exactHighlight: hasMatches ? "painted" : "none",
       }),
     );
   };
@@ -405,10 +406,19 @@ function collectSourceMatches(args: {
   const lineStarts = collectLineStarts(args.content);
   const matches: SourceMatch[] = [];
   const step = Math.max(args.query.length, 1);
+  // Matches are found in increasing offset order, so advance the line cursor
+  // forward monotonically instead of rescanning lineStarts for every hit.
+  let lineCursor = 0;
   let index = haystack.indexOf(needle, 0);
   while (index !== -1) {
-    const position = sourcePositionForIndex(lineStarts, index);
-    matches.push({ line: position.line, column: position.column });
+    while (
+      lineCursor + 1 < lineStarts.length &&
+      (lineStarts.at(lineCursor + 1) ?? Number.POSITIVE_INFINITY) <= index
+    ) {
+      lineCursor += 1;
+    }
+    const lineStart = lineStarts.at(lineCursor) ?? 0;
+    matches.push({ line: lineCursor + 1, column: index - lineStart + 1 });
     index = haystack.indexOf(needle, index + step);
   }
   return matches;
@@ -422,24 +432,6 @@ function collectLineStarts(content: string): readonly number[] {
     index = content.indexOf("\n", index + 1);
   }
   return starts;
-}
-
-function sourcePositionForIndex(
-  lineStarts: readonly number[],
-  index: number,
-): { readonly line: number; readonly column: number } {
-  let safeLineIndex = 0;
-  for (let i = 0; i < lineStarts.length; i += 1) {
-    const lineStart = lineStarts.at(i);
-    if (lineStart === undefined) break;
-    if (lineStart <= index) safeLineIndex = i;
-    else break;
-  }
-  const lineStart = lineStarts.at(safeLineIndex) ?? 0;
-  return {
-    line: safeLineIndex + 1,
-    column: index - lineStart + 1,
-  };
 }
 
 function sourceActiveUnitId(line: number): string {

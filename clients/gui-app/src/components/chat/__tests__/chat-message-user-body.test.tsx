@@ -279,11 +279,15 @@ describe("<UserMessageBody /> agent messages", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Force received A2A" }));
 
-    expect(screen.getByText("Open sending agent")).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Open sending agent" }),
+    ).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Received message/ }));
 
-    expect(screen.queryByText("Open sending agent")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Open sending agent" }),
+    ).toBeNull();
   });
 
   it("copies structured user messages as rich composer clipboard content", async () => {

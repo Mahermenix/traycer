@@ -160,11 +160,9 @@ describe("renderTile tile find scope", () => {
     useTileFindStore.getState().resetForTests();
   });
 
-  it("wraps every current tile kind with TileFindScope metadata", async () => {
-    for (const node of NODES) {
-      cleanup();
-      useTileFindStore.getState().resetForTests();
-
+  it.each(NODES)(
+    "wraps the $type tile kind with TileFindScope metadata",
+    async (node) => {
       render(
         <>
           {renderTile({
@@ -192,8 +190,8 @@ describe("renderTile tile find scope", () => {
           tileKind: node.type,
         });
       });
-    }
-  });
+    },
+  );
 
   it("keeps inactive or hidden tile scopes from owning find", async () => {
     const node = NODES[0];
