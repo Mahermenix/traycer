@@ -47,13 +47,28 @@ export function PermissionsSettingsPanel() {
       />
     ) : null;
 
+  // A non-active host was picked but couldn't be bound (offline/unreachable).
+  // Block the allowlist UI instead of silently falling back to the ambient
+  // active host — otherwise the list/mutations would target the wrong host.
+  const overrideUnavailable =
+    effectiveId !== null &&
+    effectiveId !== activeHostId &&
+    scopedBinding === null;
+
   const inner = (
     <SettingsPanelShell
       title="Permissions"
       description="Commands you allowed to skip the approval prompt. Manage them per host."
       headerAction={hostPicker}
     >
-      <CommandAllowlistSection />
+      {overrideUnavailable ? (
+        <div className="p-5 text-ui-sm text-muted-foreground">
+          This host is offline. Reconnect to it to view or manage its saved
+          commands.
+        </div>
+      ) : (
+        <CommandAllowlistSection />
+      )}
     </SettingsPanelShell>
   );
   if (scopedBinding === null) return inner;

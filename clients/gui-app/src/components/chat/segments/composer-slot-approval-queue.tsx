@@ -65,9 +65,9 @@ export function ComposerSlotApprovalQueue(
                 disabled={!canAct}
                 className="h-7 px-2.5 text-xs shadow-none bg-background/50 hover:bg-background"
                 onClick={() => {
-                  for (const approval of approvals) {
-                    onDecision(approval.approvalId, { approved: false });
-                  }
+                  approvals.forEach((approval) =>
+                    onDecision(approval.approvalId, { approved: false }),
+                  );
                 }}
               >
                 <X className="size-3" aria-hidden />
@@ -79,9 +79,9 @@ export function ComposerSlotApprovalQueue(
                 disabled={!canAct}
                 className="h-7 px-2.5 text-xs shadow-none"
                 onClick={() => {
-                  for (const approval of approvals) {
-                    onDecision(approval.approvalId, { approved: true });
-                  }
+                  approvals.forEach((approval) =>
+                    onDecision(approval.approvalId, { approved: true }),
+                  );
                 }}
               >
                 <Check className="size-3" aria-hidden />
@@ -132,7 +132,10 @@ function ApprovalRow(props: ApprovalRowProps) {
   // safely. Non-command tools and un-tokenizable/chained-unsafe commands send an
   // empty list and get no affordance, mirroring that the host would persist
   // nothing. A chained command (`npm run lint || exit 1`) yields several rules.
-  const suggestedRules = approval.suggestedRules;
+  // Deduped so identical rules can't collide as React keys (and repeats aren't
+  // shown twice in the "Rules to save" list). A chained command can derive the
+  // same rule from more than one segment.
+  const suggestedRules = [...new Set(approval.suggestedRules)];
   return (
     <div className="flex flex-col gap-3.5 p-3.5 first:pt-3.5 border-b border-border/20 last:border-0 bg-card/50">
       <div className="flex min-w-0 items-center gap-2.5">

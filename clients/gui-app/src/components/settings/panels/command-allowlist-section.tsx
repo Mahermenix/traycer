@@ -82,36 +82,18 @@ function partitionRules(
     ),
   ];
 
-  const activeWorkspaces: Array<{
-    path: string;
-    label: string;
-    rules: readonly CommandAllowRule[];
-  }> = [];
-  const otherWorkspaces: Array<{
-    path: string;
-    label: string;
-    rules: readonly CommandAllowRule[];
-  }> = [];
-
-  for (const path of workspacePaths) {
-    const ws = {
-      path,
-      label: folderName(path),
-      rules: rules.filter(
-        (rule) => rule.scope.kind === "workspace" && rule.scope.path === path,
-      ),
-    };
-    if (openPaths.has(path)) {
-      activeWorkspaces.push(ws);
-    } else {
-      otherWorkspaces.push(ws);
-    }
-  }
+  const workspaces = workspacePaths.map((path) => ({
+    path,
+    label: folderName(path),
+    rules: rules.filter(
+      (rule) => rule.scope.kind === "workspace" && rule.scope.path === path,
+    ),
+  }));
 
   return {
     global,
-    activeWorkspaces,
-    otherWorkspaces,
+    activeWorkspaces: workspaces.filter((ws) => openPaths.has(ws.path)),
+    otherWorkspaces: workspaces.filter((ws) => !openPaths.has(ws.path)),
   };
 }
 
@@ -371,6 +353,7 @@ function ScopeCard(props: {
   readonly clearing: boolean;
   readonly busy: boolean;
 }) {
+  const [confirmClear, setConfirmClear] = useState(false);
   return (
     <div className="group/card flex flex-col overflow-hidden rounded-md border border-border/50 bg-card shadow-sm">
       <div className="flex min-w-0 items-center gap-3 border-b border-border/40 bg-muted/20 px-3 py-2.5">
@@ -412,7 +395,7 @@ function ScopeCard(props: {
             aria-label={`Clear all commands in ${props.title}`}
             className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/card:opacity-100 hover:text-destructive focus-visible:opacity-100"
             disabled={props.busy}
-            onClick={() => props.onClear(props.scope)}
+            onClick={() => setConfirmClear(true)}
           >
             {props.clearing ? (
               <AgentSpinningDots
@@ -426,6 +409,21 @@ function ScopeCard(props: {
           </Button>
         </TooltipWrapper>
       </div>
+      <ConfirmDestructiveDialog
+        open={confirmClear}
+        onOpenChange={setConfirmClear}
+        title={`Clear ${props.title}?`}
+        description={`This removes all ${props.count} always-allowed ${
+          props.count === 1 ? "command" : "commands"
+        } in ${props.title}. Each will prompt for approval again.`}
+        cascadeSummary={null}
+        actionLabel="Clear"
+        isPending={props.clearing}
+        onConfirm={() => {
+          props.onClear(props.scope);
+          setConfirmClear(false);
+        }}
+      />
       <ul className="m-0 flex list-none flex-col divide-y divide-border/30 bg-muted/5 p-0">
         {props.rules.map((rule) => (
           <RuleRow
