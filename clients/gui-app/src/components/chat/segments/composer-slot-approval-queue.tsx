@@ -235,7 +235,9 @@ function ApprovalRow(props: ApprovalRowProps) {
               >
                 <div className="flex flex-col gap-1.5 bg-muted/40 px-3.5 py-3 border-b border-border/40 max-h-[30vh] overflow-y-auto">
                   <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {suggestedRules.length > 1 ? "Rules to save" : "Rule to save"}
+                    {suggestedRules.length > 1
+                      ? "Rules to save"
+                      : "Rule to save"}
                   </span>
                   <div className="flex flex-col gap-1.5 mt-1">
                     {suggestedRules.map((rule) => (
