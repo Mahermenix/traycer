@@ -7,15 +7,25 @@ import {
   type TileFindCapability,
   type TileFindInput,
   type TileFindStateSnapshot,
-  type TileReplaceInput,
 } from "@/stores/tile-find";
 import { TILE_FIND_NO_CAPABILITIES } from "@/stores/tile-find/types";
 
 export type WorkspaceFileFindViewMode = "source" | "preview";
 
-export interface WorkspaceFileSourceFindTarget {
+export interface WorkspaceFileSourceFindRange {
   readonly line: number;
   readonly column: number;
+  // Absolute character offset of the match start into the (loaded) file
+  // content, and its length. Together they let the renderer paint the exact
+  // text span - including matches that straddle Shiki token boundaries - while
+  // `line`/`column` keep the gutter marker and scroll target addressable.
+  readonly offset: number;
+  readonly length: number;
+}
+
+export interface WorkspaceFileSourceFindTarget {
+  readonly active: WorkspaceFileSourceFindRange;
+  readonly matches: readonly WorkspaceFileSourceFindRange[];
 }
 
 export interface WorkspaceFileFindEnvironment {
@@ -34,10 +44,7 @@ export interface WorkspaceFileFindAdapter extends TileFindAdapter {
   updateEnvironment(environment: WorkspaceFileFindEnvironment): void;
 }
 
-interface SourceMatch {
-  readonly line: number;
-  readonly column: number;
-}
+type SourceMatch = WorkspaceFileSourceFindRange;
 
 const FIND_CAPABILITIES = new Set<TileFindCapability>(["find"]);
 const TRUNCATED_COVERAGE_MESSAGE =
@@ -149,8 +156,8 @@ export function createWorkspaceFileFindAdapter(args: {
     const activeMatch = sourceMatchAt(sourceMatches, activeSourceIndex);
     if (activeMatch !== null) {
       environment.revealSourceMatch({
-        line: activeMatch.line,
-        column: activeMatch.column,
+        active: activeMatch,
+        matches: sourceMatches,
       });
     }
     publish(
@@ -223,8 +230,8 @@ export function createWorkspaceFileFindAdapter(args: {
       sourceMatches.length;
     const activeMatch = sourceMatches[activeSourceIndex];
     environment.revealSourceMatch({
-      line: activeMatch.line,
-      column: activeMatch.column,
+      active: activeMatch,
+      matches: sourceMatches,
     });
     publish(
       createSearchableSnapshot({
@@ -276,6 +283,7 @@ export function createWorkspaceFileFindAdapter(args: {
   return {
     tileInstanceId: args.tileInstanceId,
     tileKind: "workspace-file",
+    replace: null,
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
       listeners.add(listener);
@@ -309,12 +317,6 @@ export function createWorkspaceFileFindAdapter(args: {
         matchCase: snapshot.matchCase,
         replaceText: snapshot.replaceText,
       });
-    },
-    replaceCurrent: (input: TileReplaceInput) => {
-      search(input, input.replaceText);
-    },
-    replaceAll: (input: TileReplaceInput) => {
-      search(input, input.replaceText);
     },
     updateEnvironment: (nextEnvironment) => {
       environment = nextEnvironment;
@@ -418,7 +420,12 @@ function collectSourceMatches(args: {
       lineCursor += 1;
     }
     const lineStart = lineStarts.at(lineCursor) ?? 0;
-    matches.push({ line: lineCursor + 1, column: index - lineStart + 1 });
+    matches.push({
+      line: lineCursor + 1,
+      column: index - lineStart + 1,
+      offset: index,
+      length: args.query.length,
+    });
     index = haystack.indexOf(needle, index + step);
   }
   return matches;

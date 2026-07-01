@@ -313,6 +313,11 @@ export const useTileFindStore = create<TileFindState>((set, get) => ({
   },
 
   replaceCurrent: (tileInstanceId) => {
+    // Refuse before prepareRequest so an adapter without a replace boundary
+    // never has its request/replace state bumped for an unsupported command.
+    const replace =
+      get().targetsByTileInstanceId[tileInstanceId]?.adapter.replace;
+    if (replace === undefined || replace === null) return;
     const command = prepareRequest(get, set, tileInstanceId);
     if (command === null) return;
     const input: TileReplaceInput = {
@@ -323,12 +328,15 @@ export const useTileFindStore = create<TileFindState>((set, get) => ({
     };
     runAdapterCommand(
       tileInstanceId,
-      () => command.target.adapter.replaceCurrent(input),
+      () => replace.replaceCurrent(input),
       command.requestId,
     );
   },
 
   replaceAll: (tileInstanceId) => {
+    const replace =
+      get().targetsByTileInstanceId[tileInstanceId]?.adapter.replace;
+    if (replace === undefined || replace === null) return;
     const command = prepareRequest(get, set, tileInstanceId);
     if (command === null) return;
     const input: TileReplaceInput = {
@@ -339,7 +347,7 @@ export const useTileFindStore = create<TileFindState>((set, get) => ({
     };
     runAdapterCommand(
       tileInstanceId,
-      () => command.target.adapter.replaceAll(input),
+      () => replace.replaceAll(input),
       command.requestId,
     );
   },

@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef } from "react";
+import { queryElementsByDataAttribute } from "@/components/diff/data-attribute-lookup";
 import type { DiffFindMatch, DiffFindUnit } from "@/lib/diff/diff-find";
 import type { DiffTileFindRenderer } from "@/stores/tile-find";
 import type { TileFindExactHighlight } from "@/stores/tile-find/types";
@@ -125,13 +126,11 @@ function findDiffUnitElements(
     // resolves nothing in either mode. It is kept so every unit kind flows
     // through one lookup; the empty result drives an honest `"none"` highlight
     // (navigation/scroll for file matches happens in the caller, not here).
-    return Array.from(
-      scrollContainer.querySelectorAll(
-        `[data-diff-find-file="${attributeSelectorValue(unit.filePath ?? "")}"]`,
-      ),
-    ).filter(
-      (element): element is HTMLElement => element instanceof HTMLElement,
-    );
+    return queryElementsByDataAttribute({
+      root: scrollContainer,
+      attributeName: "data-diff-find-file",
+      value: unit.filePath ?? "",
+    });
   }
 
   const lineIndex = diffLineIndex(unit);

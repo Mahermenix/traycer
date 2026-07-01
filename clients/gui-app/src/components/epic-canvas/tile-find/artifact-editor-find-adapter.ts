@@ -16,6 +16,7 @@ import type {
   TileFindCapability,
   TileFindExactHighlight,
   TileFindInput,
+  TileFindReplace,
   TileFindStateSnapshot,
   TileFindStatus,
   TileReplaceInput,
@@ -231,6 +232,19 @@ export function createArtifactEditorFindAdapter(
   return {
     tileInstanceId,
     tileKind,
+    // The artifact editor is the one replace-capable find surface, but
+    // editability is dynamic. Expose the replace boundary only while the editor
+    // is editable so it agrees with the find-only `capabilities` a read-only
+    // editor publishes - the store then refuses replace before `prepareRequest`
+    // instead of routing into a no-op. The dispatchers keep their own
+    // `!editor.isEditable` guard as defense in depth.
+    get replace(): TileFindReplace | null {
+      if (!editor.isEditable) return null;
+      return {
+        replaceCurrent: dispatchReplaceCurrent,
+        replaceAll: dispatchReplaceAll,
+      };
+    },
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
       listeners.add(listener);
@@ -274,8 +288,6 @@ export function createArtifactEditorFindAdapter(
       clearArtifactFind(editor, snapshot.requestId);
       publish();
     },
-    replaceCurrent: dispatchReplaceCurrent,
-    replaceAll: dispatchReplaceAll,
   };
 }
 

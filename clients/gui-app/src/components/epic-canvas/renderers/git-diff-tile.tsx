@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
+import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Virtuoso } from "react-virtuoso";
 import {
@@ -12,9 +6,6 @@ import {
   type GitChangedFile,
   type GitGetFileDiffResponse,
 } from "@traycer/protocol/host";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { StartTruncatedText } from "@/components/ui/start-truncated-text";
 import { useEditorOpen } from "@/hooks/editor/use-editor-open-mutation";
 import { useEditorOpenFeedback } from "@/hooks/editor/use-editor-open-feedback";
 import { useGitGetFileDiffQuery } from "@/hooks/git/use-git-get-file-diff-query";
@@ -28,19 +19,10 @@ import { gitQueryKeys } from "@/lib/query-keys/git-query-keys";
 import { useSettingsStore } from "@/stores/settings/settings-store";
 import type { DiffViewerPreferences } from "@/lib/diff/diff-viewer-preferences";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
-import type {
-  GitDiffBundleTilePayload,
-  GitDiffFileTilePayload,
-  GitDiffTileRef,
-} from "@/stores/epics/canvas/types";
-import {
-  gitBundleGroupLabel,
-  gitStageLabel,
-  makeGitFileDiffTileForFile,
-} from "@/lib/git/git-diff-tile";
+import type { GitDiffTileRef } from "@/stores/epics/canvas/types";
+import { gitBundleGroupLabel, gitStageLabel } from "@/lib/git/git-diff-tile";
 import { gitChangedFileBelongsToBundleGroup } from "@/lib/git/panel-file-rendering";
 import { getBasename, getDirname } from "@/lib/path/cross-platform-path";
-import { BUNDLE_INLINE_LINE_THRESHOLD } from "@/lib/git/bundle-thresholds";
 import { DiffBundleLoadingSkeleton } from "@/components/epic-canvas/git-diff/diff-bundle-loading-skeleton";
 import { DiffContentLoadingSkeleton } from "@/components/epic-canvas/git-diff/diff-content-loading-skeleton";
 import { DiffTabShell } from "@/components/epic-canvas/git-diff/diff-tab-shell";
@@ -49,20 +31,8 @@ import {
   type DiffTabToolbarView,
   type DiffTabToolbarViewPatch,
 } from "@/components/epic-canvas/git-diff/diff-tab-toolbar";
-import {
-  DiffBundleCollapseChevron,
-  DiffBundleFileSectionFrame,
-} from "@/components/epic-canvas/git-diff/diff-bundle-file-section";
-import { GitChangedFileRow } from "@/components/epic-canvas/git-diff/git-changed-file-row";
-import { NO_HIGHLIGHT } from "@/lib/git/path-highlight";
 import { FileDiffContent } from "@/components/epic-canvas/git-diff/file-diff-content";
 import { BundleDiffFindRegistrationProvider } from "@/components/diff/bundle-diff-find-registration";
-import {
-  useBundleDiffFindNavigation,
-  useBundleDiffFindRegistrationContext,
-  useRegisterBundleDiffTileFindAdapter,
-  type BundleDiffFindFileNavigationInput,
-} from "@/components/diff/bundle-diff-find-registration-hooks";
 import { useDiffFindNavigation } from "@/components/diff/diff-find-navigation";
 import { useRegisterDiffTileFindAdapter } from "@/components/diff/use-register-diff-tile-find-adapter";
 import type { DiffFindMetadataUnitInput } from "@/lib/diff/diff-find";
@@ -81,24 +51,25 @@ import {
   createLoadingDiffTileFindSource,
   createMetadataOnlyDiffTileFindSource,
   createMissingDiffTileFindSource,
-  type BundleDiffFindCoverageState,
-  type BundleDiffFindFileInput,
   type DiffTileFindRenderer,
   type DiffTileFindSource,
 } from "@/stores/tile-find";
+import {
+  fileDiffLoadFullIdentity,
+  GIT_DIFF_BINARY_FIND_MESSAGE,
+  GIT_DIFF_ERROR_FIND_MESSAGE,
+  GIT_DIFF_LOADING_FIND_MESSAGE,
+  GIT_DIFF_MISSING_FIND_MESSAGE,
+  GIT_DIFF_TRUNCATED_FIND_MESSAGE,
+  type GitBundleDiffTileRef,
+  type GitFileDiffTileRef,
+} from "@/components/epic-canvas/git-diff/git-diff-tile-shared";
+import { useGitBundleDiffFind } from "@/components/epic-canvas/git-diff/git-bundle-diff-find";
+import { BundleFileSection } from "@/components/epic-canvas/git-diff/git-bundle-file-section";
 import { GitDiffDeadTileBanner } from "./dead-tile-banner";
 
 // Safety cap so a hung host fetch can't wedge the spinning/disabled state.
 const GIT_REFRESH_TIMEOUT_MS = 10_000;
-const GIT_DIFF_LOADING_FIND_MESSAGE = "Diff content is still loading.";
-const GIT_DIFF_MISSING_FIND_MESSAGE = "This file is no longer changed.";
-const GIT_DIFF_BINARY_FIND_MESSAGE =
-  "Binary diff content is unavailable; only file metadata was searched.";
-const GIT_DIFF_ERROR_FIND_MESSAGE = "Diff content is unavailable.";
-const GIT_DIFF_TRUNCATED_FIND_MESSAGE =
-  "Only the loaded portion of this truncated diff was searched.";
-const GIT_BUNDLE_DIFF_LOADING_FIND_MESSAGE =
-  "Bundle diff content is still loading.";
 const EMPTY_GIT_CHANGED_FILES: ReadonlyArray<GitChangedFile> = [];
 
 interface GitDiffTileProps {
@@ -107,14 +78,6 @@ interface GitDiffTileProps {
   readonly tileId: string;
   readonly isActive: boolean;
 }
-
-type GitFileDiffTileRef = Omit<GitDiffTileRef, "diff"> & {
-  readonly diff: GitDiffFileTilePayload;
-};
-
-type GitBundleDiffTileRef = Omit<GitDiffTileRef, "diff"> & {
-  readonly diff: GitDiffBundleTilePayload;
-};
 
 interface GitDiffTileLiveProps {
   readonly node: GitDiffTileRef;
@@ -694,105 +657,6 @@ function gitFileDiffMetadataUnits(args: {
   ];
 }
 
-function gitBundleDiffFindFileInput(args: {
-  readonly runningDir: string;
-  readonly file: GitChangedFile;
-  readonly collapsed: boolean;
-}): BundleDiffFindFileInput {
-  const fileId = gitBundleDiffFindFileId(args.file);
-  const directory = getDirname(args.file.path);
-  const previousPath = args.file.previousPath ?? "";
-  return {
-    id: fileId,
-    filePath: args.file.path,
-    coverageState: gitBundleDiffFindCoverageState({
-      file: args.file,
-      collapsed: args.collapsed,
-    }),
-    metadataUnits: [
-      {
-        id: `git-bundle-file:${fileId}`,
-        filePath: args.file.path,
-        scopeId: fileId,
-        text: [
-          getBasename(args.file.path),
-          directory.length > 0 ? directory : "Repository root",
-          args.file.path,
-          previousPath,
-          args.file.status,
-          gitStageLabel(args.file.stage),
-          `${args.file.insertions} additions`,
-          `${args.file.deletions} deletions`,
-          args.file.isBinary ? "binary" : "",
-          getBasename(args.runningDir),
-        ]
-          .filter((part) => part.length > 0)
-          .join(" "),
-      },
-    ],
-  };
-}
-
-function gitBundleDiffFindCoverageState(args: {
-  readonly file: GitChangedFile;
-  readonly collapsed: boolean;
-}): BundleDiffFindCoverageState {
-  if (args.file.isBinary) return "binary";
-  if (args.collapsed) return "collapsed";
-  if (args.file.insertions + args.file.deletions > BUNDLE_INLINE_LINE_THRESHOLD)
-    return "large";
-  return "unloaded";
-}
-
-function gitBundleDiffFindFileId(file: GitChangedFile): string {
-  return `git:${file.stage}:${file.path}`;
-}
-
-function gitBundleDiffFindContentIdentity(args: {
-  readonly runningDir: string;
-  readonly bundleGroup: GitDiffBundleTilePayload["bundleGroup"];
-  readonly files: ReadonlyArray<GitChangedFile>;
-  readonly headSha: string | null;
-  readonly ignoreWhitespace: boolean;
-}): string {
-  return JSON.stringify([
-    "git-bundle",
-    args.runningDir,
-    args.bundleGroup,
-    args.headSha,
-    args.ignoreWhitespace,
-    args.files.map((file) => [
-      file.path,
-      file.previousPath,
-      file.stage,
-      file.status,
-      file.stagedOid,
-      file.worktreeOid,
-      file.isBinary,
-      file.insertions,
-      file.deletions,
-      file.sizeBytes,
-    ]),
-  ]);
-}
-
-function gitBundleLoadedPatchCacheKey(args: {
-  readonly node: GitBundleDiffTileRef;
-  readonly file: GitChangedFile;
-  readonly diff: GitGetFileDiffResponse;
-}): string {
-  return [
-    "git-bundle",
-    args.node.instanceId,
-    args.node.diff.runningDir,
-    args.file.path,
-    args.file.stage,
-    args.diff.stagedOid ?? "none",
-    args.diff.worktreeOid ?? "none",
-    args.diff.isTruncated ? "truncated" : "full",
-  ].join(":");
-}
-
 interface GitBundleDiffTileBodyProps {
   readonly node: GitBundleDiffTileRef;
   readonly viewTabId: string;
@@ -803,11 +667,6 @@ function GitBundleDiffTileBody(props: GitBundleDiffTileBodyProps): ReactNode {
   const diffViewerPreferences = useSettingsStore(
     (s) => s.diffViewerPreferences,
   );
-  const updateView = useEpicCanvasStore((s) => s.updateGitDiffTileViewInTab);
-  const nodeId = props.node.id;
-  const nodeView = props.node.view;
-  const collapsedFilePaths = nodeView.collapsedFilePaths;
-  const runningDir = props.node.diff.runningDir;
   const bundleGroup = props.node.diff.bundleGroup;
   // Derive content before any early return so the restoration hooks run
   // unconditionally (React rules of hooks).
@@ -824,105 +683,17 @@ function GitBundleDiffTileBody(props: GitBundleDiffTileBodyProps): ReactNode {
   );
   const { virtuosoRef, restoreStateFrom, isScrolling } =
     useBundleDiffScrollRestoration(props.node.instanceId, files.length > 0);
-  const bundleFindFiles = useMemo(
-    () =>
-      files.map((file) =>
-        gitBundleDiffFindFileInput({
-          runningDir,
-          file,
-          collapsed: collapsedFilePaths.includes(file.path),
-        }),
-      ),
-    [collapsedFilePaths, files, runningDir],
-  );
-  const bundleFindNavigationFiles = useMemo(
-    () =>
-      bundleFindFiles.map((file): BundleDiffFindFileNavigationInput => ({
-        id: file.id,
-        filePath: file.filePath,
-      })),
-    [bundleFindFiles],
-  );
-  const collapsedBundleFindFileIds = useMemo(
-    () =>
-      new Set(
-        bundleFindFiles.flatMap((file) =>
-          collapsedFilePaths.includes(file.filePath) ? [file.id] : [],
-        ),
-      ),
-    [bundleFindFiles, collapsedFilePaths],
-  );
-  const expandBundleFindFile = useCallback(
-    (fileId: string): void => {
-      const file = bundleFindFiles.find((candidate) => candidate.id === fileId);
-      if (file === undefined) return;
-      if (!collapsedFilePaths.includes(file.filePath)) return;
-      updateView(props.viewTabId, nodeId, {
-        ...nodeView,
-        collapsedFilePaths: collapsedFilePaths.filter(
-          (filePath) => filePath !== file.filePath,
-        ),
-      });
-    },
-    [
-      bundleFindFiles,
-      collapsedFilePaths,
-      nodeId,
-      nodeView,
-      props.viewTabId,
-      updateView,
-    ],
-  );
-  const bundleFindNavigation = useBundleDiffFindNavigation({
-    files: bundleFindNavigationFiles,
-    collapsedFileIds: collapsedBundleFindFileIds,
-    expandFile: expandBundleFindFile,
-    virtuosoRef,
-  });
-  const bundleFindContentIdentity = useMemo(
-    () =>
-      gitBundleDiffFindContentIdentity({
-        runningDir,
-        bundleGroup,
-        files,
-        headSha: data?.headSha ?? null,
-        ignoreWhitespace: diffViewerPreferences.ignoreWhitespace,
-      }),
-    [
-      bundleGroup,
-      data?.headSha,
-      diffViewerPreferences.ignoreWhitespace,
+  const { registration: bundleFindRegistration, setRootElement } =
+    useGitBundleDiffFind({
+      node: props.node,
+      viewTabId: props.viewTabId,
       files,
-      runningDir,
-    ],
-  );
-  const bundleFindSourceOverride = useMemo((): DiffTileFindSource | null => {
-    if (props.subscription.error !== null) {
-      return createMissingDiffTileFindSource({
-        coverageMessage: GIT_DIFF_ERROR_FIND_MESSAGE,
-      });
-    }
-    if (props.subscription.isPending) {
-      return createLoadingDiffTileFindSource({
-        coverageMessage: GIT_BUNDLE_DIFF_LOADING_FIND_MESSAGE,
-      });
-    }
-    return null;
-  }, [props.subscription.error, props.subscription.isPending]);
-  const bundleFindRegistration = useRegisterBundleDiffTileFindAdapter({
-    tileInstanceId: props.node.instanceId,
-    tileKind: "git-diff",
-    files: bundleFindFiles,
-    contentIdentity: bundleFindContentIdentity,
-    renderer: bundleFindNavigation,
-    sourceOverride: bundleFindSourceOverride,
-  });
-  const setBundleFindRootElement = useCallback(
-    (element: HTMLDivElement | null): void => {
-      bundleFindNavigation.setRootElement(element);
-    },
-    [bundleFindNavigation],
-  );
+      headSha: data?.headSha ?? null,
+      ignoreWhitespace: diffViewerPreferences.ignoreWhitespace,
+      hasSubscriptionError: props.subscription.error !== null,
+      subscriptionPending: props.subscription.isPending,
+      virtuosoRef,
+    });
 
   if (props.subscription.error !== null) {
     return <SubscriptionErrorState event={props.subscription.error} />;
@@ -941,7 +712,7 @@ function GitBundleDiffTileBody(props: GitBundleDiffTileBodyProps): ReactNode {
 
   return (
     <BundleDiffFindRegistrationProvider value={bundleFindRegistration}>
-      <div ref={setBundleFindRootElement} className="h-full min-h-0">
+      <div ref={setRootElement} className="h-full min-h-0">
         <Virtuoso
           ref={virtuosoRef}
           restoreStateFrom={restoreStateFrom}
@@ -964,293 +735,6 @@ function GitBundleDiffTileBody(props: GitBundleDiffTileBodyProps): ReactNode {
       </div>
     </BundleDiffFindRegistrationProvider>
   );
-}
-
-interface BundleFileSectionProps {
-  readonly node: GitBundleDiffTileRef;
-  readonly viewTabId: string;
-  readonly file: GitChangedFile;
-  readonly headSha: string;
-  readonly diffViewerPreferences: DiffViewerPreferences;
-}
-
-function BundleFileSection(props: BundleFileSectionProps): ReactNode {
-  const bundleFindRegistration = useBundleDiffFindRegistrationContext();
-  const openTileInTab = useEpicCanvasStore((s) => s.openTileInTab);
-  const toggleCollapsed = useEpicCanvasStore(
-    (s) => s.toggleGitDiffBundleFileCollapsedInTab,
-  );
-  const bundleFindFileId = gitBundleDiffFindFileId(props.file);
-  const collapsed = props.node.view.collapsedFilePaths.includes(
-    props.file.path,
-  );
-  const totalChangedLines = props.file.insertions + props.file.deletions;
-  const isLarge = totalChangedLines > BUNDLE_INLINE_LINE_THRESHOLD;
-
-  const handleOpenFileTile = useCallback(() => {
-    openTileInTab(
-      props.viewTabId,
-      makeGitFileDiffTileForFile({
-        hostId: props.node.hostId,
-        runningDir: props.node.diff.runningDir,
-        file: props.file,
-      }),
-    );
-  }, [
-    openTileInTab,
-    props.file,
-    props.node.hostId,
-    props.node.diff.runningDir,
-    props.viewTabId,
-  ]);
-
-  const handleToggleCollapsed = useCallback(() => {
-    toggleCollapsed(props.viewTabId, props.node.id, props.file.path);
-  }, [props.file.path, props.node.id, props.viewTabId, toggleCollapsed]);
-  useEffect(() => {
-    bundleFindRegistration.notifySectionMounted(bundleFindFileId);
-  }, [bundleFindFileId, bundleFindRegistration]);
-  const leading = useMemo(
-    () => <DiffBundleCollapseChevron collapsed={collapsed} />,
-    [collapsed],
-  );
-  const headerRow = useMemo(
-    () => (
-      <GitChangedFileRow
-        file={props.file}
-        density="tile"
-        active={false}
-        leading={leading}
-        trailing={null}
-        pathRanges={NO_HIGHLIGHT}
-        onClick={handleToggleCollapsed}
-        onDoubleClick={undefined}
-        ariaExpanded={!collapsed}
-        className={undefined}
-      />
-    ),
-    [collapsed, handleToggleCollapsed, leading, props.file],
-  );
-
-  return (
-    <DiffBundleFileSectionFrame
-      collapsed={collapsed}
-      headerRow={headerRow}
-      onOpenFileTile={handleOpenFileTile}
-      findFilePath={props.file.path}
-      bundleFindFileId={bundleFindFileId}
-    >
-      <BundleFileSectionBody
-        node={props.node}
-        file={props.file}
-        headSha={props.headSha}
-        isLarge={isLarge}
-        bundleFindFileId={bundleFindFileId}
-        onOpenFileTile={handleOpenFileTile}
-        diffViewerPreferences={props.diffViewerPreferences}
-      />
-    </DiffBundleFileSectionFrame>
-  );
-}
-
-interface BundleFileSectionBodyProps {
-  readonly node: GitBundleDiffTileRef;
-  readonly file: GitChangedFile;
-  readonly headSha: string;
-  readonly isLarge: boolean;
-  readonly bundleFindFileId: string;
-  readonly onOpenFileTile: () => void;
-  readonly diffViewerPreferences: DiffViewerPreferences;
-}
-
-function BundleFileSectionBody(props: BundleFileSectionBodyProps): ReactNode {
-  const bundleFindRegistration = useBundleDiffFindRegistrationContext();
-  useEffect(() => {
-    if (!props.file.isBinary) return;
-    bundleFindRegistration.registerCoverageState(
-      props.bundleFindFileId,
-      "binary",
-    );
-  }, [bundleFindRegistration, props.bundleFindFileId, props.file.isBinary]);
-
-  if (props.file.isBinary) {
-    return <BundleBinaryPlaceholder file={props.file} />;
-  }
-  if (props.isLarge) {
-    return (
-      <div className="p-4">
-        <div className="flex items-center justify-between gap-3 rounded-md border border-border/70 bg-muted/30 p-3">
-          <div className="min-w-0">
-            <div className="text-ui-sm font-medium">Large diff</div>
-            <StartTruncatedText className="block min-w-0 text-ui-xs text-muted-foreground">
-              {props.file.path}
-            </StartTruncatedText>
-          </div>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={props.onOpenFileTile}
-          >
-            Open file
-          </Button>
-        </div>
-      </div>
-    );
-  }
-  return (
-    <BundleInlineDiff
-      node={props.node}
-      file={props.file}
-      headSha={props.headSha}
-      bundleFindFileId={props.bundleFindFileId}
-      diffViewerPreferences={props.diffViewerPreferences}
-    />
-  );
-}
-
-interface BundleInlineDiffProps {
-  readonly node: GitBundleDiffTileRef;
-  readonly file: GitChangedFile;
-  readonly headSha: string;
-  readonly bundleFindFileId: string;
-  readonly diffViewerPreferences: DiffViewerPreferences;
-}
-
-function BundleInlineDiff(props: BundleInlineDiffProps): ReactNode {
-  const bundleFindRegistration = useBundleDiffFindRegistrationContext();
-  const diffIdentity = fileDiffLoadFullIdentity({
-    runningDir: props.node.diff.runningDir,
-    filePath: props.file.path,
-    previousPath: props.file.previousPath,
-    stage: props.file.stage,
-    headSha: props.headSha,
-    stagedOid: props.file.stagedOid,
-    worktreeOid: props.file.worktreeOid,
-    ignoreWhitespace: props.diffViewerPreferences.ignoreWhitespace,
-  });
-  const [fullDiffIdentity, setFullDiffIdentity] = useState<string | null>(null);
-  const byteBudget =
-    fullDiffIdentity === diffIdentity
-      ? null
-      : DEFAULT_GIT_FILE_DIFF_BYTE_BUDGET;
-
-  const diffQuery = useGitGetFileDiffQuery({
-    hostId: props.node.hostId,
-    runningDir: props.node.diff.runningDir,
-    filePath: props.file.path,
-    previousPath: props.file.previousPath,
-    stage: props.file.stage,
-    headSha: props.headSha,
-    stagedOid: props.file.stagedOid,
-    worktreeOid: props.file.worktreeOid,
-    ignoreWhitespace: props.diffViewerPreferences.ignoreWhitespace,
-    byteBudget,
-    enabled: true,
-  });
-  useEffect(() => {
-    if (diffQuery.error === null) return;
-    bundleFindRegistration.registerCoverageState(
-      props.bundleFindFileId,
-      "failed",
-    );
-  }, [bundleFindRegistration, diffQuery.error, props.bundleFindFileId]);
-  useEffect(() => {
-    const diff = diffQuery.data;
-    if (diff === undefined) return;
-    if (diff.isBinary) {
-      bundleFindRegistration.registerCoverageState(
-        props.bundleFindFileId,
-        "binary",
-      );
-      return;
-    }
-    bundleFindRegistration.registerLoadedPatch({
-      fileId: props.bundleFindFileId,
-      patch: diff.patch,
-      cacheKey: gitBundleLoadedPatchCacheKey({
-        node: props.node,
-        file: props.file,
-        diff,
-      }),
-      isTruncated: diff.isTruncated,
-    });
-  }, [
-    bundleFindRegistration,
-    diffQuery.data,
-    props.bundleFindFileId,
-    props.file,
-    props.node,
-  ]);
-
-  if (diffQuery.isPending) {
-    return (
-      <DiffContentLoadingSkeleton
-        mode={props.diffViewerPreferences.mode}
-        sizing="content"
-        density="compact"
-        sectionIndex={0}
-      />
-    );
-  }
-  if (diffQuery.error !== null)
-    return <GitErrorBlock error={diffQuery.error} />;
-
-  if (diffQuery.data.isBinary) {
-    return <BundleBinaryPlaceholder file={props.file} />;
-  }
-
-  return (
-    <FileDiffContent
-      diff={diffQuery.data}
-      mode={props.diffViewerPreferences.mode}
-      wordWrap={props.diffViewerPreferences.wordWrap}
-      backgrounds={props.diffViewerPreferences.backgrounds}
-      lineNumbers={props.diffViewerPreferences.lineNumbers}
-      indicatorStyle={props.diffViewerPreferences.indicatorStyle}
-      sizing="content"
-      scrollContainerRef={null}
-      onScroll={null}
-      onLoadFull={() => {
-        setFullDiffIdentity(diffIdentity);
-      }}
-    />
-  );
-}
-
-function BundleBinaryPlaceholder(props: {
-  readonly file: GitChangedFile;
-}): ReactNode {
-  return (
-    <div className="flex items-center justify-between gap-3 p-4 text-ui-sm text-muted-foreground">
-      <span>Binary file</span>
-      <Badge variant="outline">
-        {Math.round(props.file.sizeBytes / 1024)} KB
-      </Badge>
-    </div>
-  );
-}
-
-function fileDiffLoadFullIdentity(args: {
-  readonly runningDir: string;
-  readonly filePath: string;
-  readonly previousPath: string | null;
-  readonly stage: GitChangedFile["stage"];
-  readonly headSha: string;
-  readonly stagedOid: string | null;
-  readonly worktreeOid: string | null;
-  readonly ignoreWhitespace: boolean;
-}): string {
-  return JSON.stringify([
-    args.runningDir,
-    args.filePath,
-    args.previousPath,
-    args.stage,
-    args.headSha,
-    args.stagedOid,
-    args.worktreeOid,
-    args.ignoreWhitespace,
-  ]);
 }
 
 function diffToolbarView(

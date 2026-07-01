@@ -144,8 +144,7 @@ function createReadyAdapter(tileInstanceId: string): TileFindAdapter {
     next: () => undefined,
     previous: () => undefined,
     clear: () => undefined,
-    replaceCurrent: () => undefined,
-    replaceAll: () => undefined,
+    replace: null,
   };
 }
 

@@ -295,8 +295,7 @@ function createMenuFindAdapter(
     next: nextMock,
     previous: previousMock,
     clear: vi.fn(),
-    replaceCurrent: vi.fn(),
-    replaceAll: vi.fn(),
+    replace: null,
     nextMock,
     previousMock,
   };

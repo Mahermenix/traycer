@@ -29,6 +29,7 @@ export type {
   TileFindInput,
   TileFindOwnerBlocker,
   TileFindOwnerBlockerReason,
+  TileFindReplace,
   TileFindStateSnapshot,
   TileFindStatus,
   TileFindTargetRecord,

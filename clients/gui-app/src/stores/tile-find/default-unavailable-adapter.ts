@@ -4,7 +4,6 @@ import {
   type TileFindAdapter,
   type TileFindInput,
   type TileFindStateSnapshot,
-  type TileReplaceInput,
 } from "@/stores/tile-find/types";
 
 const DEFAULT_UNAVAILABLE_MESSAGE =
@@ -67,22 +66,10 @@ export function createUnavailableTileFindAdapter(args: {
     );
   };
 
-  const updateFromReplaceInput = (input: TileReplaceInput): void => {
-    publish(
-      createUnavailableTileFindSnapshot({
-        tileKind: args.tileKind,
-        requestId: input.requestId,
-        query: input.query,
-        matchCase: input.matchCase,
-        replaceText: input.replaceText,
-        message: args.message,
-      }),
-    );
-  };
-
   return {
     tileInstanceId: args.tileInstanceId,
     tileKind: args.tileKind,
+    replace: null,
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
       listeners.add(listener);
@@ -94,8 +81,6 @@ export function createUnavailableTileFindAdapter(args: {
     next: () => undefined,
     previous: () => undefined,
     clear: () => undefined,
-    replaceCurrent: updateFromReplaceInput,
-    replaceAll: updateFromReplaceInput,
   };
 }
 

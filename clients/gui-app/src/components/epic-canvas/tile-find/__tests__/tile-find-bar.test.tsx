@@ -107,12 +107,16 @@ function createAdapter(args: {
     next: nextMock,
     previous: previousMock,
     clear: vi.fn(),
-    replaceCurrent: (input) => {
-      replaceInputs.push(input);
-    },
-    replaceAll: (input) => {
-      replaceInputs.push(input);
-    },
+    replace: args.capabilities.has("replace")
+      ? {
+          replaceCurrent: (input) => {
+            replaceInputs.push(input);
+          },
+          replaceAll: (input) => {
+            replaceInputs.push(input);
+          },
+        }
+      : null,
     nextMock,
     previousMock,
     publish,
@@ -476,6 +480,36 @@ describe("<TileFindBar />", () => {
         { requestId: 1, query: "needle", matchCase: false },
       ]);
       expect(adapter.nextMock.mock.calls).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a pending chat search when closing a replace-capable bar", () => {
+    vi.useFakeTimers();
+    try {
+      const adapter = createAdapter({
+        tileInstanceId: "tile-chat",
+        tileKind: "chat",
+        capabilities: REPLACE_ALL,
+      });
+      registerAndOpen(adapter);
+      render(<TileFindBar tileInstanceId="tile-chat" />);
+
+      const input = screen.getByRole("textbox", { name: "Find in tile" });
+      fireEvent.change(input, { target: { value: "needle" } });
+      expect(adapter.searchInputs).toHaveLength(0);
+
+      fireEvent.click(screen.getByLabelText("Close find"));
+      expect(
+        screen.queryByRole("textbox", { name: "Find in tile" }),
+      ).toBeNull();
+
+      act(() => {
+        vi.advanceTimersByTime(80);
+      });
+
+      expect(adapter.searchInputs).toHaveLength(0);
     } finally {
       vi.useRealTimers();
     }

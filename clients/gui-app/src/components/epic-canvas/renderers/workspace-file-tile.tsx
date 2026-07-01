@@ -12,6 +12,10 @@ import {
   type WorkspaceFileFindEnvironment,
   type WorkspaceFileSourceFindTarget,
 } from "@/components/epic-canvas/workspace-file/workspace-file-find-adapter";
+import {
+  clearSourceFindHighlights,
+  paintSourceFindHighlights,
+} from "@/components/epic-canvas/workspace-file/workspace-file-source-find-highlight";
 import type { WorkspaceFileRef } from "@/stores/epics/canvas/types";
 import {
   clearWorkspaceFileRevealTarget,
@@ -129,7 +133,12 @@ function WorkspaceFileTileLive(props: {
 }) {
   const { node, revealTarget } = props;
   const query = useWorkspaceReadFile(node.workspacePath, node.filePath);
-  const content = readFileContent(query.data);
+  const rawContent = readFileContent(query.data);
+  const content = useMemo(
+    () =>
+      rawContent === null ? null : normalizeWorkspaceFileContent(rawContent),
+    [rawContent],
+  );
   const displayError = readFileDisplayError(
     readFilePayloadError(query.data),
     query.isError,
@@ -485,6 +494,7 @@ function CodeEditorPreview(props: {
   const [lineHighlight, setLineHighlight] =
     useState<WorkspaceFileLineHighlight | null>(null);
   const gutterRowRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const codeContentRef = useRef<HTMLDivElement | null>(null);
 
   // Reveal sync (legitimate DOM/external-store sync, not derived state): scroll
   // the targeted line into view, paint a transient highlight band, then CONSUME
@@ -517,7 +527,7 @@ function CodeEditorPreview(props: {
   useEffect(() => {
     if (props.findTarget === null) return;
     const clampedLine = Math.min(
-      Math.max(props.findTarget.line, 1),
+      Math.max(props.findTarget.active.line, 1),
       lines.length,
     );
     const row = gutterRowRefs.current[clampedLine - 1];
@@ -526,6 +536,27 @@ function CodeEditorPreview(props: {
       row.scrollIntoView({ block: "center", behavior: "auto" });
     }
   }, [props.findTarget, lines.length]);
+
+  // Paint the matched text spans over the rendered code. Re-runs when the
+  // active match changes (new target) and when the rendered DOM swaps between
+  // the Shiki output and the plain `<pre>` fallback (`highlightedNodes`), since
+  // either invalidates the offset-to-text-node mapping the painter relies on.
+  useEffect(() => {
+    const root = codeContentRef.current;
+    if (root === null) return;
+    if (props.findTarget === null) {
+      clearSourceFindHighlights();
+      return;
+    }
+    paintSourceFindHighlights({
+      root,
+      matches: props.findTarget.matches,
+      activeOffset: props.findTarget.active.offset,
+    });
+    return () => {
+      clearSourceFindHighlights();
+    };
+  }, [props.findTarget, highlightedNodes]);
 
   return (
     <div className="min-h-full w-max min-w-full bg-canvas font-mono text-code leading-relaxed">
@@ -546,19 +577,21 @@ function CodeEditorPreview(props: {
               }}
               data-workspace-file-line={line}
               data-workspace-file-find-active={
-                props.findTarget !== null && props.findTarget.line === line
+                props.findTarget !== null &&
+                props.findTarget.active.line === line
                   ? "true"
                   : undefined
               }
               data-workspace-file-find-column={
-                props.findTarget !== null && props.findTarget.line === line
-                  ? props.findTarget.column
+                props.findTarget !== null &&
+                props.findTarget.active.line === line
+                  ? props.findTarget.active.column
                   : undefined
               }
               className={cn(
                 "tabular-nums",
                 (line === lineHighlight?.line ||
-                  line === props.findTarget?.line) &&
+                  line === props.findTarget?.active.line) &&
                   "font-medium text-primary",
               )}
             >
@@ -573,7 +606,7 @@ function CodeEditorPreview(props: {
             style={{ top: lineHighlight.top, height: lineHighlight.height }}
           />
         ) : null}
-        <div className="min-w-0 flex-1 p-4">
+        <div ref={codeContentRef} className="min-w-0 flex-1 p-4">
           {highlightedNodes !== null ? (
             <div
               className="traycer-md-shiki"
@@ -611,6 +644,10 @@ function computeViewMode(
 function lineNumbers(code: string): ReadonlyArray<number> {
   const lineCount = code.length === 0 ? 1 : code.split("\n").length;
   return Array.from({ length: lineCount }, (_, index) => index + 1);
+}
+
+function normalizeWorkspaceFileContent(content: string): string {
+  return content.replace(/\r\n?/g, "\n");
 }
 
 function languageForFileName(fileName: string): string {

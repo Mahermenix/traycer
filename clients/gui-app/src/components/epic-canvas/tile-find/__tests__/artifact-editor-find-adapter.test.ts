@@ -5,9 +5,21 @@ import type { Transaction } from "@tiptap/pm/state";
 import StarterKit from "@tiptap/starter-kit";
 import { ArtifactFindExtension, getArtifactFindState } from "@/editor-core";
 import type { TileKindId } from "@/stores/epics/canvas/tile-kinds";
+import {
+  useTileFindStore,
+  type TileFindAdapter,
+  type TileFindReplace,
+} from "@/stores/tile-find";
 import { createArtifactEditorFindAdapter } from "../artifact-editor-find-adapter";
 
 const editors: Editor[] = [];
+
+function requireReplace(adapter: TileFindAdapter): TileFindReplace {
+  if (adapter.replace === null) {
+    throw new Error("Expected a replace-capable artifact editor adapter.");
+  }
+  return adapter.replace;
+}
 
 function makeEditor(content: string, editable: boolean): Editor {
   const editor = new Editor({
@@ -36,6 +48,7 @@ afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   editors.splice(0).forEach((editor) => editor.destroy());
+  useTileFindStore.getState().resetForTests();
 });
 
 describe("createArtifactEditorFindAdapter", () => {
@@ -46,6 +59,9 @@ describe("createArtifactEditorFindAdapter", () => {
       "spec-readonly",
     );
     expect([...readOnly.getSnapshot().capabilities]).toEqual(["find"]);
+    // The replace boundary must agree with capabilities: a read-only artifact
+    // exposes no replace surface, so the store refuses replace structurally.
+    expect(readOnly.replace).toBeNull();
 
     const editable = makeAdapter(
       makeEditor("<p>alpha</p>", true),
@@ -57,6 +73,47 @@ describe("createArtifactEditorFindAdapter", () => {
       "replace",
       "replaceAll",
     ]);
+    expect(editable.replace).not.toBeNull();
+  });
+
+  it("tracks editability changes on the live replace boundary", () => {
+    const editor = makeEditor("<p>alpha</p>", true);
+    const adapter = makeAdapter(editor, "spec", "spec-toggle");
+    expect(adapter.replace).not.toBeNull();
+
+    editor.setEditable(false);
+    expect(adapter.replace).toBeNull();
+
+    editor.setEditable(true);
+    expect(adapter.replace).not.toBeNull();
+  });
+
+  it("refuses read-only artifact replace through the store without mutating request state", () => {
+    const editor = makeEditor("<p>alpha beta</p>", false);
+    const adapter = makeAdapter(editor, "spec", "readonly-store");
+    useTileFindStore.getState().registerTarget({
+      tileInstanceId: adapter.tileInstanceId,
+      contentId: "readonly-content",
+      viewTabId: "view-1",
+      tileId: "readonly-tile",
+      epicId: "epic-1",
+      tileKind: adapter.tileKind,
+      isEligible: true,
+      adapter,
+    });
+    useTileFindStore.getState().setQuery(adapter.tileInstanceId, "alpha");
+    const before =
+      useTileFindStore.getState().uiByTileInstanceId[adapter.tileInstanceId];
+
+    expect(adapter.replace).toBeNull();
+    useTileFindStore.getState().replaceCurrent(adapter.tileInstanceId);
+    useTileFindStore.getState().replaceAll(adapter.tileInstanceId);
+
+    const after =
+      useTileFindStore.getState().uiByTileInstanceId[adapter.tileInstanceId];
+    expect(after?.currentRequestId).toBe(before?.currentRequestId);
+    expect(after?.lastSnapshot.status).toBe(before?.lastSnapshot.status);
+    expect(editor.getText()).toBe("alpha beta");
   });
 
   it.each(["spec", "ticket", "story", "review"] as const)(
@@ -232,7 +289,7 @@ describe("createArtifactEditorFindAdapter", () => {
     editor.view.dispatch(
       editor.state.tr.insertText("beto", firstMatch.from, firstMatch.to),
     );
-    void adapter.replaceCurrent({
+    void requireReplace(adapter).replaceCurrent({
       requestId: 2,
       query: "beta",
       matchCase: false,
@@ -254,7 +311,7 @@ describe("createArtifactEditorFindAdapter", () => {
     };
     editor.on("transaction", handleTransaction);
 
-    void adapter.replaceAll({
+    void requireReplace(adapter).replaceAll({
       requestId: 1,
       query: "foo",
       matchCase: false,

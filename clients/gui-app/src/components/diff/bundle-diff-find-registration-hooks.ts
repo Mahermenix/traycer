@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import type { VirtuosoHandle } from "react-virtuoso";
+import { queryElementByDataAttribute } from "@/components/diff/data-attribute-lookup";
 import {
   clearDiffFindHighlights,
   revealDiffFindMatches,
@@ -251,10 +252,12 @@ export function useBundleDiffFindNavigation(args: {
         });
       }
 
-      const section = root.querySelector(
-        `[data-bundle-diff-file-id="${attributeSelectorValue(fileId)}"]`,
-      );
-      if (!(section instanceof HTMLElement)) return "pending";
+      const section = queryElementByDataAttribute({
+        root,
+        attributeName: "data-bundle-diff-file-id",
+        value: fileId,
+      });
+      if (section === null) return "pending";
 
       const scopedMatches = matches.filter(
         (match) => match.unit.scopeId === fileId,
@@ -279,10 +282,12 @@ export function useBundleDiffFindNavigation(args: {
     const activeMatch = lastActiveMatchRef.current;
     if (activeMatch === null || activeMatch.unit.scopeId !== fileId) return;
 
-    const section = root.querySelector(
-      `[data-bundle-diff-file-id="${attributeSelectorValue(fileId)}"]`,
-    );
-    if (!(section instanceof HTMLElement)) return;
+    const section = queryElementByDataAttribute({
+      root,
+      attributeName: "data-bundle-diff-file-id",
+      value: fileId,
+    });
+    if (section === null) return;
 
     const scopedMatches = lastMatchesRef.current.filter(
       (match) => match.unit.scopeId === fileId,
@@ -324,8 +329,4 @@ function ensureSession(
       ? current
       : emptySession(contentIdentity);
   return update(state);
-}
-
-function attributeSelectorValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }

@@ -120,6 +120,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
         }}
         isStreaming={false}
         endState={null}
+        stopped={false}
         progress={null}
         backgroundOutput={null}
         backgroundTask={false}
@@ -162,6 +163,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
           }}
           isStreaming={false}
           endState={null}
+          stopped={false}
           progress={null}
           backgroundOutput={null}
           backgroundTask={false}
@@ -199,6 +201,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
           }}
           isStreaming={false}
           endState={null}
+          stopped={false}
           progress={null}
           backgroundOutput={null}
           backgroundTask={false}
@@ -229,6 +232,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
         agentMessageSend={null}
         isStreaming={false}
         endState={null}
+        stopped={false}
         progress={null}
         backgroundOutput={null}
         backgroundTask={false}
@@ -258,6 +262,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
         }}
         isStreaming={false}
         endState={null}
+        stopped={false}
         progress={null}
         backgroundOutput={null}
         backgroundTask={false}
@@ -297,6 +302,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         isStreaming={false}
         endState={null}
+        stopped={false}
         progress={null}
         backgroundOutput={null}
         backgroundTask={false}
@@ -327,6 +333,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         isStreaming={false}
         endState={null}
+        stopped={false}
         progress={null}
         backgroundOutput={null}
         backgroundTask={false}
@@ -355,6 +362,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         isStreaming={false}
         endState={null}
+        stopped={false}
         progress={null}
         backgroundOutput={{
           stdout: "hello\n",
@@ -391,6 +399,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         isStreaming={false}
         endState={null}
+        stopped={false}
         progress={null}
         backgroundOutput={{ stdout: "", stderr: "", truncated: false }}
         backgroundTask
@@ -404,11 +413,13 @@ describe("<ToolSegment /> input rendering", () => {
     expect(screen.getByText("7s")).toBeTruthy();
   });
 
-  it("shows a neutral stopped badge for a stopped background command", () => {
+  it("shows a neutral stopped badge from the legacy 'stopped: ...' error-string convention", () => {
+    // Back-compat: blocks persisted before the `stopped` boolean field existed
+    // carry no signal except this string prefix on `error`.
     render(
       <ToolSegment
         headerFindUnitId={null}
-        id="tool-background-stopped"
+        id="tool-background-stopped-legacy"
         toolName="Bash"
         {...inputProps("Bash", {
           command: "sleep 60",
@@ -418,6 +429,39 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         isStreaming={false}
         endState={null}
+        stopped={false}
+        progress={null}
+        backgroundOutput={null}
+        backgroundTask
+        startedAt={0}
+        durationMs={7_600}
+        variant="card"
+      />,
+    );
+
+    expect(screen.getByText("stopped")).toBeTruthy();
+    expect(screen.getByText("7s")).toBeTruthy();
+    expect(screen.queryByText("error")).toBeNull();
+  });
+
+  it("shows a neutral stopped badge from the authoritative `stopped` field, not the destructive error badge", () => {
+    // `status: "errored"` with `stopped: true` is how the host now reports an
+    // explicit stop (deadline-killed Monitor, user-stopped command) - no
+    // reliance on sniffing the error string.
+    render(
+      <ToolSegment
+        headerFindUnitId={null}
+        id="tool-background-stopped-authoritative"
+        toolName="Bash"
+        {...inputProps("Bash", {
+          command: "sleep 60",
+          run_in_background: true,
+        })}
+        error="Monitor deadline exceeded"
+        agentMessageSend={null}
+        isStreaming={false}
+        endState={null}
+        stopped
         progress={null}
         backgroundOutput={null}
         backgroundTask
@@ -457,6 +501,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         isStreaming
         endState={null}
+        stopped={false}
         progress={null}
         backgroundOutput={null}
         backgroundTask
@@ -486,6 +531,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         isStreaming
         endState={null}
+        stopped={false}
         progress="Fetched 3/10 pages"
         backgroundOutput={null}
         backgroundTask={false}
@@ -512,6 +558,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         isStreaming={false}
         endState={null}
+        stopped={false}
         progress="Fetched 10/10 pages"
         backgroundOutput={null}
         backgroundTask={false}
@@ -537,6 +584,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         isStreaming={false}
         endState="interrupted"
+        stopped={false}
         progress={null}
         backgroundOutput={null}
         backgroundTask={false}
@@ -557,6 +605,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         isStreaming={false}
         endState="superseded"
+        stopped={false}
         progress={null}
         backgroundOutput={null}
         backgroundTask={false}

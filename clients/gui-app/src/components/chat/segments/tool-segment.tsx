@@ -59,10 +59,16 @@ interface ToolSegmentProps {
   // Terminal outcome when the turn ended mid-call (else null): drives a neutral
   // "stopped"/"superseded" badge instead of a spinner.
   endState: SegmentEndState;
+  // True when `status === "errored"` was an explicit stop (deadline-killed
+  // Monitor, user-stopped command) rather than a genuine failure. Authoritative
+  // signal from the host; `isStoppedToolError` below still sniffs the legacy
+  // `"stopped: ..."` error-string convention as a fallback for blocks persisted
+  // before this field existed.
+  stopped: boolean;
   // Latest harness progress line for an in-flight call (null when none).
   progress: string | null;
   backgroundOutput: BackgroundTaskOutput | null;
-  backgroundTask: boolean;
+  backgroundTask: boolean | null;
   // Wall-clock start (epoch ms) driving the elapsed heartbeat while streaming.
   startedAt: number;
   durationMs: number | null;
@@ -152,12 +158,12 @@ function ToolBadge({ state, endState }: ToolBadgeProps) {
     );
   }
   if (state === "stopped") {
-    return <ToolStateBadge label="stopped" />;
+    return <SegmentEndStateBadge endState={null} stopped />;
   }
   if (state === "background-complete") {
     return <ToolStateBadge label="completed" />;
   }
-  return <SegmentEndStateBadge endState={endState} />;
+  return <SegmentEndStateBadge endState={endState} stopped={false} />;
 }
 
 function ToolStateBadge({ label }: { readonly label: string }) {
@@ -168,7 +174,11 @@ function ToolStateBadge({ label }: { readonly label: string }) {
   );
 }
 
-function isStoppedToolError(error: string | null): boolean {
+// Authoritative `stopped` field takes precedence; the legacy `"stopped: ..."`
+// error-string prefix is a fallback for blocks persisted before the field
+// existed (it parses as `stopped: false` via the schema default).
+function isStoppedToolError(stopped: boolean, error: string | null): boolean {
+  if (stopped) return true;
   return error !== null && error.toLowerCase().startsWith("stopped:");
 }
 
@@ -247,6 +257,7 @@ function GenericToolSegment(props: ToolSegmentProps) {
     error,
     isStreaming,
     endState,
+    stopped,
     progress,
     backgroundOutput,
     backgroundTask,
@@ -255,7 +266,7 @@ function GenericToolSegment(props: ToolSegmentProps) {
     id,
   } = props;
   const { variant } = props;
-  const isStopped = isStoppedToolError(error);
+  const isStopped = isStoppedToolError(stopped, error);
   const hasError = error !== null && error.length > 0 && !isStopped;
   const isBackgroundComplete =
     (backgroundTask || backgroundOutput !== null) &&

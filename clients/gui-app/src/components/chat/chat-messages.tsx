@@ -1,15 +1,5 @@
 import { ChatEmptyState } from "@/components/chat/chat-empty-state";
-import {
-  buildChatFindRows,
-  type ChatFindAdapter,
-  type ChatFindReconcileTarget,
-  type ChatFindRevealTarget,
-  createChatFindAdapter,
-} from "@/components/chat/chat-find";
-import {
-  serializeChatCollapsibleKey,
-  type ChatCollapsibleKey,
-} from "@/components/chat/chat-collapsible-key";
+import { useChatFindController } from "@/components/chat/use-chat-find-controller";
 import { ChatMeasuredItemChangeContext } from "@/components/chat/chat-measured-item-change-context";
 import {
   ChatMessage,
@@ -38,7 +28,6 @@ import {
   type ChatUserMinimapItem,
 } from "@/components/chat/chat-user-message-minimap-items";
 import { ScrollToBottomChip } from "@/components/chat/scroll-to-bottom-chip";
-import { TileFindContext } from "@/components/epic-canvas/tile-find/tile-find-adapter-context";
 import type { NextStepActionHandler } from "@/components/chat/segments/next-steps-action-group";
 import { useAnimationFrameThrottle } from "@/hooks/use-animation-frame-throttle";
 import { cn } from "@/lib/utils";
@@ -48,12 +37,10 @@ import { useScrollRestoration } from "@/hooks/scroll/use-scroll-restoration";
 import { ActivityGroupOpenStoreProvider } from "@/stores/chats/activity-group-open-store";
 import { A2AOpenStoreProvider } from "@/stores/chats/a2a-open-store";
 import { ChatFindForceStoreProvider } from "@/stores/chats/chat-find-force-store";
-import { useSetChatFindForcedOpen } from "@/stores/chats/chat-find-force-store-context";
 import { createActivityGroupOpenStore } from "@/stores/chats/activity-group-open-store-core";
 import { ChatOpenStoreScopeProvider } from "@/stores/chats/open-store-scope";
 import { useSubagentOpenStore } from "@/stores/chats/subagent-open-store";
 import { useToolOpenStore } from "@/stores/chats/tool-open-store";
-import { arrayShallowEq } from "@/stores/epics/open-epic/projection-helpers";
 import type {
   ChatMessage as ChatMessageModel,
   MessageSegment,
@@ -63,13 +50,13 @@ import {
   VirtuosoMessageList,
   VirtuosoMessageListLicense,
   type DataWithScrollModifier,
+  type ItemLocation,
   type ListScrollLocation,
   type ScrollModifier,
   type VirtuosoMessageListMethods,
   type VirtuosoMessageListProps,
 } from "@virtuoso.dev/message-list";
 import {
-  use,
   useCallback,
   useLayoutEffect,
   useMemo,
@@ -115,8 +102,6 @@ interface ChatListContext {
   ) => ChatMessageActions | null;
   readonly nextStepActions: NextStepActionHandler | null;
 }
-
-const FIND_REVEAL_ANCHOR_RETRY_LIMIT = 3;
 
 // Keep the overscan conservative: every mounted row is ResizeObserver-measured
 // by Virtuoso, and panel resizing can otherwise force too many chat rows to
@@ -183,12 +168,6 @@ interface TouchClientYList {
   readonly [index: number]: {
     readonly clientY: number;
   };
-}
-
-interface FindOpenedTargetState {
-  readonly messageId: string;
-  readonly unitId: string;
-  readonly chainKeyIds: ReadonlyArray<string>;
 }
 
 /**
@@ -276,16 +255,10 @@ function ChatMessagesInner(props: ChatMessagesProps) {
   );
   const virtuosoRef =
     useRef<VirtuosoMessageListMethods<ChatVirtuosoItem, ChatListContext>>(null);
-  const chatFindAdapterRef = useRef<ChatFindAdapter | null>(null);
-  const activeFindRevealRef = useRef<ChatFindRevealTarget | null>(null);
-  const findRevealGenerationRef = useRef(0);
-  const findRevealFrameRef = useRef<number | null>(null);
-  const findRevealAnchorMissCountRef = useRef(0);
-  const findRevealSkipUnitScrollRef = useRef(false);
-  const findOpenedChainRef = useRef<ReadonlyArray<ChatCollapsibleKey>>([]);
-  const findOpenedTargetRef = useRef<FindOpenedTargetState | null>(null);
-  const mountedHighlightSyncFrameRef = useRef<number | null>(null);
-  const setFindForcedOpen = useSetChatFindForcedOpen();
+  // The find controller triggers a measured-item change on reveal/reconcile;
+  // the concrete callback lives in this component, so the hook reads it lazily
+  // through this ref (set in a layout effect below).
+  const requestMeasuredItemChangeRef = useRef<() => void>(() => undefined);
 
   // "Following latest" is user intent. Virtuoso's `isAtBottom` is only a
   // strict measurement signal, so streaming markdown height drift must not be
@@ -331,11 +304,6 @@ function ChatMessagesInner(props: ChatMessagesProps) {
     [messages],
   );
   const messageIndexByIdRef = useRef(messageIndexById);
-  const chatFindRows = useMemo(
-    () => buildChatFindRows(messages, instanceId),
-    [instanceId, messages],
-  );
-  const chatFindRowsRef = useRef(chatFindRows);
   const scrollRequestRef = useRef(scrollRequest);
   const handledScrollRequestIdRef = useRef<number | null>(null);
   const backgroundToolBlockIdsRef = useRef(backgroundToolBlockIds);
@@ -680,28 +648,35 @@ function ChatMessagesInner(props: ChatMessagesProps) {
     });
   }, [cancelScrollRestorationRetry, setBottomFollowingIfChanged]);
 
-  const cancelFindRevealFrame = useCallback((): void => {
-    if (findRevealFrameRef.current !== null) {
-      window.cancelAnimationFrame(findRevealFrameRef.current);
-      findRevealFrameRef.current = null;
-    }
+  const getScroller = useCallback(
+    (): HTMLElement | null => virtuosoRef.current?.scrollerElement() ?? null,
+    [],
+  );
+
+  const scrollToItem = useCallback((location: ItemLocation): void => {
+    virtuosoRef.current?.scrollToItem(location);
   }, []);
 
-  const cancelMountedHighlightSyncFrame = useCallback((): void => {
-    if (mountedHighlightSyncFrameRef.current !== null) {
-      window.cancelAnimationFrame(mountedHighlightSyncFrameRef.current);
-      mountedHighlightSyncFrameRef.current = null;
-    }
+  const resetScrollGesture = useCallback((): void => {
+    lastScrollGestureRef.current = null;
   }, []);
 
-  const scheduleMountedHighlightSync = useCallback((): void => {
-    cancelMountedHighlightSyncFrame();
-    mountedHighlightSyncFrameRef.current = window.requestAnimationFrame(() => {
-      mountedHighlightSyncFrameRef.current = null;
-      if (activeFindRevealRef.current !== null) return;
-      chatFindAdapterRef.current?.syncMountedHighlight();
-    });
-  }, [cancelMountedHighlightSyncFrame]);
+  const {
+    scheduleMountedHighlightSync: scheduleChatFindHighlightSync,
+    onRenderedDataChange: onChatFindRenderedDataChange,
+  } = useChatFindController({
+    instanceId,
+    messages,
+    messagesRef,
+    messageIndexByIdRef,
+    getScroller,
+    scrollToItem,
+    requestMeasuredItemChangeRef,
+    setBottomFollowingIfChanged,
+    setScrolledActiveUserMessageIdIfChanged,
+    cancelScrollRestorationRetry,
+    resetScrollGesture,
+  });
 
   const requestMeasuredItemChange = useCallback((): void => {
     const shouldFollowOutput = bottomFollowRef.current;
@@ -713,16 +688,12 @@ function ChatMessagesInner(props: ChatMessagesProps) {
         scrollModifier: measuredItemChangeScrollModifier(shouldFollowOutput),
       },
     }));
-    scheduleMountedHighlightSync();
-  }, [scheduleMountedHighlightSync]);
+    scheduleChatFindHighlightSync();
+  }, [scheduleChatFindHighlightSync]);
 
-  useLayoutEffect(
-    () => () => {
-      cancelFindRevealFrame();
-      cancelMountedHighlightSyncFrame();
-    },
-    [cancelFindRevealFrame, cancelMountedHighlightSyncFrame],
-  );
+  useLayoutEffect(() => {
+    requestMeasuredItemChangeRef.current = requestMeasuredItemChange;
+  }, [requestMeasuredItemChange]);
 
   const navigateToMessage = useCallback(
     (messageId: string): void => {
@@ -745,291 +716,10 @@ function ChatMessagesInner(props: ChatMessagesProps) {
     [setBottomFollowingIfChanged, setScrolledActiveUserMessageIdIfChanged],
   );
 
-  const scrollToMessageForFind = useCallback(
-    (messageId: string): void => {
-      lastScrollGestureRef.current = null;
-      cancelScrollRestorationRetry();
-      setBottomFollowingIfChanged(false);
-      setScrolledActiveUserMessageIdIfChanged(
-        selectActiveUserMessageId(messagesRef.current, messageId, false),
-      );
-      const location = chatScrollLocationForMessage(
-        messageId,
-        messageIndexByIdRef.current,
-        "auto",
-      );
-      if (location === null) return;
-      virtuosoRef.current?.scrollToItem(location);
-    },
-    [
-      cancelScrollRestorationRetry,
-      setBottomFollowingIfChanged,
-      setScrolledActiveUserMessageIdIfChanged,
-    ],
-  );
-
-  const getMountedMessageRoot = useCallback(
-    (messageId: string): HTMLElement | null => {
-      const scroller = virtuosoRef.current?.scrollerElement() ?? null;
-      if (scroller === null) return null;
-      for (const row of scroller.querySelectorAll<HTMLElement>(
-        "[data-message-id]",
-      )) {
-        if (row.dataset.messageId === messageId) return row;
-      }
-      return null;
-    },
-    [],
-  );
-
-  const getMountedFindUnitRoot = useCallback(
-    (messageId: string, unitId: string): HTMLElement | null => {
-      const messageRoot = getMountedMessageRoot(messageId);
-      if (messageRoot === null) return null;
-      return messageRoot.querySelector<HTMLElement>(
-        `[data-chat-find-unit="${unitId}"]`,
-      );
-    },
-    [getMountedMessageRoot],
-  );
-
-  const scrollToMessageForFindRef = useRef<(messageId: string) => void>(
-    () => undefined,
-  );
-  const getMountedFindUnitRootRef = useRef<
-    (messageId: string, unitId: string) => HTMLElement | null
-  >(() => null);
-  const getMountedMessageRootRef = useRef<
-    (messageId: string) => HTMLElement | null
-  >(() => null);
-  const scheduleFindRevealStepRef = useRef<
-    (generation: number, skipUnitScroll: boolean) => void
-  >(() => undefined);
-
-  useLayoutEffect(() => {
-    scrollToMessageForFindRef.current = scrollToMessageForFind;
-  }, [scrollToMessageForFind]);
-
-  useLayoutEffect(() => {
-    getMountedMessageRootRef.current = getMountedMessageRoot;
-  }, [getMountedMessageRoot]);
-
-  useLayoutEffect(() => {
-    getMountedFindUnitRootRef.current = getMountedFindUnitRoot;
-  }, [getMountedFindUnitRoot]);
-
-  const applyFindOpenedChain = useCallback(
-    (nextChain: ReadonlyArray<ChatCollapsibleKey>): void => {
-      const nextKeyIds = new Set(nextChain.map(serializeChatCollapsibleKey));
-      findOpenedChainRef.current.forEach((key) => {
-        if (!nextKeyIds.has(serializeChatCollapsibleKey(key))) {
-          setFindForcedOpen(key, false);
-        }
-      });
-      nextChain.forEach((key) => {
-        setFindForcedOpen(key, true);
-      });
-      findOpenedChainRef.current = nextChain.slice();
-    },
-    [setFindForcedOpen],
-  );
-
-  const applyFindOpenedTarget = useCallback(
-    (target: ChatFindReconcileTarget, forceApply: boolean): boolean => {
-      const chainKeyIds = target.owningChain.map(serializeChatCollapsibleKey);
-      const previousTarget = findOpenedTargetRef.current;
-      const targetChanged =
-        previousTarget === null ||
-        previousTarget.messageId !== target.messageId ||
-        previousTarget.unitId !== target.unitId ||
-        !arrayShallowEq(previousTarget.chainKeyIds, chainKeyIds);
-      if (!forceApply && !targetChanged) return false;
-      applyFindOpenedChain(target.owningChain);
-      findOpenedTargetRef.current = {
-        messageId: target.messageId,
-        unitId: target.unitId,
-        chainKeyIds,
-      };
-      return true;
-    },
-    [applyFindOpenedChain],
-  );
-
-  const releaseFindOpenedChain = useCallback((): void => {
-    findOpenedChainRef.current.forEach((key) => {
-      setFindForcedOpen(key, false);
-    });
-    findOpenedChainRef.current = [];
-    findOpenedTargetRef.current = null;
-  }, [setFindForcedOpen]);
-
-  const clearFindReveal = useCallback((): void => {
-    findRevealGenerationRef.current += 1;
-    activeFindRevealRef.current = null;
-    findRevealAnchorMissCountRef.current = 0;
-    cancelFindRevealFrame();
-    releaseFindOpenedChain();
-  }, [cancelFindRevealFrame, releaseFindOpenedChain]);
-
-  const scheduleFindRevealStep = useCallback(
-    (generation: number, skipUnitScroll: boolean): void => {
-      cancelFindRevealFrame();
-      findRevealFrameRef.current = window.requestAnimationFrame(() => {
-        findRevealFrameRef.current = null;
-        if (findRevealGenerationRef.current !== generation) return;
-        const target = activeFindRevealRef.current;
-        if (target === null) return;
-        const unitRoot = getMountedFindUnitRootRef.current(
-          target.messageId,
-          target.unitId,
-        );
-        if (unitRoot === null) {
-          scrollToMessageForFindRef.current(target.messageId);
-          const messageRoot = getMountedMessageRootRef.current(
-            target.messageId,
-          );
-          if (messageRoot === null) return;
-          if (
-            findRevealAnchorMissCountRef.current <
-            FIND_REVEAL_ANCHOR_RETRY_LIMIT
-          ) {
-            findRevealAnchorMissCountRef.current += 1;
-            scheduleFindRevealStepRef.current(generation, skipUnitScroll);
-            return;
-          }
-          target.paintFallback();
-          if (activeFindRevealRef.current?.matchKey === target.matchKey) {
-            activeFindRevealRef.current = null;
-          }
-          return;
-        }
-        findRevealAnchorMissCountRef.current = 0;
-        // An in-place hop stays in the same already-open unit, so re-centering
-        // the row would churn the layout (flicker) for no reason. Skip the
-        // unit re-center and let the active-match paint scroll only the inner
-        // scroll container to the next occurrence.
-        if (!skipUnitScroll) {
-          unitRoot.scrollIntoView({
-            block: "center",
-            inline: "nearest",
-            behavior: "auto",
-          });
-        }
-        findRevealFrameRef.current = window.requestAnimationFrame(() => {
-          findRevealFrameRef.current = null;
-          if (findRevealGenerationRef.current !== generation) return;
-          if (activeFindRevealRef.current?.matchKey !== target.matchKey) return;
-          target.paint();
-          if (activeFindRevealRef.current.matchKey === target.matchKey) {
-            activeFindRevealRef.current = null;
-          }
-        });
-      });
-    },
-    [cancelFindRevealFrame],
-  );
-
-  useLayoutEffect(() => {
-    scheduleFindRevealStepRef.current = scheduleFindRevealStep;
-  }, [scheduleFindRevealStep]);
-
-  const requestFindReveal = useCallback(
-    (target: ChatFindRevealTarget): void => {
-      // Consecutive matches inside the same already-revealed unit are an
-      // in-place hop: the row is mounted and positioned, so scrolling the row
-      // and re-centering the unit would visibly flicker. Detect it against the
-      // previous reveal target before applyFindOpenedTarget overwrites it.
-      const previousTarget = findOpenedTargetRef.current;
-      const sameUnit =
-        previousTarget !== null &&
-        previousTarget.messageId === target.messageId &&
-        previousTarget.unitId === target.unitId;
-      const generation = findRevealGenerationRef.current + 1;
-      findRevealGenerationRef.current = generation;
-      activeFindRevealRef.current = target;
-      findRevealAnchorMissCountRef.current = 0;
-      findRevealSkipUnitScrollRef.current = sameUnit;
-      applyFindOpenedTarget(target, true);
-      cancelFindRevealFrame();
-      findRevealFrameRef.current = window.requestAnimationFrame(() => {
-        findRevealFrameRef.current = null;
-        if (findRevealGenerationRef.current !== generation) return;
-        // Always remeasure: it is position-maintaining, and a manual collapse
-        // followed by next() re-opens the same unit (a real height change).
-        requestMeasuredItemChange();
-        if (!sameUnit) scrollToMessageForFind(target.messageId);
-        scheduleFindRevealStep(generation, sameUnit);
-      });
-    },
-    [
-      applyFindOpenedTarget,
-      cancelFindRevealFrame,
-      requestMeasuredItemChange,
-      scheduleFindRevealStep,
-      scrollToMessageForFind,
-    ],
-  );
-
-  const requestFindReconcile = useCallback(
-    (target: ChatFindReconcileTarget): void => {
-      const applied = applyFindOpenedTarget(target, false);
-      if (!applied) return;
-      requestMeasuredItemChange();
-    },
-    [applyFindOpenedTarget, requestMeasuredItemChange],
-  );
-
-  const tileFindContext = use(TileFindContext);
-
-  useLayoutEffect(() => {
-    chatFindRowsRef.current = chatFindRows;
-    chatFindAdapterRef.current?.updateRows(chatFindRows);
-  }, [chatFindRows]);
-
-  useLayoutEffect(() => {
-    if (tileFindContext === null) return undefined;
-
-    const adapter = createChatFindAdapter({
-      tileInstanceId: instanceId,
-      revealMatch: requestFindReveal,
-      reconcileMatch: requestFindReconcile,
-      clearReveal: clearFindReveal,
-      getMountedMessageRoot: (messageId) => getMountedMessageRoot(messageId),
-      getMountedUnitRoot: (messageId, unitId) =>
-        getMountedFindUnitRootRef.current(messageId, unitId),
-    });
-    chatFindAdapterRef.current = adapter;
-    adapter.updateRows(chatFindRowsRef.current);
-    const unregisterAdapter = tileFindContext.registerAdapter(adapter);
-
-    return () => {
-      unregisterAdapter();
-      if (chatFindAdapterRef.current === adapter) {
-        chatFindAdapterRef.current = null;
-      }
-      adapter.dispose();
-    };
-  }, [
-    clearFindReveal,
-    getMountedMessageRoot,
-    instanceId,
-    requestFindReconcile,
-    requestFindReveal,
-    tileFindContext,
-  ]);
-
   const handleRenderedDataChangeWithFind = useCallback((): void => {
     handleRenderedDataChange();
-    const activeReveal = activeFindRevealRef.current;
-    if (activeReveal !== null) {
-      scheduleFindRevealStep(
-        findRevealGenerationRef.current,
-        findRevealSkipUnitScrollRef.current,
-      );
-      return;
-    }
-    chatFindAdapterRef.current?.syncMountedHighlight();
-  }, [handleRenderedDataChange, scheduleFindRevealStep]);
+    onChatFindRenderedDataChange();
+  }, [handleRenderedDataChange, onChatFindRenderedDataChange]);
 
   const onMinimapItemClick = useCallback(
     (messageId: string): void => navigateToMessage(messageId),

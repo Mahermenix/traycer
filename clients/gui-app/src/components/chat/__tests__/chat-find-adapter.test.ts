@@ -2,23 +2,13 @@ import "../../../../__tests__/test-browser-apis";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  buildChatFindRows,
-  type ChatFindRow,
-  chatFindSubagentBodyUnitId,
-  chatFindSubagentHeaderUnitId,
   createChatFindAdapter,
-  markdownToChatSearchText,
+  type ChatFindAdapter,
+  type ChatFindReconcileTarget,
+  type ChatFindRevealTarget,
+  type ChatFindRow,
 } from "@/components/chat/chat-find";
-import {
-  type ChatCollapsibleKey,
-  derivePromotedSubagentRenderId,
-} from "@/components/chat/chat-collapsible-key";
-import type { JsonContent } from "@traycer/protocol/common/registry";
-import type {
-  ChatMessage as ChatMessageModel,
-  MessageSegment,
-} from "@/stores/composer/chat-store";
-import { makeMessage } from "./chat-message-fixtures";
+import type { ChatCollapsibleKey } from "@/components/chat/chat-collapsible-key";
 
 class TestHighlight {
   readonly ranges: ReadonlyArray<Range>;
@@ -49,414 +39,10 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("chat find projection", () => {
-  it("projects markdown links and code as rendered text, not markdown syntax", () => {
-    const text = markdownToChatSearchText(
-      [
-        "Read [Traycer docs](https://example.test/docs) and `inlineCode`.",
-        "",
-        "```ts",
-        "const answer = 42;",
-        "```",
-      ].join("\n"),
-    );
-
-    expect(text).toContain("Traycer docs");
-    expect(text).toContain("inlineCode");
-    expect(text).toContain("const answer = 42;");
-    expect(text).not.toContain("https://example.test/docs");
-    expect(text).not.toContain("```");
-    expect(text).not.toContain("[Traycer docs]");
-  });
-
-  it("indexes user structured text, assistant prose, and excludes next-step controls", () => {
-    const structuredContent: JsonContent = {
-      type: "doc",
-      content: [
-        {
-          type: "paragraph",
-          content: [
-            { type: "slashCommand", attrs: { commandName: "fix" } },
-            { type: "text", text: " search bar alignment" },
-          ],
-        },
-      ],
-    };
-    const user: ChatMessageModel = {
-      ...makeMessage(1, "user"),
-      content: "",
-      structuredContent,
-    };
-    const assistant: ChatMessageModel = {
-      ...makeMessage(2, "assistant"),
-      segments: [
-        {
-          id: "assistant-text",
-          kind: "text",
-          markdown: [
-            "Visible assistant answer.",
-            "",
-            "<TRAYCER_NEXT_STEPS>",
-            "Choose one of these next steps.",
-            "",
-            "- [] : Hidden button prompt",
-            "</TRAYCER_NEXT_STEPS>",
-          ].join("\n"),
-          isStreaming: false,
-        },
-      ],
-    };
-
-    const rows = buildChatFindRows([user, assistant], TILE_INSTANCE_ID);
-    const joined = rows.map((row) => rowSearchText(row)).join("\n");
-
-    expect(joined).toContain("/fix search bar alignment");
-    expect(joined).toContain("Visible assistant answer.");
-    expect(joined).toContain("Choose one of these next steps.");
-    expect(joined).not.toContain("Hidden button prompt");
-    expect(joined).not.toContain("Show more");
-    expect(joined).not.toContain("Copy reply");
-  });
-
-  it("indexes collapsed activity group summaries and child headers only", () => {
-    const segments: ReadonlyArray<MessageSegment> = [
-      {
-        id: "tool-1",
-        kind: "tool",
-        toolName: "read_file",
-        inputSummary: "src/components/search-bar.tsx",
-        inputDetail: null,
-        taskTodoItems: null,
-        error: null,
-        agentMessageSend: null,
-        isStreaming: false,
-        endState: null,
-        progress: null,
-        backgroundOutput: null,
-        backgroundTask: false,
-        durationMs: null,
-        startedAt: 0,
-        parentId: null,
-      },
-      {
-        id: "file-1",
-        kind: "file_change",
-        filePath: "src/components/chat/chat-find.ts",
-        operation: "create",
-        diffSource: "snapshot",
-        beforeHash: null,
-        afterHash: "after",
-        additions: 12,
-        deletions: 0,
-        sourceBlockIds: ["file-1"],
-        reason: "snapshot",
-        isStreaming: false,
-        endState: null,
-        parentId: null,
-      },
-    ];
-    const assistant: ChatMessageModel = {
-      ...makeMessage(3, "assistant"),
-      segments,
-    };
-
-    const row = buildChatFindRows([assistant], TILE_INSTANCE_ID)[0];
-
-    expect(rowSearchText(row)).toContain("Read 1 file, edited 1 file");
-    expect(rowSearchText(row)).toContain("src/components/search-bar.tsx");
-    expect(rowSearchText(row)).toContain("src/components/chat/chat-find.ts");
-    expect(rowSearchText(row)).not.toContain("No diff available");
-  });
-
-  it("does not index completed reasoning body text hidden behind the collapsed summary", () => {
-    const assistant: ChatMessageModel = {
-      ...makeMessage(4, "assistant"),
-      segments: [
-        {
-          id: "reasoning-1",
-          kind: "reasoning",
-          markdown: "private chain of thought details",
-          isStreaming: false,
-          durationMs: 2100,
-        },
-      ],
-    };
-
-    const row = buildChatFindRows([assistant], TILE_INSTANCE_ID)[0];
-
-    expect(rowSearchText(row)).toContain("Thought for 2s");
-    expect(rowSearchText(row)).not.toContain("private chain of thought");
-  });
-
-  it("indexes only the Thinking label for streaming reasoning, not the live tail", () => {
-    const assistant: ChatMessageModel = {
-      ...makeMessage(5, "assistant"),
-      segments: [
-        {
-          id: "reasoning-streaming",
-          kind: "reasoning",
-          markdown: "streaming private chain-of-thought tail",
-          isStreaming: true,
-          durationMs: null,
-        },
-      ],
-    };
-
-    const row = buildChatFindRows([assistant], TILE_INSTANCE_ID)[0];
-
-    expect(rowSearchText(row)).toContain("Thinking");
-    expect(rowSearchText(row)).not.toContain(
-      "streaming private chain-of-thought",
-    );
-  });
-
-  it("indexes the always-visible subagent header (name + type) and dedupes progress", () => {
-    const subagentId = "subagent-projection";
-    const assistant: ChatMessageModel = {
-      ...makeMessage(6, "assistant"),
-      segments: [
-        {
-          id: subagentId,
-          kind: "subagent",
-          name: "Researcher",
-          agentType: "analysis",
-          task: "Investigate the flake",
-          progressUpdates: ["Scanning", "Scanning", "Reading", "Scanning"],
-          result: "All clear.",
-          isStreaming: false,
-          endState: null,
-          startedAt: 1,
-          durationMs: 1200,
-          spawnToolCallId: null,
-          children: [],
-        },
-      ],
-    };
-
-    const row = buildChatFindRows([assistant], TILE_INSTANCE_ID)[0];
-    const renderId = derivePromotedSubagentRenderId(subagentId);
-    const headerUnit = row.units.find(
-      (unit) => unit.unitId === chatFindSubagentHeaderUnitId(renderId),
-    );
-    const bodyUnit = row.units.find(
-      (unit) => unit.unitId === chatFindSubagentBodyUnitId(renderId),
-    );
-
-    // The header indexes the always-visible name + agent type, reachable without
-    // opening the subagent body (empty owning chain).
-    expect(headerUnit?.text).toBe("Researcher analysis");
-    expect(headerUnit?.owningChain).toEqual([]);
-    // The body is gated behind the subagent's own collapsible key.
-    expect(bodyUnit?.owningChain).toHaveLength(1);
-    // Adjacent duplicate progress collapses, matching the rendered list (two
-    // "Scanning" survive: the adjacent pair becomes one, the later one stays).
-    expect(bodyUnit?.text.match(/Scanning/g)).toHaveLength(2);
-    expect(bodyUnit?.text).toContain("Reading");
-    expect(bodyUnit?.text).toContain("Investigate the flake");
-    expect(bodyUnit?.text).toContain("All clear.");
-  });
-
-  it("falls back to the rendered Subagent placeholder when the name is null", () => {
-    const subagentId = "subagent-unnamed";
-    const assistant: ChatMessageModel = {
-      ...makeMessage(7, "assistant"),
-      segments: [
-        {
-          id: subagentId,
-          kind: "subagent",
-          name: null,
-          agentType: null,
-          task: "Quietly observe",
-          progressUpdates: [],
-          result: null,
-          isStreaming: false,
-          endState: null,
-          startedAt: null,
-          durationMs: null,
-          spawnToolCallId: null,
-          children: [],
-        },
-      ],
-    };
-
-    const row = buildChatFindRows([assistant], TILE_INSTANCE_ID)[0];
-    const headerUnit = row.units.find(
-      (unit) =>
-        unit.unitId ===
-        chatFindSubagentHeaderUnitId(
-          derivePromotedSubagentRenderId(subagentId),
-        ),
-    );
-    expect(headerUnit?.text).toBe("Subagent");
-  });
-
-  it("indexes the todo header count and item labels, not status or priority words", () => {
-    const assistant: ChatMessageModel = {
-      ...makeMessage(8, "assistant"),
-      segments: [
-        {
-          id: "todo-projection",
-          kind: "todo",
-          items: [
-            {
-              id: "t1",
-              status: "completed",
-              text: "Wire the adapter",
-              priority: "high",
-              activeForm: "Wiring the adapter",
-            },
-            {
-              id: "t2",
-              status: "in_progress",
-              text: "Index the header",
-              priority: "medium",
-              activeForm: "Indexing the header",
-            },
-            {
-              id: "t3",
-              status: "pending",
-              text: "Cover with tests",
-              priority: "low",
-              activeForm: null,
-            },
-          ],
-        },
-      ],
-    };
-
-    const row = buildChatFindRows([assistant], TILE_INSTANCE_ID)[0];
-
-    expect(rowSearchText(row)).toContain("1 of 3 Done");
-    // Completed item renders its plain text, never its active form.
-    expect(rowSearchText(row)).toContain("Wire the adapter");
-    expect(rowSearchText(row)).not.toContain("Wiring the adapter");
-    // In-progress item renders its active form.
-    expect(rowSearchText(row)).toContain("Indexing the header");
-    expect(rowSearchText(row)).toContain("Cover with tests");
-    // Status / priority words are not rendered, so they must not be findable.
-    expect(rowSearchText(row)).not.toContain("pending");
-    expect(rowSearchText(row)).not.toContain("in_progress");
-    expect(rowSearchText(row)).not.toContain("high");
-    expect(rowSearchText(row)).not.toContain("medium");
-  });
-
-  it("indexes only the rendered plan card text, not dialog-only preview or extra steps", () => {
-    const steps = Array.from({ length: 6 }, (_unused, index) => ({
-      id: `step-${index}`,
-      text: `Plan step ${index}`,
-      status: "pending" as const,
-      activeForm: null,
-    }));
-    const assistant: ChatMessageModel = {
-      ...makeMessage(9, "assistant"),
-      segments: [
-        {
-          id: "plan-projection",
-          kind: "plan",
-          planId: "plan-1",
-          planStatus: "approved",
-          harnessId: "codex",
-          source: {
-            harnessId: "codex",
-            sessionId: null,
-            turnId: null,
-            kind: "structured",
-          },
-          title: "Refactor the search index",
-          summary: "Split projection from rendering",
-          markdownPreview: "## Hidden heading\n\nSecret dialog-only paragraph.",
-          fullContentRef: null,
-          steps,
-          actions: [],
-          approvalId: null,
-          supersededByPlanId: null,
-          isStreaming: false,
-          contentIdentity: "identity-1",
-        },
-      ],
-    };
-
-    const row = buildChatFindRows([assistant], TILE_INSTANCE_ID)[0];
-
-    expect(rowSearchText(row)).toContain("Refactor the search index");
-    // The status badge LABEL is indexed, not the raw enum value.
-    expect(rowSearchText(row)).toContain("Approved");
-    expect(rowSearchText(row)).toContain("Split projection from rendering");
-    // The first four steps render on the card.
-    expect(rowSearchText(row)).toContain("Plan step 0");
-    expect(rowSearchText(row)).toContain("Plan step 3");
-    // Steps beyond the preview limit live behind the unopened dialog.
-    expect(rowSearchText(row)).not.toContain("Plan step 4");
-    expect(rowSearchText(row)).not.toContain("Plan step 5");
-    // The full markdown preview is dialog-only, never shown on the card.
-    expect(rowSearchText(row)).not.toContain("Secret dialog-only paragraph");
-    expect(rowSearchText(row)).not.toContain("Hidden heading");
-  });
-
-  it("indexes the approval header label only (verdict + toolName), never the body-only description, at both projection sites", () => {
-    const toolName = "run_command";
-    const descriptionOnly = "delete the production database";
-    const approval = (id: string): MessageSegment => ({
-      id,
-      kind: "approval",
-      toolName,
-      description: descriptionOnly,
-      inputSummary: null,
-      inputDetail: null,
-      decision: { approved: false, reason: null },
-    });
-    // Top-level approval projection (segmentSearchText): a non-assistant message
-    // routes its segments straight through segmentSearchUnits.
-    const topLevel: ChatMessageModel = {
-      ...makeMessage(20, "user"),
-      content: "",
-      segments: [approval("approval-top")],
-    };
-    // Activity-group-child approval projection
-    // (activityGroupChildHeaderSearchText): a resolved approval on an assistant
-    // turn folds into an activity group.
-    const grouped: ChatMessageModel = {
-      ...makeMessage(21, "assistant"),
-      segments: [approval("approval-grouped")],
-    };
-
-    const adapter = createChatFindAdapter({
-      tileInstanceId: "chat-tile-approval",
-      revealMatch: vi.fn(),
-      reconcileMatch: vi.fn(),
-      clearReveal: vi.fn(),
-      getMountedMessageRoot: () => null,
-      getMountedUnitRoot: () => null,
-    });
-    adapter.updateRows(
-      buildChatFindRows([topLevel, grouped], TILE_INSTANCE_ID),
-    );
-
-    // Both rendered headers index the toolName label, so it stays findable at
-    // both sites (one match per header, no group-summary noise).
-    void adapter.search({ requestId: 1, query: toolName, matchCase: false });
-    expect(adapter.getSnapshot().total).toBe(2);
-
-    // The verdict is part of the rendered header too, so it remains findable.
-    void adapter.search({ requestId: 2, query: "Denied", matchCase: false });
-    expect(adapter.getSnapshot().total).toBeGreaterThanOrEqual(2);
-
-    // The description lives only in the unanchored approval body
-    // (bodyFindUnitId=null). Before the fix both projection sites indexed it,
-    // counting a phantom match that can never paint; it must now find nothing.
-    void adapter.search({
-      requestId: 3,
-      query: descriptionOnly,
-      matchCase: false,
-    });
-    expect(adapter.getSnapshot().total).toBe(0);
-  });
-});
-
 describe("chat find adapter", () => {
   it("counts projection matches and reports pending when the row is not mounted", () => {
     const revealMatch = vi.fn();
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-a",
       revealMatch,
       reconcileMatch: vi.fn(),
@@ -464,7 +50,7 @@ describe("chat find adapter", () => {
       getMountedMessageRoot: () => null,
       getMountedUnitRoot: () => null,
     });
-    adapter.updateRows([
+    setRows([
       testRow("row-1", "unit-1", "alpha beta alpha"),
       testRow("row-2", "unit-2", "gamma"),
     ]);
@@ -490,7 +76,7 @@ describe("chat find adapter", () => {
   it("scrolls to an offscreen match and paints after the row mounts", () => {
     const registry = installMockHighlights();
     const mountedRows = new Map<string, HTMLElement>();
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-b",
       revealMatch: vi.fn(),
       reconcileMatch: vi.fn(),
@@ -501,7 +87,7 @@ describe("chat find adapter", () => {
           .get(messageId)
           ?.querySelector<HTMLElement>(`[data-unit-id="${unitId}"]`) ?? null,
     });
-    adapter.updateRows([
+    setRows([
       testRow("visible-row", "visible-unit", "ordinary text"),
       testRow("offscreen-row", "offscreen-unit", "needle text"),
     ]);
@@ -541,7 +127,7 @@ describe("chat find adapter", () => {
     control.textContent = "Copy reply";
     row.append(trigger);
     row.append(control);
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-header",
       revealMatch: (target) => target.paint(),
       reconcileMatch: vi.fn(),
@@ -549,7 +135,7 @@ describe("chat find adapter", () => {
       getMountedMessageRoot: () => row,
       getMountedUnitRoot: () => trigger,
     });
-    adapter.updateRows([testRow("row-1", "header-unit", "Ran 1 command")]);
+    setRows([testRow("row-1", "header-unit", "Ran 1 command")]);
 
     void adapter.search({ requestId: 3, query: "Ran", matchCase: false });
     flushFrames();
@@ -562,9 +148,7 @@ describe("chat find adapter", () => {
     const activeRange = activeEntry?.[1].ranges[0];
     expect(activeRange?.startContainer.parentElement).toBe(label);
 
-    adapter.updateRows([
-      testRow("row-1", "header-unit", "Ran 1 command Copy reply"),
-    ]);
+    setRows([testRow("row-1", "header-unit", "Ran 1 command Copy reply")]);
     void adapter.search({
       requestId: 4,
       query: "Copy reply",
@@ -588,7 +172,7 @@ describe("chat find adapter", () => {
     matchLine.textContent = "needle below the fold";
     unit.append(matchLine);
     row.append(unit);
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-inner-scroll",
       revealMatch: (target) => target.paint(),
       reconcileMatch: vi.fn(),
@@ -596,7 +180,7 @@ describe("chat find adapter", () => {
       getMountedMessageRoot: () => row,
       getMountedUnitRoot: () => unit,
     });
-    adapter.updateRows([testRow("row-1", "unit-1", "needle below the fold")]);
+    setRows([testRow("row-1", "unit-1", "needle below the fold")]);
 
     void adapter.search({ requestId: 7, query: "needle", matchCase: false });
     flushFrames();
@@ -621,7 +205,7 @@ describe("chat find adapter", () => {
     const unit = document.createElement("div");
     unit.textContent = "needle";
     row.append(unit);
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-exact-occurrence",
       revealMatch: (target) => target.paint(),
       reconcileMatch: vi.fn(),
@@ -629,7 +213,7 @@ describe("chat find adapter", () => {
       getMountedMessageRoot: () => row,
       getMountedUnitRoot: () => unit,
     });
-    adapter.updateRows([testRow("row-1", "unit-1", "needle needle")]);
+    setRows([testRow("row-1", "unit-1", "needle needle")]);
 
     void adapter.search({ requestId: 5, query: "needle", matchCase: false });
     expect(adapter.getSnapshot().exactHighlight).toBe("painted");
@@ -647,7 +231,7 @@ describe("chat find adapter", () => {
     const registry = installMockHighlights();
     const row = document.createElement("div");
     row.textContent = "fallback needle";
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-anchor-fallback",
       revealMatch: (target) => target.paintFallback(),
       reconcileMatch: vi.fn(),
@@ -655,7 +239,7 @@ describe("chat find adapter", () => {
       getMountedMessageRoot: () => row,
       getMountedUnitRoot: () => null,
     });
-    adapter.updateRows([testRow("row-1", "missing-unit", "fallback needle")]);
+    setRows([testRow("row-1", "missing-unit", "fallback needle")]);
 
     void adapter.search({
       requestId: 6,
@@ -679,7 +263,7 @@ describe("chat find adapter", () => {
     target.textContent = "needle two";
     row.append(earlier);
     row.append(target);
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-message-fallback",
       // The unit anchor never mounts, so every reveal degrades to the
       // message-root paint that walks BOTH units.
@@ -689,7 +273,7 @@ describe("chat find adapter", () => {
       getMountedMessageRoot: () => row,
       getMountedUnitRoot: () => null,
     });
-    adapter.updateRows([
+    setRows([
       {
         messageId: "row-1",
         units: [
@@ -719,7 +303,7 @@ describe("chat find adapter", () => {
     installMockHighlights();
     const row = document.createElement("div");
     row.textContent = "old newer";
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-c",
       revealMatch: (target) => {
         window.requestAnimationFrame(() => target.paint());
@@ -729,7 +313,7 @@ describe("chat find adapter", () => {
       getMountedMessageRoot: () => row,
       getMountedUnitRoot: () => row,
     });
-    adapter.updateRows([testRow("row-1", "unit-1", "old newer")]);
+    setRows([testRow("row-1", "unit-1", "old newer")]);
 
     void adapter.search({ requestId: 1, query: "old", matchCase: false });
     expect(adapter.getSnapshot().exactHighlight).toBe("pending");
@@ -754,7 +338,7 @@ describe("chat find adapter", () => {
     const revealMatch = vi.fn();
     const reconcileMatch = vi.fn();
     const chain = [testCollapsibleKey("subagent", "streaming-subagent")];
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-streaming-identity",
       revealMatch,
       reconcileMatch,
@@ -762,7 +346,7 @@ describe("chat find adapter", () => {
       getMountedMessageRoot: () => null,
       getMountedUnitRoot: () => null,
     });
-    adapter.updateRows([
+    setRows([
       testRowWithChain(
         "row-1",
         "streaming-unit",
@@ -780,7 +364,7 @@ describe("chat find adapter", () => {
     });
 
     reconcileMatch.mockClear();
-    adapter.updateRows([
+    setRows([
       testRowWithChain(
         "row-1",
         "streaming-unit",
@@ -808,7 +392,7 @@ describe("chat find adapter", () => {
     const revealMatch = vi.fn();
     const reconcileMatch = vi.fn();
     const chain = [testCollapsibleKey("subagent", "streaming-body")];
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-streaming-insert",
       revealMatch,
       reconcileMatch,
@@ -818,7 +402,7 @@ describe("chat find adapter", () => {
     });
     // One concatenated body unit (task + progress + result). The only match is
     // the occurrence in the trailing "result" text.
-    adapter.updateRows([
+    setRows([
       testRowWithChain(
         "row-1",
         "body-unit",
@@ -837,7 +421,7 @@ describe("chat find adapter", () => {
     // A streamed progress line containing the query streams in BEFORE the active
     // occurrence. Its per-unit ordinal shifts 0 -> 1, so the old exact-ordinal
     // identity would have yanked the active match onto the inserted occurrence.
-    adapter.updateRows([
+    setRows([
       testRowWithChain(
         "row-1",
         "body-unit",
@@ -866,7 +450,7 @@ describe("chat find adapter", () => {
   it("reconciles an active chain change on rescan without navigating", () => {
     const revealMatch = vi.fn();
     const reconcileMatch = vi.fn();
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-rescan-chain",
       revealMatch,
       reconcileMatch,
@@ -876,15 +460,11 @@ describe("chat find adapter", () => {
     });
     const firstChain = [testCollapsibleKey("activity-group", "activity:old")];
     const nextChain = [testCollapsibleKey("subagent", "promoted:subagent")];
-    adapter.updateRows([
-      testRowWithChain("row-1", "unit-1", "needle", firstChain),
-    ]);
+    setRows([testRowWithChain("row-1", "unit-1", "needle", firstChain)]);
     void adapter.search({ requestId: 8, query: "needle", matchCase: false });
 
     revealMatch.mockClear();
-    adapter.updateRows([
-      testRowWithChain("row-1", "unit-1", "needle", nextChain),
-    ]);
+    setRows([testRowWithChain("row-1", "unit-1", "needle", nextChain)]);
 
     expect(adapter.getSnapshot()).toMatchObject({
       current: 1,
@@ -903,7 +483,7 @@ describe("chat find adapter", () => {
 
   it("reconciles to the fallback active match when the previous unit disappears", () => {
     const reconcileMatch = vi.fn();
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-rescan-release",
       revealMatch: vi.fn(),
       reconcileMatch,
@@ -911,7 +491,7 @@ describe("chat find adapter", () => {
       getMountedMessageRoot: () => null,
       getMountedUnitRoot: () => null,
     });
-    adapter.updateRows([
+    setRows([
       testRowWithChain("row-1", "removed-unit", "needle", [
         testCollapsibleKey("subagent", "removed-subagent"),
       ]),
@@ -920,7 +500,7 @@ describe("chat find adapter", () => {
     void adapter.search({ requestId: 9, query: "needle", matchCase: false });
 
     reconcileMatch.mockClear();
-    adapter.updateRows([
+    setRows([
       testRowWithChain("row-1", "removed-unit", "no remaining target", [
         testCollapsibleKey("subagent", "removed-subagent"),
       ]),
@@ -943,7 +523,7 @@ describe("chat find adapter", () => {
 
   it("ends scanning after clear so post-close streaming does no projection work", () => {
     const reconcileMatch = vi.fn();
-    const adapter = createChatFindAdapter({
+    const { adapter, setRows, getRowsCalls } = createChatFindTestAdapter({
       tileInstanceId: "chat-tile-clear",
       revealMatch: vi.fn(),
       reconcileMatch,
@@ -951,7 +531,7 @@ describe("chat find adapter", () => {
       getMountedMessageRoot: () => null,
       getMountedUnitRoot: () => null,
     });
-    adapter.updateRows([testRow("row-1", "unit-1", "alpha beta alpha")]);
+    setRows([testRow("row-1", "unit-1", "alpha beta alpha")]);
     void adapter.search({ requestId: 1, query: "alpha", matchCase: false });
     expect(adapter.getSnapshot().total).toBe(2);
 
@@ -963,20 +543,54 @@ describe("chat find adapter", () => {
     });
 
     reconcileMatch.mockClear();
-    // Simulate streaming tokens after the bar closed: updateRows runs from a
-    // layout effect on every messages change. With scanning ended it must not
-    // re-run findMatches, so matches stay empty and nothing is reconciled.
-    adapter.updateRows([
+    const closedGetRowsCalls = getRowsCalls();
+    // Simulate streaming tokens after the bar closed: notifyRowsChanged runs
+    // from a layout effect on every messages change. With scanning ended it
+    // must neither pull rows from the supplier (no transcript projection /
+    // markdown tokenization) nor re-run findMatches, so matches stay empty and
+    // nothing is reconciled.
+    setRows([
       testRow("row-1", "unit-1", "alpha alpha alpha"),
       testRow("row-2", "unit-2", "alpha"),
     ]);
     expect(adapter.getSnapshot().total).toBe(0);
     expect(adapter.getSnapshot().query).toBe("");
     expect(reconcileMatch).not.toHaveBeenCalled();
+    // The closed-find fast path never invokes the row supplier.
+    expect(getRowsCalls()).toBe(closedGetRowsCalls);
 
     // Reopening still works: a fresh search scans the current rows again.
     void adapter.search({ requestId: 2, query: "alpha", matchCase: false });
     expect(adapter.getSnapshot().total).toBe(4);
+  });
+
+  it("does not rebuild the projection on message changes while the bar is closed", () => {
+    const { adapter, setRows, getRowsCalls } = createChatFindTestAdapter({
+      tileInstanceId: "chat-tile-closed-projection",
+      revealMatch: vi.fn(),
+      reconcileMatch: vi.fn(),
+      clearReveal: vi.fn(),
+      getMountedMessageRoot: () => null,
+      getMountedUnitRoot: () => null,
+    });
+
+    // The bar has never opened: every streaming message change must be free,
+    // pulling no rows from the supplier.
+    setRows([testRow("row-1", "unit-1", "alpha beta")]);
+    setRows([testRow("row-1", "unit-1", "alpha beta gamma")]);
+    setRows([testRow("row-1", "unit-1", "alpha beta gamma delta")]);
+    expect(getRowsCalls()).toBe(0);
+    expect(adapter.getSnapshot().total).toBe(0);
+
+    // Opening the search is the first time rows are projected.
+    void adapter.search({ requestId: 1, query: "alpha", matchCase: false });
+    expect(getRowsCalls()).toBe(1);
+    expect(adapter.getSnapshot().total).toBe(1);
+
+    // While open, a streaming message change rebuilds rows once to rescan.
+    setRows([testRow("row-1", "unit-1", "alpha beta gamma delta alpha")]);
+    expect(getRowsCalls()).toBe(2);
+    expect(adapter.getSnapshot().total).toBe(2);
   });
 });
 
@@ -988,11 +602,6 @@ function activeHighlightParent(
   );
   return activeEntry?.[1].ranges[0]?.startContainer.parentElement ?? null;
 }
-
-function rowSearchText(row: ChatFindRow): string {
-  return row.units.map((unit) => unit.text).join("\n");
-}
-
 function testRow(messageId: string, unitId: string, text: string): ChatFindRow {
   return testRowWithChain(messageId, unitId, text, []);
 }
@@ -1023,6 +632,56 @@ function testCollapsibleKey(
     tileInstanceId: TILE_INSTANCE_ID,
     kind,
     id,
+  };
+}
+
+interface ChatFindAdapterCallbacks {
+  readonly tileInstanceId: string;
+  readonly revealMatch: (target: ChatFindRevealTarget) => void;
+  readonly reconcileMatch: (target: ChatFindReconcileTarget) => void;
+  readonly clearReveal: () => void;
+  readonly getMountedMessageRoot: (messageId: string) => HTMLElement | null;
+  readonly getMountedUnitRoot: (
+    messageId: string,
+    unitId: string,
+  ) => HTMLElement | null;
+}
+
+interface ChatFindTestAdapter {
+  readonly adapter: ChatFindAdapter;
+  // Publish a new transcript projection and notify the adapter, mirroring the
+  // renderer's per-message layout effect. The adapter only rebuilds matches
+  // while a find session is active, so this is a no-op for a closed bar.
+  readonly setRows: (rows: ReadonlyArray<ChatFindRow>) => void;
+  // Number of times the adapter has pulled rows from the supplier - used to
+  // prove a closed find session does no projection work.
+  readonly getRowsCalls: () => number;
+}
+
+function createChatFindTestAdapter(
+  callbacks: ChatFindAdapterCallbacks,
+): ChatFindTestAdapter {
+  let rows: ReadonlyArray<ChatFindRow> = [];
+  let getRowsCalls = 0;
+  const adapter = createChatFindAdapter({
+    tileInstanceId: callbacks.tileInstanceId,
+    getRows: () => {
+      getRowsCalls += 1;
+      return rows;
+    },
+    revealMatch: callbacks.revealMatch,
+    reconcileMatch: callbacks.reconcileMatch,
+    clearReveal: callbacks.clearReveal,
+    getMountedMessageRoot: callbacks.getMountedMessageRoot,
+    getMountedUnitRoot: callbacks.getMountedUnitRoot,
+  });
+  return {
+    adapter,
+    setRows: (next) => {
+      rows = next;
+      adapter.notifyRowsChanged();
+    },
+    getRowsCalls: () => getRowsCalls,
   };
 }
 

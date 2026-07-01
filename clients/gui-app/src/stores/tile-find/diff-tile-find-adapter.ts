@@ -15,7 +15,6 @@ import {
   type TileFindInput,
   type TileFindStateSnapshot,
   type TileFindStatus,
-  type TileReplaceInput,
 } from "@/stores/tile-find/types";
 
 const FIND_CAPABILITIES: ReadonlySet<TileFindCapability> =
@@ -227,19 +226,10 @@ export function createDiffTileFindAdapter(args: {
     );
   };
 
-  const updateReplaceText = (input: TileReplaceInput): void => {
-    publish({
-      ...snapshot,
-      requestId: input.requestId,
-      query: input.query,
-      matchCase: input.matchCase,
-      replaceText: input.replaceText,
-    });
-  };
-
   return {
     tileInstanceId: args.tileInstanceId,
     tileKind: args.tileKind,
+    replace: null,
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
       listeners.add(listener);
@@ -251,8 +241,6 @@ export function createDiffTileFindAdapter(args: {
     next: () => advance(1),
     previous: () => advance(-1),
     clear,
-    replaceCurrent: updateReplaceText,
-    replaceAll: updateReplaceText,
   };
 }
 

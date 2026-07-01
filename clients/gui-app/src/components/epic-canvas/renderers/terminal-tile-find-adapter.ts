@@ -9,7 +9,6 @@ import type {
   TileFindCapability,
   TileFindInput,
   TileFindStateSnapshot,
-  TileReplaceInput,
 } from "@/stores/tile-find";
 
 export type TerminalTileFindKind = Extract<
@@ -187,6 +186,7 @@ export function createTerminalTileFindAdapter(args: {
   return {
     tileInstanceId: args.tileInstanceId,
     tileKind: args.tileKind,
+    replace: null,
     getSnapshot: () => snapshot,
     subscribe: (listener) => {
       listeners.add(listener);
@@ -217,8 +217,6 @@ export function createTerminalTileFindAdapter(args: {
         exactHighlight: "none",
       });
     },
-    replaceCurrent: (_input: TileReplaceInput) => undefined,
-    replaceAll: (_input: TileReplaceInput) => undefined,
     publishResults: (result) => {
       const totals = totalsFromSearchResult(result);
       publish({

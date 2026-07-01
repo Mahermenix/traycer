@@ -92,6 +92,25 @@ function makeRowUnit(args: {
   };
 }
 
+function makeFileUnit(args: {
+  readonly id: string;
+  readonly filePath: string;
+}): DiffFindUnit {
+  return {
+    id: args.id,
+    kind: "file",
+    side: "none",
+    filePath: args.filePath,
+    scopeId: null,
+    text: args.filePath,
+    hunkIndex: null,
+    unifiedLineIndex: null,
+    splitLineIndex: null,
+    oldLineNumber: null,
+    newLineNumber: null,
+  };
+}
+
 function makeMatch(unit: DiffFindUnit): DiffFindMatch {
   return {
     id: `${unit.id}:0:0`,
@@ -135,6 +154,31 @@ describe("revealDiffFindMatches", () => {
     expect(dom.additionRow.hasAttribute(ACTIVE_ATTR)).toBe(true);
     expect(dom.staleRow.hasAttribute(MATCH_ATTR)).toBe(false);
     expect(dom.staleRow.hasAttribute(ACTIVE_ATTR)).toBe(false);
+    expect(scrollIntoViewSpy).toHaveBeenCalledWith({
+      block: "center",
+      inline: "nearest",
+    });
+  });
+
+  it("paints file-level matches whose paths contain selector syntax", () => {
+    const scrollContainer = document.createElement("div");
+    const fileElement = document.createElement("section");
+    const filePath = 'src/weird"]\\\\\nfile.ts';
+    fileElement.setAttribute("data-diff-find-file", filePath);
+    scrollContainer.appendChild(fileElement);
+    document.body.appendChild(scrollContainer);
+    const fileMatch = makeMatch(makeFileUnit({ id: "file:weird", filePath }));
+
+    const exactHighlight = revealDiffFindMatches({
+      scrollContainer,
+      matches: [fileMatch],
+      activeMatch: fileMatch,
+      scrollActiveIntoView: true,
+    });
+
+    expect(exactHighlight).toBe("painted");
+    expect(fileElement.hasAttribute(MATCH_ATTR)).toBe(true);
+    expect(fileElement.hasAttribute(ACTIVE_ATTR)).toBe(true);
     expect(scrollIntoViewSpy).toHaveBeenCalledWith({
       block: "center",
       inline: "nearest",

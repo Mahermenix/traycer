@@ -462,9 +462,10 @@ function sectionActiveRow(
   fileId: string,
   lineIndex: string,
 ): HTMLElement | null {
-  const section = document.querySelector(
-    `[data-bundle-diff-file-id="${fileId}"]`,
-  );
+  const section =
+    Array.from(document.querySelectorAll("[data-bundle-diff-file-id]")).find(
+      (element) => element.getAttribute("data-bundle-diff-file-id") === fileId,
+    ) ?? null;
   const container = section?.querySelector("diffs-container") ?? null;
   const shadow = container instanceof HTMLElement ? container.shadowRoot : null;
   const row = shadow?.querySelector(`[data-line-index="${lineIndex}"]`) ?? null;
@@ -597,6 +598,43 @@ describe("bundle diff find navigation", () => {
     expect(tileSnapshot().current).toBe(2);
     expect(virtuosoSpy).not.toHaveBeenCalled();
     expect(scrollIntoViewSpy).not.toHaveBeenCalled();
+  });
+
+  it("finds mounted bundle sections whose file ids contain selector syntax", async () => {
+    const fileId = 'src/weird"]\\\\\nfile';
+    const path = "src/weird.ts";
+    const files: ReadonlyArray<BundleDiffFindFileInput> = [
+      navFileInput({ id: fileId, path }),
+    ];
+    const patches: ReadonlyArray<BundleDiffFindLoadedPatchInput> = [
+      navLoadedPatch({ fileId, path, needle: "weirdNeedle" }),
+    ];
+    const virtuosoSpy = vi.fn();
+    const virtuosoRef: RefObject<VirtuosoHandle | null> = {
+      current: makeVirtuosoHandle(virtuosoSpy),
+    };
+    render(
+      navTree({
+        files,
+        loadedPatches: patches,
+        collapsedFileIds: NO_COLLAPSED,
+        expandFile: vi.fn(),
+        virtuosoRef,
+        sections: [{ fileId, lineIndex: ADDITION_LINE }],
+      }),
+    );
+
+    await waitFor(() => {
+      navSearch("weirdNeedle");
+      expect(tileSnapshot().total).toBe(1);
+    });
+
+    const activeRow = sectionActiveRow(fileId, ADDITION_LINE);
+    expect(tileSnapshot().current).toBe(1);
+    expect(activeRow?.hasAttribute(ACTIVE_ATTR)).toBe(true);
+    expect(activeRow?.hasAttribute(MATCH_ATTR)).toBe(true);
+    expect(virtuosoSpy).toHaveBeenCalled();
+    expect(scrollIntoViewSpy).toHaveBeenCalled();
   });
 
   it("does not repaint a stale highlight when a section remounts after the search closes", async () => {

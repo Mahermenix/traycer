@@ -72,8 +72,10 @@ function adapter(tileInstanceId: string): TileFindAdapter {
     next: vi.fn(),
     previous: vi.fn(),
     clear: vi.fn(),
-    replaceCurrent: vi.fn(),
-    replaceAll: vi.fn(),
+    replace: {
+      replaceCurrent: vi.fn(),
+      replaceAll: vi.fn(),
+    },
   };
 }
 

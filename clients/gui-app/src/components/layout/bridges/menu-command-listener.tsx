@@ -19,9 +19,12 @@ import type {
   DesktopMenuCommandId,
   DesktopMenuCommandPayload,
 } from "@/lib/windows/types";
+import {
+  advanceActiveTileFind,
+  openActiveTileFind,
+} from "@/lib/commands/tile-find";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
-import { useTileFindStore } from "@/stores/tile-find";
 
 interface HostWithRequestClose extends IRunnerHost {
   readonly windows: {
@@ -79,8 +82,6 @@ export function MenuCommandListener() {
   const openReportIssue = useDesktopDialogStore(
     (state) => state.openReportIssue,
   );
-  const openTileFindBar = useTileFindStore((state) => state.openActiveOwner);
-  const advanceTileFind = useTileFindStore((state) => state.advanceActiveOwner);
   const management = runnerHost.hostManagement;
   const service = runnerHost.service;
 
@@ -140,9 +141,11 @@ export function MenuCommandListener() {
             void runnerHost.windows.requestNew(null);
           }
         },
-        openFindBar: openTileFindBar,
+        openFindBar: () => {
+          openActiveTileFind();
+        },
         advanceFind: (forward) => {
-          advanceTileFind(forward ? 1 : -1);
+          advanceActiveTileFind(forward ? 1 : -1);
         },
         installHostUpdate: () => {
           mutateInstallUpdate();
@@ -160,8 +163,6 @@ export function MenuCommandListener() {
     closeTabFlow.closeActiveTab,
     openEpicInNewWindow,
     openLogs,
-    openTileFindBar,
-    advanceTileFind,
     runnerHost,
     mutateInstallUpdate,
     openReportIssue,

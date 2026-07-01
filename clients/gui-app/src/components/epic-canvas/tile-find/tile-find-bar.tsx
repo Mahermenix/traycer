@@ -149,6 +149,12 @@ export function TileFindBar(props: TileFindBarProps) {
     },
     [setReplaceText, tileInstanceId],
   );
+  const handleReplaceCurrent = useCallback(() => {
+    replaceCurrent(tileInstanceId);
+  }, [replaceCurrent, tileInstanceId]);
+  const handleReplaceAll = useCallback(() => {
+    replaceAll(tileInstanceId);
+  }, [replaceAll, tileInstanceId]);
 
   const handleReplaceExpanded = useCallback(() => {
     if (ui === null) return;
@@ -187,207 +193,188 @@ export function TileFindBar(props: TileFindBarProps) {
   const canNavigate = ui.query.length > 0 && snapshot.status !== "unavailable";
   const canSearch = snapshot.capabilities.has("find");
 
-  if (!replaceEnabled) {
-    return (
-      <search
-        data-testid="tile-find-bar"
-        className={cn(
-          "pointer-events-auto absolute right-3 top-3 z-30 flex max-w-[min(92vw,42rem)] flex-wrap items-center gap-1 rounded-md border border-border bg-popover px-2 py-1 shadow-md",
-        )}
+  const statusLabel = (
+    <TileFindStatusLabel
+      snapshot={snapshot}
+      noMatchesLabel={replaceEnabled ? "No results" : "No matches"}
+    />
+  );
+  const findRow = (
+    <div
+      className={cn(
+        "flex min-w-0 items-center gap-1",
+        !replaceEnabled && "flex-wrap",
+      )}
+    >
+      <Input
+        ref={inputRef}
+        type="text"
+        value={ui.query}
+        onChange={handleQueryChange}
+        onKeyDown={handleKeyDown}
+        placeholder="Find"
         aria-label="Find in tile"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        className="h-7 w-[min(42vw,14rem)] min-w-[8rem] border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+      />
+      {!replaceEnabled ? statusLabel : null}
+      <Button
+        type="button"
+        variant={ui.matchCase ? "secondary" : "ghost"}
+        size="icon-sm"
+        aria-label="Match case"
+        aria-pressed={ui.matchCase}
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={handleMatchCase}
+        disabled={!canSearch}
       >
-        <Input
-          ref={inputRef}
-          type="text"
-          value={ui.query}
-          onChange={handleQueryChange}
-          onKeyDown={handleKeyDown}
-          placeholder="Find"
-          aria-label="Find in tile"
-          autoComplete="off"
-          autoCorrect="off"
-          spellCheck={false}
-          className="h-7 w-[min(42vw,14rem)] min-w-[8rem] border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-        />
-        <TileFindStatusLabel snapshot={snapshot} noMatchesLabel="No matches" />
-        <Button
-          type="button"
-          variant={ui.matchCase ? "secondary" : "ghost"}
-          size="icon-sm"
-          aria-label="Match case"
-          aria-pressed={ui.matchCase}
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={handleMatchCase}
-          disabled={!canSearch}
-        >
-          <CaseSensitive className="size-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Previous match"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => handleNavigate(-1)}
-          disabled={!canNavigate}
-        >
-          <ChevronUp className="size-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Next match"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={() => handleNavigate(1)}
-          disabled={!canNavigate}
-        >
-          <ChevronDown className="size-4" />
-        </Button>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="Close find"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={handleClose}
-        >
-          <X className="size-4" />
-        </Button>
-      </search>
-    );
-  }
+        <CaseSensitive className="size-4" />
+      </Button>
+      {replaceEnabled ? statusLabel : null}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Previous match"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => handleNavigate(-1)}
+        disabled={!canNavigate}
+      >
+        <ChevronUp className="size-4" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Next match"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={() => handleNavigate(1)}
+        disabled={!canNavigate}
+      >
+        <ChevronDown className="size-4" />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Close find"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={handleClose}
+      >
+        <X className="size-4" />
+      </Button>
+    </div>
+  );
 
   return (
     <search
       data-testid="tile-find-bar"
       className={cn(
-        "pointer-events-auto absolute right-3 top-3 z-30 flex max-w-[min(92vw,42rem)] items-start gap-1 rounded-md border border-border bg-popover px-2 py-1 shadow-md",
+        "pointer-events-auto absolute right-3 top-3 z-30 flex max-w-[min(92vw,42rem)] gap-1 rounded-md border border-border bg-popover px-2 py-1 shadow-md",
+        replaceEnabled ? "items-start" : "flex-wrap items-center",
       )}
       aria-label="Find in tile"
     >
+      {replaceEnabled ? (
+        <TileFindReplaceToggle
+          expanded={ui.replaceExpanded}
+          onToggle={handleReplaceExpanded}
+        />
+      ) : null}
+      {replaceEnabled ? (
+        <div className="flex min-w-0 flex-col gap-1">
+          {findRow}
+          {ui.replaceExpanded ? (
+            <TileFindReplaceRow
+              query={ui.query}
+              replaceText={ui.replaceText}
+              replaceAllEnabled={replaceAllEnabled}
+              onReplaceTextChange={handleReplaceTextChange}
+              onReplaceCurrent={handleReplaceCurrent}
+              onReplaceAll={handleReplaceAll}
+            />
+          ) : null}
+        </div>
+      ) : (
+        findRow
+      )}
+    </search>
+  );
+}
+
+function TileFindReplaceToggle(props: {
+  readonly expanded: boolean;
+  readonly onToggle: () => void;
+}) {
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      className="shrink-0"
+      aria-label={props.expanded ? "Collapse replace" : "Expand replace"}
+      aria-expanded={props.expanded}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={props.onToggle}
+    >
+      {props.expanded ? (
+        <ChevronDown className="size-4" />
+      ) : (
+        <ChevronRight className="size-4" />
+      )}
+    </Button>
+  );
+}
+
+function TileFindReplaceRow(props: {
+  readonly query: string;
+  readonly replaceText: string;
+  readonly replaceAllEnabled: boolean;
+  readonly onReplaceTextChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  readonly onReplaceCurrent: () => void;
+  readonly onReplaceAll: () => void;
+}) {
+  return (
+    <div
+      className="flex min-w-0 items-center gap-1"
+      data-testid="tile-find-replace-row"
+    >
+      <Input
+        type="text"
+        value={props.replaceText}
+        onChange={props.onReplaceTextChange}
+        placeholder="Replace"
+        aria-label="Replace with"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck={false}
+        className="h-7 min-w-0 flex-1 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
+      />
       <Button
         type="button"
         variant="ghost"
         size="icon-sm"
-        className="shrink-0"
-        aria-label={ui.replaceExpanded ? "Collapse replace" : "Expand replace"}
-        aria-expanded={ui.replaceExpanded}
+        aria-label="Replace current match"
         onMouseDown={(event) => event.preventDefault()}
-        onClick={handleReplaceExpanded}
+        onClick={props.onReplaceCurrent}
+        disabled={props.query.length === 0}
       >
-        {ui.replaceExpanded ? (
-          <ChevronDown className="size-4" />
-        ) : (
-          <ChevronRight className="size-4" />
-        )}
+        <Replace className="size-4" />
       </Button>
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex min-w-0 items-center gap-1">
-          <Input
-            ref={inputRef}
-            type="text"
-            value={ui.query}
-            onChange={handleQueryChange}
-            onKeyDown={handleKeyDown}
-            placeholder="Find"
-            aria-label="Find in tile"
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck={false}
-            className="h-7 w-[min(42vw,14rem)] min-w-[8rem] border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-          />
-          <Button
-            type="button"
-            variant={ui.matchCase ? "secondary" : "ghost"}
-            size="icon-sm"
-            aria-label="Match case"
-            aria-pressed={ui.matchCase}
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={handleMatchCase}
-            disabled={!canSearch}
-          >
-            <CaseSensitive className="size-4" />
-          </Button>
-          <TileFindStatusLabel
-            snapshot={snapshot}
-            noMatchesLabel="No results"
-          />
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Previous match"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => previous(tileInstanceId)}
-            disabled={!canNavigate}
-          >
-            <ChevronUp className="size-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Next match"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => next(tileInstanceId)}
-            disabled={!canNavigate}
-          >
-            <ChevronDown className="size-4" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Close find"
-            onMouseDown={(event) => event.preventDefault()}
-            onClick={() => close(tileInstanceId)}
-          >
-            <X className="size-4" />
-          </Button>
-        </div>
-        {ui.replaceExpanded ? (
-          <div
-            className="flex min-w-0 items-center gap-1"
-            data-testid="tile-find-replace-row"
-          >
-            <Input
-              type="text"
-              value={ui.replaceText}
-              onChange={handleReplaceTextChange}
-              placeholder="Replace"
-              aria-label="Replace with"
-              autoComplete="off"
-              autoCorrect="off"
-              spellCheck={false}
-              className="h-7 min-w-0 flex-1 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0"
-            />
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Replace current match"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => replaceCurrent(tileInstanceId)}
-              disabled={ui.query.length === 0}
-            >
-              <Replace className="size-4" />
-            </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-sm"
-              aria-label="Replace all matches"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => replaceAll(tileInstanceId)}
-              disabled={!replaceAllEnabled || ui.query.length === 0}
-            >
-              <ReplaceAll className="size-4" />
-            </Button>
-          </div>
-        ) : null}
-      </div>
-    </search>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-sm"
+        aria-label="Replace all matches"
+        onMouseDown={(event) => event.preventDefault()}
+        onClick={props.onReplaceAll}
+        disabled={!props.replaceAllEnabled || props.query.length === 0}
+      >
+        <ReplaceAll className="size-4" />
+      </Button>
+    </div>
   );
 }
 

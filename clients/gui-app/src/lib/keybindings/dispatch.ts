@@ -1,12 +1,12 @@
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { findPaneById } from "@/stores/epics/canvas/tile-tree";
 import { useLandingDraftStore } from "@/stores/home/landing-draft-store";
-import { useTileFindStore } from "@/stores/tile-find";
 import { getHeaderTabs } from "@/stores/tabs/use-header-tabs";
 import { getSystemTabModalApi } from "@/stores/tabs/system-tab-modal-bridge";
 import { isSettingsPath } from "@/stores/tabs/kinds/settings";
 import { useKeybindingStore } from "@/stores/settings/keybinding-store";
 import { duplicateEpicTab, openNewEpic } from "@/lib/commands/actions";
+import { openActiveTileFindWithReplace } from "@/lib/commands/tile-find";
 import { toggleActiveModelPicker } from "@/lib/commands/active-model-picker-registry";
 import { focusActiveComposer } from "@/lib/composer/composer-focus-registry";
 import { tabMatchesPath, tabResolveIntent } from "@/stores/tabs/registry";
@@ -652,13 +652,4 @@ function escapeAttributeSelectorValue(value: string): string {
     return CSS.escape(value);
   }
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-}
-
-function openActiveTileFindWithReplace(): boolean {
-  const state = useTileFindStore.getState();
-  const activeOwner = state.activeOwner;
-  if (activeOwner === null) return false;
-  if (!state.openForTile(activeOwner.tileInstanceId)) return false;
-  state.setReplaceExpanded(activeOwner.tileInstanceId, true);
-  return true;
 }

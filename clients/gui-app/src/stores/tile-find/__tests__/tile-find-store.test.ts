@@ -112,12 +112,16 @@ function createTestAdapter(args: {
     next: nextMock,
     previous: previousMock,
     clear: vi.fn(),
-    replaceCurrent: (input) => {
-      replaceInputs.push(input);
-    },
-    replaceAll: (input) => {
-      replaceInputs.push(input);
-    },
+    replace: args.capabilities.has("replace")
+      ? {
+          replaceCurrent: (input) => {
+            replaceInputs.push(input);
+          },
+          replaceAll: (input) => {
+            replaceInputs.push(input);
+          },
+        }
+      : null,
     nextMock,
     previousMock,
     publish,
@@ -370,8 +374,7 @@ describe("useTileFindStore", () => {
       next: nextMock,
       previous: previousMock,
       clear: vi.fn(),
-      replaceCurrent: vi.fn(),
-      replaceAll: vi.fn(),
+      replace: null,
       publish: (next) => {
         snapshot = next;
         listeners.forEach((listener) => listener());
@@ -442,6 +445,61 @@ describe("useTileFindStore", () => {
     expect(state.uiByTileInstanceId["tile-b"]?.replaceText).toBe("gamma");
     expect(state.uiByTileInstanceId["tile-b"]?.replaceExpanded).toBe(true);
     expect(state.uiByTileInstanceId["tile-b"]?.isOpen).toBe(false);
+  });
+
+  it("routes replace commands through a replace-capable adapter boundary", () => {
+    const adapter = createTestAdapter({
+      tileInstanceId: "tile-a",
+      tileKind: "spec",
+      capabilities: REPLACE_CAPABILITY,
+    });
+    register(adapter, true);
+
+    useTileFindStore.getState().setQuery("tile-a", "needle");
+    useTileFindStore.getState().setReplaceText("tile-a", "haystack");
+    useTileFindStore.getState().replaceCurrent("tile-a");
+    useTileFindStore.getState().replaceAll("tile-a");
+
+    expect(adapter.replaceInputs).toEqual([
+      {
+        requestId: 1,
+        query: "needle",
+        matchCase: false,
+        replaceText: "haystack",
+      },
+      {
+        requestId: 2,
+        query: "needle",
+        matchCase: false,
+        replaceText: "haystack",
+      },
+    ]);
+  });
+
+  it("refuses replace commands when the adapter has no replace boundary, without mutating request state", () => {
+    const adapter = createTestAdapter({
+      tileInstanceId: "tile-a",
+      tileKind: "terminal",
+      capabilities: FIND_CAPABILITY,
+    });
+    register(adapter, true);
+
+    expect(adapter.replace).toBeNull();
+
+    useTileFindStore.getState().setQuery("tile-a", "needle");
+    const beforeRequestId =
+      useTileFindStore.getState().uiByTileInstanceId["tile-a"]
+        ?.currentRequestId;
+
+    useTileFindStore.getState().replaceCurrent("tile-a");
+    useTileFindStore.getState().replaceAll("tile-a");
+
+    expect(adapter.replaceInputs).toEqual([]);
+    const ui = useTileFindStore.getState().uiByTileInstanceId["tile-a"];
+    // The request id is not bumped and the snapshot is not flipped to searching:
+    // an unsupported replace is a no-op, not a swallowed request.
+    expect(ui?.currentRequestId).toBe(beforeRequestId);
+    expect(ui?.lastSnapshot.status).not.toBe("searching");
   });
 
   it("registers blank or unsupported tiles with the default unavailable state", () => {

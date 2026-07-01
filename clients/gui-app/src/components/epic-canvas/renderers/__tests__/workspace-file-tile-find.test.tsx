@@ -36,6 +36,7 @@ interface FindTestState {
     hostLabel: string;
   };
   readFile: ReadFileState;
+  syntaxHighlight: boolean;
 }
 
 class MockCssHighlight {
@@ -58,6 +59,7 @@ const state = vi.hoisted((): FindTestState => ({
     isError: false,
     error: null,
   },
+  syntaxHighlight: false,
 }));
 
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
@@ -79,6 +81,30 @@ vi.mock("@/markdown/shiki-highlighter", () => ({
     themesVersion: 0,
   }),
   highlightCode: () => null,
+}));
+
+vi.mock("@/markdown/use-throttled-code-highlight", () => ({
+  useThrottledCodeHighlight: (input: { readonly code: string }) => {
+    if (!state.syntaxHighlight) return null;
+    const lines = input.code.split("\n");
+    let offset = 0;
+    return (
+      <>
+        {lines.map((line) => {
+          const key = `${offset}:${line}`;
+          offset += line.length;
+          const hasLineBreak = offset < input.code.length;
+          if (hasLineBreak) offset += 1;
+          return (
+            <span key={key}>
+              {line}
+              {hasLineBreak ? "\n" : null}
+            </span>
+          );
+        })}
+      </>
+    );
+  },
 }));
 
 import { WorkspaceFileTile } from "../workspace-file-tile";
@@ -114,6 +140,7 @@ beforeEach(() => {
   state.activeHostId = "host-A";
   state.reachability = { status: "reachable", hostLabel: "Host A" };
   state.readFile = loadingReadFile();
+  state.syntaxHighlight = false;
   installMockCssHighlights();
 });
 
@@ -187,6 +214,69 @@ describe("<WorkspaceFileTile /> tile find", () => {
 
     await waitFor(() => {
       expect(activeSourceLine(container)).toBeNull();
+    });
+  });
+
+  it("paints distinct active and inactive spans for two matches on one source line", async () => {
+    state.readFile = loadedReadFile("ab cd ab", false);
+    renderTile(CODE_NODE);
+    await waitForSearchable(CODE_NODE);
+
+    searchTile(CODE_NODE, "ab", false);
+
+    await waitFor(() => {
+      expect(tileSnapshot(CODE_NODE).total).toBe(2);
+    });
+    expect(tileSnapshot(CODE_NODE)).toMatchObject({
+      current: 1,
+      activeUnitId: "line:1",
+    });
+
+    // Match 1 (offset 0) is active; match 2 (offset 6) is the inactive span.
+    await waitFor(() => {
+      expect(activeHighlightStartOffset()).toBe(0);
+    });
+    expect(activeHighlightEndOffset()).toBe(2);
+    expect(inactiveHighlightStartOffsets()).toEqual([6]);
+
+    act(() => {
+      useTileFindStore.getState().next(CODE_NODE.instanceId);
+    });
+
+    expect(tileSnapshot(CODE_NODE)).toMatchObject({
+      current: 2,
+      activeUnitId: "line:1",
+    });
+    // Same line, but the active span moved to the second occurrence.
+    await waitFor(() => {
+      expect(activeHighlightStartOffset()).toBe(6);
+    });
+    expect(activeHighlightEndOffset()).toBe(8);
+    expect(inactiveHighlightStartOffsets()).toEqual([0]);
+
+    act(() => {
+      useTileFindStore.getState().close(CODE_NODE.instanceId);
+    });
+
+    await waitFor(() => {
+      expect(highlightEntries.has("traycer-find-match-active")).toBe(false);
+      expect(highlightEntries.has("traycer-find-match")).toBe(false);
+    });
+  });
+
+  it("keeps CRLF source highlights aligned on the syntax-highlighted path", async () => {
+    state.syntaxHighlight = true;
+    state.readFile = loadedReadFile("foo\r\nbar\r\nbaz", false);
+    renderTile(CODE_NODE);
+    await waitForSearchable(CODE_NODE);
+
+    searchTile(CODE_NODE, "baz", false);
+
+    await waitFor(() => {
+      expect(tileSnapshot(CODE_NODE).total).toBe(1);
+    });
+    await waitFor(() => {
+      expect(activeHighlightText()).toBe("baz");
     });
   });
 
@@ -414,6 +504,32 @@ function tileSnapshot(node: WorkspaceFileRef): TileFindStateSnapshot {
 
 function activeSourceLine(container: HTMLElement): Element | null {
   return container.querySelector('[data-workspace-file-find-active="true"]');
+}
+
+function activeHighlightRange(): Range {
+  const highlight = highlightEntries.get("traycer-find-match-active");
+  if (highlight === undefined || highlight.ranges.length === 0) {
+    throw new Error("Missing active find highlight range");
+  }
+  return highlight.ranges[0];
+}
+
+function activeHighlightStartOffset(): number {
+  return activeHighlightRange().startOffset;
+}
+
+function activeHighlightEndOffset(): number {
+  return activeHighlightRange().endOffset;
+}
+
+function activeHighlightText(): string {
+  return activeHighlightRange().cloneContents().textContent;
+}
+
+function inactiveHighlightStartOffsets(): readonly number[] {
+  const highlight = highlightEntries.get("traycer-find-match");
+  if (highlight === undefined) return [];
+  return highlight.ranges.map((range) => range.startOffset);
 }
 
 function installMockCssHighlights(): void {
