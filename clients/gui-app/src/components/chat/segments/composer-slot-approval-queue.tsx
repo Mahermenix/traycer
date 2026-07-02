@@ -16,8 +16,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { deriveToolInputSummary } from "@/lib/segment-summary";
+import { cn } from "@/lib/utils";
+import { McpToolName } from "@/components/mcp-tool-name";
 import type { ChatApprovalState } from "@traycer/protocol/host/agent/gui/subscribe";
-import type { RuntimeApprovalDecision } from "@traycer/protocol/host/agent/gui/agent-runtime";
+import {
+  isMcpToolName,
+  type RuntimeApprovalDecision,
+} from "@traycer/protocol/host/agent/gui/agent-runtime";
 
 interface ComposerSlotApprovalQueueProps {
   readonly approvals: ReadonlyArray<ChatApprovalState>;
@@ -144,14 +149,20 @@ function ApprovalRow(props: ApprovalRowProps) {
   // shown twice in the "Rules to save" list). A chained command can derive the
   // same rule from more than one segment.
   const suggestedRules = [...new Set(approval.suggestedRules)];
+  // MCP names render decomposed as `[server] tool`; keep their natural case,
+  // while every other tool badge stays uppercase as before.
+  const isMcp = isMcpToolName(approval.toolName);
   return (
     <div className="flex flex-col gap-3.5 p-3.5 first:pt-3.5 border-b border-border/20 last:border-0 bg-card/50">
       <div className="flex min-w-0 items-center gap-2.5">
         <Badge
           variant="secondary"
-          className="font-mono text-[10px] uppercase tracking-wide text-foreground/70 bg-muted/60 hover:bg-muted/60 border border-border/40 px-1.5 py-0 h-5 rounded-sm"
+          className={cn(
+            "font-mono text-[10px] tracking-wide text-foreground/70 bg-muted/60 hover:bg-muted/60 border border-border/40 px-1.5 py-0 h-5 rounded-sm",
+            !isMcp && "uppercase",
+          )}
         >
-          {approval.toolName}
+          <McpToolName toolName={approval.toolName} />
         </Badge>
         {description !== null ? (
           <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground/80">
@@ -177,7 +188,9 @@ function ApprovalRow(props: ApprovalRowProps) {
       {commandPreview === null &&
       description === null &&
       inputSummary === null ? (
-        <p className="m-0 text-xs text-foreground/85">{approval.toolName}</p>
+        <p className="m-0 text-xs text-foreground/85">
+          <McpToolName toolName={approval.toolName} />
+        </p>
       ) : null}
       <div className="flex flex-wrap items-center justify-end gap-2 mt-1">
         <Button

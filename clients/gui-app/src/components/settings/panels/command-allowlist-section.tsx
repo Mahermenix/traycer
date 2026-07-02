@@ -1,9 +1,9 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
-import { Folder, Globe, Trash2 } from "lucide-react";
+import { Folder, Globe, Trash2, Terminal, Blocks, Zap } from "lucide-react";
 import type {
-  CommandAllowRule,
-  CommandAllowScope,
+  ApprovalAllowRule,
+  ApprovalAllowScope,
 } from "@traycer/protocol/host/agent/gui/agent-runtime";
 import type {
   HostRpcError,
@@ -21,27 +21,37 @@ import { useCommandAllowlist } from "@/hooks/command-allowlist/use-command-allow
 import { useCommandAllowlistRemove } from "@/hooks/command-allowlist/use-command-allowlist-remove-mutation";
 import { useCommandAllowlistClear } from "@/hooks/command-allowlist/use-command-allowlist-clear-mutation";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
+import { McpToolName } from "@/components/mcp-tool-name";
 import { useWorkspaceFoldersStore } from "@/stores/workspace/workspace-folders-store";
 
 // Stable identity for a rule across list/remove (no id field on the wire shape).
-// Structured-encode so token boundaries can't blur — joining with a delimiter
-// would collide (`["a b","c"]` vs `["a","b c"]`); JSON keeps each token distinct.
-function ruleKey(rule: CommandAllowRule): string {
-  return JSON.stringify([rule.scope, rule.match, rule.tokens]);
+// Structured-encode so token boundaries can't blur.
+function ruleKey(rule: ApprovalAllowRule): string {
+  if (rule.kind === "command") {
+    return JSON.stringify([rule.kind, rule.scope, rule.match, rule.tokens]);
+  }
+  return JSON.stringify([rule.kind, rule.scope, rule.toolName]);
 }
 
 // Identity for a clear target across the shared clear mutation: `undefined`
 // scope is the all-scopes "Clear all", a `scope` is one card's "Clear".
-function scopeKey(scope: CommandAllowScope | undefined): string {
+function scopeKey(scope: ApprovalAllowScope | undefined): string {
   if (scope === undefined) return "all";
-  return scope.kind === "global" ? "global" : `workspace:${scope.path}`;
+  if (scope.kind === "global") return "global";
+  return `workspace:${scope.path}`;
 }
 
 // Plain text of what the rule allows, for aria labels.
-function ruleDisplay(rule: CommandAllowRule): string {
-  return rule.match === "prefix"
-    ? `${rule.tokens.join(" ")} *`
-    : rule.tokens.join(" ");
+function ruleDisplay(rule: ApprovalAllowRule): string {
+  if (rule.kind === "command") {
+    return rule.match === "prefix"
+      ? `${rule.tokens.join(" ")} *`
+      : rule.tokens.join(" ");
+  }
+  if (rule.kind === "mcp") {
+    return `MCP: ${rule.toolName}`;
+  }
+  return `Tool: ${rule.toolName}`;
 }
 
 // Last path segment of a workspace scope, for a readable group heading
@@ -51,29 +61,25 @@ function folderName(path: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : path;
 }
 
-// Split rules into the Global scope and one card per workspace. Bifurcating
-// here keeps "applies everywhere" visibly distinct from per-workspace rules,
-// and naturally handles many linked workspaces in one session. Workspaces that
-// are currently open (linked in the composer / workspace folders) are flagged
-// and sorted first, so the rules for the dirs in play surface at the top —
-// closed-workspace rules stay listed (and removable) below, never hidden.
+// Split rules into the Global scope and one card per workspace.
 function partitionRules(
-  rules: readonly CommandAllowRule[],
+  rules: readonly ApprovalAllowRule[],
   openPaths: ReadonlySet<string>,
 ): {
-  readonly global: readonly CommandAllowRule[];
+  readonly global: readonly ApprovalAllowRule[];
   readonly activeWorkspaces: ReadonlyArray<{
     readonly path: string;
     readonly label: string;
-    readonly rules: readonly CommandAllowRule[];
+    readonly rules: readonly ApprovalAllowRule[];
   }>;
   readonly otherWorkspaces: ReadonlyArray<{
     readonly path: string;
     readonly label: string;
-    readonly rules: readonly CommandAllowRule[];
+    readonly rules: readonly ApprovalAllowRule[];
   }>;
 } {
   const global = rules.filter((rule) => rule.scope.kind === "global");
+
   const workspacePaths = [
     ...new Set(
       rules.flatMap((rule) =>
@@ -98,13 +104,8 @@ function partitionRules(
 }
 
 /**
- * Per-device command allowlist body: lists the "always allow" rules saved from
- * approval prompts. Rules are split into a Global scope (applies to every
- * workspace this host runs) and one card per workspace, so the global/workspace
- * bifurcation is visible at a glance even with several workspaces open in one
- * session. Lets the user delete one rule or clear all. The enclosing panel owns
- * the title/description; this renders the Clear-all action and the grouped list.
- * Host-scoped via the panel's re-provided host client.
+ * Per-device action allowlist body: lists the "always allow" rules saved from
+ * approval prompts. Rules are split into Global and Workspace scopes.
  */
 export function CommandAllowlistSection() {
   const query = useCommandAllowlist({ enabled: true, subscribed: true });
@@ -128,7 +129,7 @@ export function CommandAllowlistSection() {
       {rules.length > 0 ? (
         <div className="flex items-center justify-between gap-3">
           <span className="text-ui-xs text-muted-foreground">
-            {rules.length} saved {rules.length === 1 ? "command" : "commands"}
+            {rules.length} saved {rules.length === 1 ? "action" : "actions"}
           </span>
           <Button
             type="button"
@@ -166,9 +167,9 @@ export function CommandAllowlistSection() {
       <ConfirmDestructiveDialog
         open={confirmClearAll}
         onOpenChange={setConfirmClearAll}
-        title="Clear all saved commands?"
+        title="Clear all saved actions?"
         description={`This removes all ${rules.length} always-allowed ${
-          rules.length === 1 ? "command" : "commands"
+          rules.length === 1 ? "action" : "actions"
         } across every scope on this host. Each will prompt for approval again.`}
         cascadeSummary={null}
         actionLabel="Clear all"
@@ -189,12 +190,12 @@ function CommandAllowlistBody(props: {
     ResponseOfMethod<HostRpcRegistry, "commandAllowlist.list">,
     HostRpcError
   >;
-  readonly rules: readonly CommandAllowRule[];
+  readonly rules: readonly ApprovalAllowRule[];
   readonly openPaths: ReadonlySet<string>;
-  readonly onRemove: (rule: CommandAllowRule) => void;
+  readonly onRemove: (rule: ApprovalAllowRule) => void;
   readonly removingKey: string | null;
   readonly onClearScope: (
-    scope: CommandAllowScope,
+    scope: ApprovalAllowScope,
     onSuccess: () => void,
   ) => void;
   readonly clearingScopeKey: string | null;
@@ -210,7 +211,7 @@ function CommandAllowlistBody(props: {
   if (props.query.isError) {
     return (
       <div className="py-3 text-ui-sm text-destructive">
-        Couldn't load saved commands. The host may need to be updated.
+        Couldn't load saved actions. The host may need to be updated.
       </div>
     );
   }
@@ -218,10 +219,10 @@ function CommandAllowlistBody(props: {
     return (
       <div className="flex flex-col items-center gap-1 rounded-lg border border-dashed border-border/60 py-8 text-center">
         <p className="m-0 text-ui-sm font-medium text-foreground">
-          No always-allowed commands yet
+          No always-allowed actions yet
         </p>
         <p className="m-0 max-w-prose text-ui-xs text-muted-foreground">
-          Choosing “Always allow” on an approval prompt saves the command here.
+          Choosing “Always allow” on an approval prompt saves the action here.
         </p>
       </div>
     );
@@ -258,6 +259,7 @@ function CommandAllowlistBody(props: {
           />
         </div>
       ) : null}
+
       {activeWorkspaces.length > 0 ? (
         <div className="flex flex-col gap-3">
           <div className="flex items-center gap-2">
@@ -349,12 +351,12 @@ function ScopeCard(props: {
   readonly title: string;
   readonly subtitle: string;
   readonly subtitleMono: boolean;
-  readonly scope: CommandAllowScope;
+  readonly scope: ApprovalAllowScope;
   readonly count: number;
-  readonly rules: readonly CommandAllowRule[];
-  readonly onRemove: (rule: CommandAllowRule) => void;
+  readonly rules: readonly ApprovalAllowRule[];
+  readonly onRemove: (rule: ApprovalAllowRule) => void;
   readonly removingKey: string | null;
-  readonly onClear: (scope: CommandAllowScope, onSuccess: () => void) => void;
+  readonly onClear: (scope: ApprovalAllowScope, onSuccess: () => void) => void;
   readonly clearing: boolean;
   readonly busy: boolean;
 }) {
@@ -397,7 +399,7 @@ function ScopeCard(props: {
             type="button"
             size="icon-sm"
             variant="ghost"
-            aria-label={`Clear all commands in ${props.title}`}
+            aria-label={`Clear all actions in ${props.title}`}
             className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/card:opacity-100 hover:text-destructive focus-visible:opacity-100"
             disabled={props.busy}
             onClick={() => setConfirmClear(true)}
@@ -419,7 +421,7 @@ function ScopeCard(props: {
         onOpenChange={setConfirmClear}
         title={`Clear ${props.title}?`}
         description={`This removes all ${props.count} always-allowed ${
-          props.count === 1 ? "command" : "commands"
+          props.count === 1 ? "action" : "actions"
         } in ${props.title}. Each will prompt for approval again.`}
         cascadeSummary={null}
         actionLabel="Clear"
@@ -443,20 +445,67 @@ function ScopeCard(props: {
   );
 }
 
+function RuleRowContent(props: {
+  readonly rule: ApprovalAllowRule;
+}): ReactNode {
+  if (props.rule.kind === "command") {
+    return (
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        <Terminal
+          className="size-3.5 shrink-0 text-muted-foreground"
+          aria-hidden
+        />
+        <code className="min-w-0 truncate rounded-md bg-muted/40 border border-border/40 px-2 py-1 font-mono text-code-sm text-foreground/80 shadow-sm">
+          {props.rule.tokens.join(" ")}
+          {props.rule.match === "prefix" ? (
+            <span className="text-primary font-bold"> *</span>
+          ) : null}
+        </code>
+      </div>
+    );
+  }
+  if (props.rule.kind === "mcp") {
+    return (
+      <div className="flex items-center gap-2 min-w-0 flex-1">
+        <Blocks className="size-3.5 shrink-0 text-sky-500" aria-hidden />
+        <Badge
+          variant="secondary"
+          className="font-mono text-[10px] uppercase tracking-wide text-foreground/70 bg-muted/60 hover:bg-muted/60 border border-border/40 px-1.5 py-0 h-5 rounded-sm shrink-0"
+        >
+          MCP
+        </Badge>
+        <code className="min-w-0 truncate font-mono text-code-sm text-foreground/80">
+          <McpToolName toolName={props.rule.toolName} />
+        </code>
+      </div>
+    );
+  }
+  return (
+    <div className="flex items-center gap-2 min-w-0 flex-1">
+      <Zap className="size-3.5 shrink-0 text-amber-500" aria-hidden />
+      <Badge
+        variant="secondary"
+        className="font-mono text-[10px] uppercase tracking-wide text-foreground/70 bg-muted/60 hover:bg-muted/60 border border-border/40 px-1.5 py-0 h-5 rounded-sm shrink-0"
+      >
+        TOOL
+      </Badge>
+      <span className="min-w-0 truncate text-sm font-medium text-foreground/80">
+        {props.rule.toolName}
+      </span>
+    </div>
+  );
+}
+
 function RuleRow(props: {
-  readonly rule: CommandAllowRule;
-  readonly onRemove: (rule: CommandAllowRule) => void;
+  readonly rule: ApprovalAllowRule;
+  readonly onRemove: (rule: ApprovalAllowRule) => void;
   readonly removing: boolean;
   readonly busy: boolean;
 }) {
   return (
     <li className="group flex items-center justify-between gap-3 px-3 py-2 transition-colors hover:bg-muted/30">
-      <code className="min-w-0 truncate rounded-md bg-muted/40 border border-border/40 px-2 py-1 font-mono text-code-sm text-foreground/80 shadow-sm">
-        {props.rule.tokens.join(" ")}
-        {props.rule.match === "prefix" ? (
-          <span className="text-primary font-bold"> *</span>
-        ) : null}
-      </code>
+      <RuleRowContent rule={props.rule} />
+
       <TooltipWrapper
         label="Remove"
         side="left"

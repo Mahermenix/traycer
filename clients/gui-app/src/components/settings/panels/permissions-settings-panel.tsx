@@ -58,13 +58,13 @@ export function PermissionsSettingsPanel() {
   const inner = (
     <SettingsPanelShell
       title="Permissions"
-      description="Commands you allowed to skip the approval prompt. Manage them per host."
+      description="Actions you allowed to skip the approval prompt. Manage them per host."
       headerAction={hostPicker}
     >
       {overrideUnavailable ? (
         <div className="p-5 text-ui-sm text-muted-foreground">
           This host is offline. Reconnect to it to view or manage its saved
-          commands.
+          actions.
         </div>
       ) : (
         <CommandAllowlistSection />

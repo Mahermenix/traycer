@@ -1124,8 +1124,8 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
     [chatActions],
   );
   const dispatchFileEditApprovalDecision = useCallback(
-    (approvalId: string, approved: boolean) => {
-      chatActions.fileEditApprovalDecision(approvalId, { approved });
+    (approvalId: string, decision: RuntimeApprovalDecision) => {
+      chatActions.fileEditApprovalDecision(approvalId, decision);
     },
     [chatActions],
   );
@@ -1379,18 +1379,32 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
     [pendingInterview, handleInterviewAnswer, handleInterviewError],
   );
 
+  // "Auto-accept edits" on a file-edit card flips this chat/epic into
+  // `auto_accept_edits` mode via the same path the composer selector uses:
+  // persisted, epic-defaulted (composer-run-settings), and applied to the live
+  // turn. One toggle covers every edit in the epic — no per-directory rule.
+  const handleAutoAcceptEdits = useCallback((): void => {
+    if (currentComposerSettings.permissionMode === "auto_accept_edits") return;
+    handleComposerSettingsChange({
+      ...currentComposerSettings,
+      permissionMode: "auto_accept_edits",
+    });
+  }, [currentComposerSettings, handleComposerSettingsChange]);
+
   const lowerApprovals = useMemo(
     () => ({
       pendingFileEditApprovals: state.pendingFileEditApprovals,
       pendingApprovals: state.pendingApprovals,
       onFileEditDecision: dispatchFileEditApprovalDecision,
       onApprovalDecision: dispatchApprovalDecision,
+      onAutoAcceptEdits: handleAutoAcceptEdits,
     }),
     [
       state.pendingFileEditApprovals,
       state.pendingApprovals,
       dispatchFileEditApprovalDecision,
       dispatchApprovalDecision,
+      handleAutoAcceptEdits,
     ],
   );
 
