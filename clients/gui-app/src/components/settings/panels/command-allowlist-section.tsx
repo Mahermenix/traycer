@@ -266,12 +266,6 @@ function CommandAllowlistBody(props: {
             <h3 className="m-0 text-xs font-semibold tracking-wider text-muted-foreground uppercase">
               Active Workspaces
             </h3>
-            <Badge
-              variant="secondary"
-              className="px-1.5 py-0 h-4 min-w-4 justify-center text-[10px] bg-muted/80"
-            >
-              {activeWorkspaces.length}
-            </Badge>
           </div>
           <div className="flex flex-col gap-3">
             {activeWorkspaces.map((workspace) => (
@@ -448,13 +442,26 @@ function ScopeCard(props: {
 function RuleRowContent(props: {
   readonly rule: ApprovalAllowRule;
 }): ReactNode {
+  const scopeModifier =
+    props.rule.scope.kind === "global" ? "Global" : "Workspace";
+
   if (props.rule.kind === "command") {
     return (
       <div className="flex items-center gap-2 min-w-0 flex-1">
-        <Terminal
-          className="size-3.5 shrink-0 text-muted-foreground"
-          aria-hidden
-        />
+        <TooltipWrapper
+          label={`${scopeModifier} Shell Command`}
+          side="top"
+          sideOffset={4}
+          align="center"
+        >
+          <button
+            type="button"
+            aria-label={`${scopeModifier} Shell Command`}
+            className="flex cursor-default items-center justify-center rounded-sm border-0 bg-transparent p-1 text-muted-foreground transition-colors hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Terminal className="size-3.5 shrink-0" aria-hidden />
+          </button>
+        </TooltipWrapper>
         <code className="min-w-0 truncate rounded-md bg-muted/40 border border-border/40 px-2 py-1 font-mono text-code-sm text-foreground/80 shadow-sm">
           {props.rule.tokens.join(" ")}
           {props.rule.match === "prefix" ? (
@@ -467,14 +474,21 @@ function RuleRowContent(props: {
   if (props.rule.kind === "mcp") {
     return (
       <div className="flex items-center gap-2 min-w-0 flex-1">
-        <Blocks className="size-3.5 shrink-0 text-sky-500" aria-hidden />
-        <Badge
-          variant="secondary"
-          className="font-mono text-[10px] uppercase tracking-wide text-foreground/70 bg-muted/60 hover:bg-muted/60 border border-border/40 px-1.5 py-0 h-5 rounded-sm shrink-0"
+        <TooltipWrapper
+          label={`${scopeModifier} MCP Tool`}
+          side="top"
+          sideOffset={4}
+          align="center"
         >
-          MCP
-        </Badge>
-        <code className="min-w-0 truncate font-mono text-code-sm text-foreground/80">
+          <button
+            type="button"
+            aria-label={`${scopeModifier} MCP Tool`}
+            className="flex cursor-default items-center justify-center rounded-sm border-0 bg-transparent p-1 text-sky-500 transition-colors hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <Blocks className="size-3.5 shrink-0" aria-hidden />
+          </button>
+        </TooltipWrapper>
+        <code className="min-w-0 truncate rounded-md bg-muted/40 border border-border/40 px-2 py-1 font-mono text-code-sm text-foreground/80 shadow-sm">
           <McpToolName toolName={props.rule.toolName} />
         </code>
       </div>
@@ -482,16 +496,23 @@ function RuleRowContent(props: {
   }
   return (
     <div className="flex items-center gap-2 min-w-0 flex-1">
-      <Zap className="size-3.5 shrink-0 text-amber-500" aria-hidden />
-      <Badge
-        variant="secondary"
-        className="font-mono text-[10px] uppercase tracking-wide text-foreground/70 bg-muted/60 hover:bg-muted/60 border border-border/40 px-1.5 py-0 h-5 rounded-sm shrink-0"
+      <TooltipWrapper
+        label={`${scopeModifier} Agent Tool`}
+        side="top"
+        sideOffset={4}
+        align="center"
       >
-        TOOL
-      </Badge>
-      <span className="min-w-0 truncate text-sm font-medium text-foreground/80">
+        <button
+          type="button"
+          aria-label={`${scopeModifier} Agent Tool`}
+          className="flex cursor-default items-center justify-center rounded-sm border-0 bg-transparent p-1 text-amber-500 transition-colors hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <Zap className="size-3.5 shrink-0" aria-hidden />
+        </button>
+      </TooltipWrapper>
+      <code className="min-w-0 truncate rounded-md bg-muted/40 border border-border/40 px-2 py-1 font-mono text-code-sm text-foreground/80 shadow-sm">
         {props.rule.toolName}
-      </span>
+      </code>
     </div>
   );
 }
