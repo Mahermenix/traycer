@@ -18,6 +18,7 @@ import {
 import { deriveToolInputSummary } from "@/lib/segment-summary";
 import { cn } from "@/lib/utils";
 import { McpToolName } from "@/components/mcp-tool-name";
+import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import type { ChatApprovalState } from "@traycer/protocol/host/agent/gui/subscribe";
 import {
   isMcpToolName,
@@ -207,22 +208,29 @@ function ApprovalRow(props: ApprovalRowProps) {
         </Button>
         {suggestedRules.length > 0 ? (
           <div className="flex -space-x-px shadow-sm rounded-md">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={!canAct}
-              className="rounded-r-none focus:z-10 shadow-none bg-background hover:bg-muted/50 border-r-0"
-              onClick={() => {
-                onDecision(approval.approvalId, {
-                  approved: true,
-                  remember: { scope: "workspace" },
-                });
-              }}
+            <TooltipWrapper
+              label="Save for this workspace"
+              side="top"
+              sideOffset={4}
+              align="center"
             >
-              <ShieldCheck className="size-3.5 text-primary" aria-hidden />
-              Always allow
-            </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={!canAct}
+                className="rounded-r-none focus:z-10 shadow-none bg-background hover:bg-muted/50 border-r-0"
+                onClick={() => {
+                  onDecision(approval.approvalId, {
+                    approved: true,
+                    remember: { scope: "workspace" },
+                  });
+                }}
+              >
+                <ShieldCheck className="size-3.5 text-primary" aria-hidden />
+                Always allow
+              </Button>
+            </TooltipWrapper>
             <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button

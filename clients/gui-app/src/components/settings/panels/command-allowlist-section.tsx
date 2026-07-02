@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { memo, useCallback, useMemo, useState, type ReactNode } from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { Folder, Globe, Trash2, Terminal, Blocks, Zap } from "lucide-react";
 import type {
@@ -12,7 +12,6 @@ import type {
 import type { HostRpcRegistry } from "@/lib/host";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import {
   AgentSpinningDots,
   MutedAgentSpinner,
@@ -110,6 +109,7 @@ function partitionRules(
 export function CommandAllowlistSection() {
   const query = useCommandAllowlist({ enabled: true, subscribed: true });
   const remove = useCommandAllowlistRemove();
+  const removeMutate = remove.mutate;
   const clear = useCommandAllowlistClear();
   const rules = query.data?.rules ?? [];
   const busy = remove.isPending || clear.isPending;
@@ -123,6 +123,12 @@ export function CommandAllowlistSection() {
   const clearingScopeKey = clear.isPending
     ? scopeKey(clear.variables.scope)
     : null;
+  // Stable across renders (TanStack `mutate` is referentially stable) so
+  // memoized RuleRows skip re-render when only unrelated parent state changes.
+  const onRemove = useCallback(
+    (rule: ApprovalAllowRule) => removeMutate({ rule }),
+    [removeMutate],
+  );
 
   return (
     <div className="flex flex-col gap-4 p-5">
@@ -156,7 +162,7 @@ export function CommandAllowlistSection() {
         query={query}
         rules={rules}
         openPaths={openPaths}
-        onRemove={(rule) => remove.mutate({ rule })}
+        onRemove={onRemove}
         removingKey={remove.isPending ? ruleKey(remove.variables.rule) : null}
         onClearScope={(scope, onSuccess) =>
           clear.mutate({ scope }, { onSuccess })
@@ -201,6 +207,12 @@ function CommandAllowlistBody(props: {
   readonly clearingScopeKey: string | null;
   readonly busy: boolean;
 }) {
+  // Unconditional (rules-of-hooks): computed before the pending/error/empty
+  // early-returns, cheap no-op while rules is empty.
+  const partitioned = useMemo(
+    () => partitionRules(props.rules, props.openPaths),
+    [props.rules, props.openPaths],
+  );
   if (props.query.isPending) {
     return (
       <div className="flex items-center gap-2 py-3 text-ui-sm text-muted-foreground">
@@ -228,10 +240,7 @@ function CommandAllowlistBody(props: {
     );
   }
 
-  const { global, activeWorkspaces, otherWorkspaces } = partitionRules(
-    props.rules,
-    props.openPaths,
-  );
+  const { global, activeWorkspaces, otherWorkspaces } = partitioned;
   return (
     <div className="flex flex-col gap-6">
       {global.length > 0 ? (
@@ -355,6 +364,18 @@ function ScopeCard(props: {
   readonly busy: boolean;
 }) {
   const [confirmClear, setConfirmClear] = useState(false);
+  const sortedRules = useMemo(() => {
+    return [...props.rules].sort((a, b) => {
+      const order = { command: 0, mcp: 1, tool: 2 };
+      if (order[a.kind] !== order[b.kind]) {
+        return order[a.kind] - order[b.kind];
+      }
+      const aName = a.kind === "command" ? a.tokens.join(" ") : a.toolName;
+      const bName = b.kind === "command" ? b.tokens.join(" ") : b.toolName;
+      return aName.localeCompare(bName);
+    });
+  }, [props.rules]);
+
   return (
     <div className="group/card flex flex-col overflow-hidden rounded-md border border-border/50 bg-card shadow-sm">
       <div className="flex min-w-0 items-center gap-3 border-b border-border/40 bg-muted/20 px-3 py-2.5">
@@ -383,32 +404,26 @@ function ScopeCard(props: {
             {props.subtitle}
           </span>
         </div>
-        <TooltipWrapper
-          label={`Clear ${props.title}`}
-          side="left"
-          sideOffset={undefined}
-          align={undefined}
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          title={`Clear ${props.title}`}
+          aria-label={`Clear all actions in ${props.title}`}
+          className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/card:opacity-100 hover:text-destructive focus-visible:opacity-100"
+          disabled={props.busy}
+          onClick={() => setConfirmClear(true)}
         >
-          <Button
-            type="button"
-            size="icon-sm"
-            variant="ghost"
-            aria-label={`Clear all actions in ${props.title}`}
-            className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/card:opacity-100 hover:text-destructive focus-visible:opacity-100"
-            disabled={props.busy}
-            onClick={() => setConfirmClear(true)}
-          >
-            {props.clearing ? (
-              <AgentSpinningDots
-                className={undefined}
-                testId={undefined}
-                variant={undefined}
-              />
-            ) : (
-              <Trash2 className="size-3.5" aria-hidden />
-            )}
-          </Button>
-        </TooltipWrapper>
+          {props.clearing ? (
+            <AgentSpinningDots
+              className={undefined}
+              testId={undefined}
+              variant={undefined}
+            />
+          ) : (
+            <Trash2 className="size-3.5" aria-hidden />
+          )}
+        </Button>
       </div>
       <ConfirmDestructiveDialog
         open={confirmClear}
@@ -425,7 +440,7 @@ function ScopeCard(props: {
         }
       />
       <ul className="m-0 flex list-none flex-col divide-y divide-border/30 bg-muted/5 p-0">
-        {props.rules.map((rule) => (
+        {sortedRules.map((rule) => (
           <RuleRow
             key={ruleKey(rule)}
             rule={rule}
@@ -442,26 +457,16 @@ function ScopeCard(props: {
 function RuleRowContent(props: {
   readonly rule: ApprovalAllowRule;
 }): ReactNode {
-  const scopeModifier =
-    props.rule.scope.kind === "global" ? "Global" : "Workspace";
-
   if (props.rule.kind === "command") {
     return (
-      <div className="flex items-center gap-2 min-w-0 flex-1">
-        <TooltipWrapper
-          label={`${scopeModifier} Shell Command`}
-          side="top"
-          sideOffset={4}
-          align="center"
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <span
+          title="Shell Command"
+          aria-label="Shell Command"
+          className="flex size-6 shrink-0 items-center justify-center rounded-sm text-muted-foreground"
         >
-          <button
-            type="button"
-            aria-label={`${scopeModifier} Shell Command`}
-            className="flex cursor-default items-center justify-center rounded-sm border-0 bg-transparent p-1 text-muted-foreground transition-colors hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <Terminal className="size-3.5 shrink-0" aria-hidden />
-          </button>
-        </TooltipWrapper>
+          <Terminal className="size-3.5 shrink-0" aria-hidden />
+        </span>
         <code className="min-w-0 truncate rounded-md bg-muted/40 border border-border/40 px-2 py-1 font-mono text-code-sm text-foreground/80 shadow-sm">
           {props.rule.tokens.join(" ")}
           {props.rule.match === "prefix" ? (
@@ -473,21 +478,14 @@ function RuleRowContent(props: {
   }
   if (props.rule.kind === "mcp") {
     return (
-      <div className="flex items-center gap-2 min-w-0 flex-1">
-        <TooltipWrapper
-          label={`${scopeModifier} MCP Tool`}
-          side="top"
-          sideOffset={4}
-          align="center"
+      <div className="flex items-center gap-3 min-w-0 flex-1">
+        <span
+          title="MCP Tool"
+          aria-label="MCP Tool"
+          className="flex size-6 shrink-0 items-center justify-center rounded-sm text-sky-500"
         >
-          <button
-            type="button"
-            aria-label={`${scopeModifier} MCP Tool`}
-            className="flex cursor-default items-center justify-center rounded-sm border-0 bg-transparent p-1 text-sky-500 transition-colors hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <Blocks className="size-3.5 shrink-0" aria-hidden />
-          </button>
-        </TooltipWrapper>
+          <Blocks className="size-3.5 shrink-0" aria-hidden />
+        </span>
         <code className="min-w-0 truncate rounded-md bg-muted/40 border border-border/40 px-2 py-1 font-mono text-code-sm text-foreground/80 shadow-sm">
           <McpToolName toolName={props.rule.toolName} />
         </code>
@@ -495,21 +493,14 @@ function RuleRowContent(props: {
     );
   }
   return (
-    <div className="flex items-center gap-2 min-w-0 flex-1">
-      <TooltipWrapper
-        label={`${scopeModifier} Agent Tool`}
-        side="top"
-        sideOffset={4}
-        align="center"
+    <div className="flex items-center gap-3 min-w-0 flex-1">
+      <span
+        title="Agent Tool"
+        aria-label="Agent Tool"
+        className="flex size-6 shrink-0 items-center justify-center rounded-sm text-amber-500"
       >
-        <button
-          type="button"
-          aria-label={`${scopeModifier} Agent Tool`}
-          className="flex cursor-default items-center justify-center rounded-sm border-0 bg-transparent p-1 text-amber-500 transition-colors hover:bg-muted/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          <Zap className="size-3.5 shrink-0" aria-hidden />
-        </button>
-      </TooltipWrapper>
+        <Zap className="size-3.5 shrink-0" aria-hidden />
+      </span>
       <code className="min-w-0 truncate rounded-md bg-muted/40 border border-border/40 px-2 py-1 font-mono text-code-sm text-foreground/80 shadow-sm">
         {props.rule.toolName}
       </code>
@@ -517,7 +508,7 @@ function RuleRowContent(props: {
   );
 }
 
-function RuleRow(props: {
+const RuleRow = memo(function RuleRow(props: {
   readonly rule: ApprovalAllowRule;
   readonly onRemove: (rule: ApprovalAllowRule) => void;
   readonly removing: boolean;
@@ -527,32 +518,26 @@ function RuleRow(props: {
     <li className="group flex items-center justify-between gap-3 px-3 py-2 transition-colors hover:bg-muted/30">
       <RuleRowContent rule={props.rule} />
 
-      <TooltipWrapper
-        label="Remove"
-        side="left"
-        sideOffset={undefined}
-        align={undefined}
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        title="Remove"
+        aria-label={`Remove ${ruleDisplay(props.rule)}`}
+        className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
+        disabled={props.busy}
+        onClick={() => props.onRemove(props.rule)}
       >
-        <Button
-          type="button"
-          size="icon-sm"
-          variant="ghost"
-          aria-label={`Remove ${ruleDisplay(props.rule)}`}
-          className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive focus-visible:opacity-100"
-          disabled={props.busy}
-          onClick={() => props.onRemove(props.rule)}
-        >
-          {props.removing ? (
-            <AgentSpinningDots
-              className={undefined}
-              testId={undefined}
-              variant={undefined}
-            />
-          ) : (
-            <Trash2 className="size-3.5" aria-hidden />
-          )}
-        </Button>
-      </TooltipWrapper>
+        {props.removing ? (
+          <AgentSpinningDots
+            className={undefined}
+            testId={undefined}
+            variant={undefined}
+          />
+        ) : (
+          <Trash2 className="size-3.5" aria-hidden />
+        )}
+      </Button>
     </li>
   );
-}
+});
