@@ -222,6 +222,7 @@ function createBaseRunnerHost(): IRunnerHost {
     migration: null,
     hostManagement: null,
     hostTray: null,
+    zoom: null,
   };
 }
 

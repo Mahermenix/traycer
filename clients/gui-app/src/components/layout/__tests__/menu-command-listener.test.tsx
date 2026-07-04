@@ -195,6 +195,7 @@ function createRunnerHost(menu: FakeDesktopMenu): FakeRunnerHost {
       migration: null,
       hostManagement: null,
       hostTray: null,
+      zoom: null,
     } satisfies IRunnerHost,
     {
       menu,

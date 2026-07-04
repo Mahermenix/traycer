@@ -209,6 +209,7 @@ function makeHost(tray: IHostTray, management: IHostManagement): IRunnerHost {
     migration: null,
     hostManagement: management,
     hostTray: tray,
+    zoom: null,
   };
 }
 
