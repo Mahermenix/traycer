@@ -366,6 +366,7 @@ function UpdateNowControl(props: UpdateNowControlProps) {
           type="button"
           variant="outline"
           size="sm"
+          disabled={mutation.isPending}
           data-testid={`my-hosts-update-now-trigger-${hostId}`}
         >
           Update…

@@ -52,6 +52,8 @@ export function bytesToHex(bytes: Uint8Array): string {
   return hex;
 }
 
+const HEX_BYTE_PATTERN = /^[0-9a-fA-F]{2}$/;
+
 /** Decode a lower/upper-case hex string into bytes. */
 export function hexToBytes(hex: string): Uint8Array {
   if (hex.length % 2 !== 0) {
@@ -59,11 +61,11 @@ export function hexToBytes(hex: string): Uint8Array {
   }
   const out = new Uint8Array(hex.length / 2);
   for (let i = 0; i < out.length; i++) {
-    const byte = Number.parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    if (Number.isNaN(byte)) {
+    const slice = hex.slice(i * 2, i * 2 + 2);
+    if (!HEX_BYTE_PATTERN.test(slice)) {
       throw new Error("hex string contains a non-hex character");
     }
-    out[i] = byte;
+    out[i] = Number.parseInt(slice, 16);
   }
   return out;
 }

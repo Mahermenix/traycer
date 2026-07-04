@@ -43,6 +43,8 @@ export function openOneShotStreamTransport(params: {
     bearer: params.bearer,
     authnBaseUrl: params.authnBaseUrl,
     auth: null,
+    // Owned-lifetime transport: eager warm-connect is correct here.
+    autoStart: true,
   });
   if (wsStreamClient === null) {
     // Only reachable for a remote target whose registry-published public key

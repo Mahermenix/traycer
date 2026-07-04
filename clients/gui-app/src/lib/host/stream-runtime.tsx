@@ -75,6 +75,9 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
       bearer: () => binding.hostClient.getRequestContext()?.credentials ?? null,
       authnBaseUrl,
       auth,
+      // Render-path build inside a `useMemo`: never eager-start (see the param
+      // docs on `buildHostStreamClient`). Consumers subscribe on mount.
+      autoStart: false,
     });
     if (wsStreamClient === null) return null;
     return { wsStreamClient };

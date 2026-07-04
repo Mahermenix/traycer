@@ -7,7 +7,6 @@ import type {
   WorkspaceRecentEntry,
 } from "@traycer/protocol/host/workspace/unary-schemas";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Dialog,
@@ -134,7 +133,7 @@ function RemoteWorkspacePathPickerBody(
     isDowngradeUnsupportedError(recentQuery.error);
 
   const submit = (): void => {
-    if (path.trim().length === 0) {
+    if (path.trim().length === 0 || openMutation.isPending || hostTooOld) {
       return;
     }
     setRejection(null);
@@ -262,13 +261,14 @@ function PathChip(props: {
   readonly onClick: () => void;
 }) {
   return (
-    <Badge
+    <Button
+      type="button"
       variant="outline"
-      className="max-w-full cursor-pointer truncate border-border/70 bg-background/60 text-muted-foreground hover:text-foreground"
+      className="h-auto max-w-full truncate border-border/70 bg-background/60 px-2 py-0.5 text-muted-foreground hover:text-foreground"
       onClick={props.onClick}
     >
       {props.label}
-    </Badge>
+    </Button>
   );
 }
 

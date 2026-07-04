@@ -135,12 +135,27 @@ export function buildHostStreamClient(params: {
   readonly bearer: BearerSourceProvider;
   readonly authnBaseUrl: string;
   readonly auth: StreamAuthRevalidator | null;
+  // Whether to eagerly `start()` the remote session (warm-connect). Owned-
+  // lifetime callers (`openDurableStreamTransport`, one-shot) pass `true`.
+  // Render-path callers that build inside a `useMemo` MUST pass `false`: a
+  // StrictMode double-invoke builds two sessions and only the retained one is
+  // guarded by `useCloseWsStreamClientOnReplace`, so eager-starting here would
+  // open a socket on the orphaned session and leak it. `start()` is idempotent
+  // and `subscribe()` lazily starts, so the retained session still connects on
+  // first use.
+  readonly autoStart: boolean;
 }): IHostStreamClient<HostStreamRpcRegistry> | null {
-  if (
-    params.target.kind === "remote" &&
-    isRemoteHostDirectoryEntry(params.target) &&
-    params.target.websocketUrl !== null
-  ) {
+  if (params.target.kind === "remote") {
+    // Fail closed: an incomplete remote row (no public key / no relay url)
+    // must never fall through to the plain-WS branch below - that would dial
+    // a relay attach URL without the Noise-NK transport.
+    if (
+      !isRemoteHostDirectoryEntry(params.target) ||
+      params.target.websocketUrl === null
+    ) {
+      return null;
+    }
+
     const remoteTransport = createRemoteHostTransport<
       HostRpcRegistry,
       HostStreamRpcRegistry
@@ -156,7 +171,9 @@ export function buildHostStreamClient(params: {
       requestId: uuidv4,
     });
     if (remoteTransport === null) return null;
-    remoteTransport.session.start();
+    if (params.autoStart) {
+      remoteTransport.session.start();
+    }
     return remoteTransport.streamClient;
   }
 
@@ -263,6 +280,9 @@ export function useHostStreamClientBindingFor(
       bearer: () => globalClient.getRequestContext()?.credentials ?? null,
       authnBaseUrl,
       auth,
+      // Render-path build inside a `useMemo`: never eager-start (see the
+      // param docs on `buildHostStreamClient`). First subscribe starts it.
+      autoStart: false,
     });
     if (client === null) {
       return null;

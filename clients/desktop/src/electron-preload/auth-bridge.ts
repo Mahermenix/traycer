@@ -5,11 +5,11 @@ import {
 } from "../ipc-contracts/ipc-channels";
 import type { AuthTokenValidationResult } from "@traycer-clients/shared/platform/runner-host";
 import type { AuthIdentityValidationResult } from "@traycer-clients/shared/auth/auth-validation-types";
-import type { HostListFetchResult } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type {
+  HostListFetchResult,
   UpdateHostVersionPolicyFetchResult,
   UpdateHostVersionPolicyInput,
-} from "@traycer-clients/shared/host-client/host-version-policy-fetcher";
+} from "../ipc-contracts/host-types";
 import type { AuthTokenRefreshResult } from "../ipc-contracts/auth-types";
 import type { DesktopAuthSessionSnapshot } from "../ipc-contracts/window-types";
 import { subscribe, type Disposable, type Listener } from "./subscribe";

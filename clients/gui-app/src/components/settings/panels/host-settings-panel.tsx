@@ -56,7 +56,7 @@ export function HostSettingsPanel() {
     return (
       <SettingsPanelShell
         title="Host"
-        description="Your hosts across every device, plus this machine's local service."
+        description="Your hosts across every device."
       >
         <MyHostsList />
         <div className="px-5 py-6 text-ui-sm text-muted-foreground">

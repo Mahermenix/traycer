@@ -1,5 +1,4 @@
-import { dirname, isAbsolute, resolve } from "node:path";
-import { lstat, readlink, rm } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import {
   deleteHostInstallRecord,
   readHostInstallRecord,
@@ -13,7 +12,11 @@ import {
   hostPidMetadataPath,
   hostVersionsDir,
 } from "../store/paths";
-import { sweepOldTrash } from "./install";
+import {
+  resolveInstallPointerTarget,
+  sweepOldTrash,
+  type InstallPointerTarget,
+} from "./install";
 
 // Uninstall the installed host directory for a single environment. Always
 // removes the install dir + record; runtime state (pid metadata, log)
@@ -116,16 +119,14 @@ export async function uninstallHost(
 
 // Resolve the absolute versioned-dir path `target` (the `hostInstallDir`
 // symlink/junction) currently points at, or `null` when `target` doesn't
-// exist or is itself a plain directory (legacy, unmigrated layout - the
+// exist, is itself a plain directory (legacy, unmigrated layout - the
 // `rm(target, ...)` above already removes those bytes directly, there is
-// no separate resolved target to also remove).
+// no separate resolved target to also remove), or couldn't be inspected at
+// all - uninstall is best-effort, so any `lstat` failure here is treated the
+// same as "nothing to resolve" rather than aborting the uninstall.
 async function resolveInstallDirTarget(target: string): Promise<string | null> {
-  try {
-    const linkStat = await lstat(target);
-    if (!linkStat.isSymbolicLink()) return null;
-  } catch {
-    return null;
-  }
-  const raw = await readlink(target);
-  return isAbsolute(raw) ? raw : resolve(dirname(target), raw);
+  const pointer = await resolveInstallPointerTarget(target).catch(
+    (): InstallPointerTarget => ({ kind: "missing", resolved: null }),
+  );
+  return pointer.kind === "symlink" ? pointer.resolved : null;
 }

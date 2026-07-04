@@ -1,11 +1,14 @@
 import type { IncompatibilityUpgradeGuidance } from "@traycer/protocol/framework/index";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import { isRemoteHostDirectoryEntry } from "@traycer-clients/shared/host-client/remote-fetcher";
+import { appLogger } from "@/lib/logger";
 
 export interface VersionSkewCopy {
   readonly title: string;
   /** The affordance label; never uses "Update required" (below-floor only). */
   readonly action: string;
+  /** Machine-readable discriminant for which leg the handshake says is behind. */
+  readonly direction: "host-outdated" | "client-outdated";
 }
 
 export interface VersionSkewInput {
@@ -36,26 +39,65 @@ export function describeVersionSkew(input: VersionSkewInput): VersionSkewCopy {
     input.clientAppVersion,
   );
   if (comparison === "host-behind") {
-    return { title: "Host update needed", action: "Update now" };
+    return {
+      title: "Host update needed",
+      action: "Update now",
+      direction: "host-outdated",
+    };
   }
   if (comparison === "client-behind") {
-    return { title: "Your app is too old", action: "Update the app" };
+    return {
+      title: "Your app is too old",
+      action: "Update the app",
+      direction: "client-outdated",
+    };
   }
   if (
     input.guidance !== null &&
     input.guidance.hostShouldUpgrade &&
     !input.guidance.clientShouldUpgrade
   ) {
-    return { title: "Host update needed", action: "Update now" };
+    return {
+      title: "Host update needed",
+      action: "Update now",
+      direction: "host-outdated",
+    };
   }
   if (
     input.guidance !== null &&
     input.guidance.clientShouldUpgrade &&
     !input.guidance.hostShouldUpgrade
   ) {
-    return { title: "Your app is too old", action: "Update the app" };
+    return {
+      title: "Your app is too old",
+      action: "Update the app",
+      direction: "client-outdated",
+    };
   }
-  return { title: "Host update needed", action: "Update now" };
+  // Reached only when `guidance` doesn't single out one leg — either both
+  // flags are set (multiple incompatible methods diverging in opposite
+  // directions) or neither is (no guidance at all, with an unparsable/"same"
+  // comparison). Per this function's own doc comment, an `INCOMPATIBLE`
+  // failure above the floor is "a genuine bug, not routine drift", so this
+  // fallback is worth a log rather than a silent default.
+  appLogger.warn(
+    "[version-skew] ambiguous guidance; defaulting to host-update copy",
+    {
+      comparison,
+      guidance:
+        input.guidance === null
+          ? null
+          : {
+              hostShouldUpgrade: input.guidance.hostShouldUpgrade,
+              clientShouldUpgrade: input.guidance.clientShouldUpgrade,
+            },
+    },
+  );
+  return {
+    title: "Host update needed",
+    action: "Update now",
+    direction: "host-outdated",
+  };
 }
 
 export function hostAppVersionFromDirectoryEntry(

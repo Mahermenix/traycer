@@ -166,7 +166,7 @@ export const hostStatusDtoSchema: z.ZodType<HostStatusDTO> = z.object({
   viewerReachability: hostViewerReachabilitySchema,
   clientCloud: hostClientCloudStateSchema,
   busy: z.boolean(),
-  busySessionCount: z.number(),
+  busySessionCount: z.number().int().nonnegative(),
   updateState: hostUpdateStateSchema,
   appVersion: z.string().nullable(),
   lastSeenAt: z.string().nullable(),

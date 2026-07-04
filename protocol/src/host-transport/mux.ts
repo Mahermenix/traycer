@@ -363,7 +363,16 @@ export function encodeMuxFrame(input: EncodeMuxFrameInput): Uint8Array {
   return out;
 }
 
+const KNOWN_MUX_FRAME_TYPES: ReadonlySet<number> = new Set(
+  Object.values(MuxFrameType),
+);
+
 export function decodeMuxFrame(bytes: Uint8Array): MuxFrame {
+  if (bytes.length > MAX_MUX_FRAME_BYTES) {
+    throw new MuxFrameDecodeError(
+      `mux frame exceeds ${MAX_MUX_FRAME_BYTES}-byte cap: ${bytes.length} bytes`,
+    );
+  }
   if (bytes.length < HEADER_LEN) {
     throw new MuxFrameDecodeError(
       `mux frame too short: ${bytes.length} < ${HEADER_LEN}`,
@@ -374,7 +383,11 @@ export function decodeMuxFrame(bytes: Uint8Array): MuxFrame {
     throw new MuxFrameDecodeError(`unsupported mux version: ${version}`);
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  const type = bytes[1] as MuxFrameTypeValue;
+  const typeByte = bytes[1];
+  if (!KNOWN_MUX_FRAME_TYPES.has(typeByte)) {
+    throw new MuxFrameDecodeError(`unknown mux frame type: ${typeByte}`);
+  }
+  const type = typeByte as MuxFrameTypeValue;
   const streamId = view.getUint32(2);
   const seq = view.getUint32(6);
   const flags = bytes[10];

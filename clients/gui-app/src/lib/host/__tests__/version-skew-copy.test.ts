@@ -23,14 +23,22 @@ describe("describeVersionSkew", () => {
         clientAppVersion: "1.5.0",
         guidance: CLIENT_UPGRADE,
       }),
-    ).toEqual({ title: "Host update needed", action: "Update now" });
+    ).toEqual({
+      title: "Host update needed",
+      action: "Update now",
+      direction: "host-outdated",
+    });
     expect(
       describeVersionSkew({
         hostAppVersion: "1.6.0",
         clientAppVersion: "1.5.0",
         guidance: HOST_UPGRADE,
       }),
-    ).toEqual({ title: "Your app is too old", action: "Update the app" });
+    ).toEqual({
+      title: "Your app is too old",
+      action: "Update the app",
+      direction: "client-outdated",
+    });
   });
 
   it("falls back to upgradeGuidance when a version comparison is unavailable", () => {
@@ -40,7 +48,11 @@ describe("describeVersionSkew", () => {
         clientAppVersion: "1.5.0",
         guidance: CLIENT_UPGRADE,
       }),
-    ).toEqual({ title: "Your app is too old", action: "Update the app" });
+    ).toEqual({
+      title: "Your app is too old",
+      action: "Update the app",
+      direction: "client-outdated",
+    });
   });
 
   it("never returns the below-floor Update required copy or the old generic mismatch", () => {
@@ -50,7 +62,11 @@ describe("describeVersionSkew", () => {
         clientAppVersion: null,
         guidance: null,
       }),
-    ).toEqual({ title: "Host update needed", action: "Update now" });
+    ).toEqual({
+      title: "Host update needed",
+      action: "Update now",
+      direction: "host-outdated",
+    });
   });
 });
 

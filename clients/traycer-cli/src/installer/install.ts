@@ -6,6 +6,7 @@ import {
   readlink,
   rename,
   rm,
+  rmdir,
   stat,
   symlink,
 } from "node:fs/promises";
@@ -729,6 +730,23 @@ export async function flipHostInstallPointer(
   await sweepStaleLinkAttempts(target);
   const tmpLinkPath = `${target}.new-${randomSuffix()}`;
   await symlinkCompat(versionedDir, tmpLinkPath);
+  // On win32 the pointer is a directory junction. Unlike POSIX `rename()`,
+  // which atomically replaces an existing symlink in one syscall, Windows
+  // `MoveFileEx` cannot replace an existing junction (it fails EPERM), so
+  // every second-and-later swap would fail. Remove ONLY the existing junction
+  // reparse point first: a non-recursive `rmdir` drops the reparse point and
+  // leaves the linked versioned dir's bytes intact. Never `rm(..,{recursive})`
+  // here - that would follow the junction and delete the actual install. This
+  // reintroduces a tiny non-atomic gap (the pointer is briefly absent), but the
+  // versioned dir survives, so recovery is just a re-flip.
+  // NOTE: junction/MoveFileEx semantics can't be exercised on macOS/Linux CI -
+  // this path must be smoke-tested on a real Windows box.
+  if (hostInstallSymlinkType(osPlatform()) === "junction") {
+    const existing = await lstat(target).catch(() => null);
+    if (existing !== null && existing.isSymbolicLink()) {
+      await rmdir(target);
+    }
+  }
   try {
     await rename(tmpLinkPath, target);
   } catch (cause) {
@@ -761,6 +779,44 @@ export async function rollbackToVersionedDir(
   });
 }
 
+export type InstallPointerKind = "missing" | "symlink" | "directory" | "other";
+
+export interface InstallPointerTarget {
+  readonly kind: InstallPointerKind;
+  // Resolved absolute path the symlink/junction points at when
+  // `kind === "symlink"`; `null` otherwise.
+  readonly resolved: string | null;
+}
+
+// Inspect (via `lstat`, never following into a directory's contents) what
+// `target` currently is on disk: missing, a symlink/junction (resolved to
+// its absolute target), a plain directory (the legacy pre-versioned-dir
+// layout), or some other unexpected entry. Shared by `readActiveVersionedDir`
+// and `migrateLegacyLayoutIfNeeded` below, and by `uninstall.ts`'s
+// `resolveInstallDirTarget`, so the lstat/isSymbolicLink/readlink/absolute-
+// path-resolve dance lives in exactly one place instead of three.
+export async function resolveInstallPointerTarget(
+  target: string,
+): Promise<InstallPointerTarget> {
+  let linkStat: Stats;
+  try {
+    linkStat = await lstat(target);
+  } catch (err) {
+    if (isEnoentError(err)) return { kind: "missing", resolved: null };
+    throw err;
+  }
+  if (linkStat.isSymbolicLink()) {
+    return {
+      kind: "symlink",
+      resolved: resolveSymlinkTarget(target, await readlink(target)),
+    };
+  }
+  return {
+    kind: linkStat.isDirectory() ? "directory" : "other",
+    resolved: null,
+  };
+}
+
 // Resolve what `hostInstallDir(environment)` currently points at:
 //   - `null` when nothing exists there yet (first-ever install).
 //   - the resolved absolute symlink/junction target on the (post-
@@ -775,16 +831,9 @@ export async function readActiveVersionedDir(
   environment: Environment,
 ): Promise<string | null> {
   const target = hostInstallDir(environment);
-  let linkStat: Stats;
-  try {
-    linkStat = await lstat(target);
-  } catch (err) {
-    if (isEnoentError(err)) return null;
-    throw err;
-  }
-  if (linkStat.isSymbolicLink()) {
-    return resolveSymlinkTarget(target, await readlink(target));
-  }
+  const pointer = await resolveInstallPointerTarget(target);
+  if (pointer.kind === "missing") return null;
+  if (pointer.kind === "symlink") return pointer.resolved;
   return target;
 }
 
@@ -812,17 +861,10 @@ interface MigrateLegacyLayoutOptions {
 async function migrateLegacyLayoutIfNeeded(
   opts: MigrateLegacyLayoutOptions,
 ): Promise<string | null> {
-  let linkStat: Stats;
-  try {
-    linkStat = await lstat(opts.target);
-  } catch (err) {
-    if (isEnoentError(err)) return null;
-    throw err;
-  }
-  if (linkStat.isSymbolicLink()) {
-    return resolveSymlinkTarget(opts.target, await readlink(opts.target));
-  }
-  if (!linkStat.isDirectory()) {
+  const pointer = await resolveInstallPointerTarget(opts.target);
+  if (pointer.kind === "missing") return null;
+  if (pointer.kind === "symlink") return pointer.resolved;
+  if (pointer.kind !== "directory") {
     throw cliError({
       code: CLI_ERROR_CODES.HOST_INSTALL_FAILED,
       message: `host install: unexpected non-directory entry at install dir path ${opts.target}; refusing to overwrite`,

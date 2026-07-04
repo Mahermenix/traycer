@@ -110,7 +110,8 @@ function deriveBearerToken(bearer: BearerSourceProvider): string | null {
   try {
     const token = source.getBearerToken();
     return token.length === 0 ? null : token;
-  } catch {
+  } catch (error) {
+    console.error("createRemoteHostTransport: bearer read failed", error);
     return null;
   }
 }

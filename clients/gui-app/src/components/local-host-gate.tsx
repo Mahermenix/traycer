@@ -523,7 +523,7 @@ function GateIncompatibleHost(props: GateIncompatibleBusyProps) {
   const isBusyKeep = props.source === "busy-keep";
   // The host-update actions only make sense when the host is confirmed to be
   // the outdated side (or direction is unknown, matching today's behavior).
-  const hostIsOutdated = props.skew.action !== "Update the app";
+  const hostIsOutdated = props.skew.direction !== "client-outdated";
   return (
     <div
       data-testid={

@@ -16,6 +16,7 @@ import type {
   IHostTray,
   IRunnerHost,
 } from "@traycer-clients/shared/platform/runner-host";
+import { createFakeRunnerHost } from "../../../../__tests__/create-fake-runner-host";
 import { HostTrayCommandListener } from "@/components/layout/bridges/host-tray-command-listener";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
 
@@ -147,70 +148,10 @@ function makeManagement(): IHostManagement {
 }
 
 function makeHost(tray: IHostTray, management: IHostManagement): IRunnerHost {
-  return {
-    signInUrl: "https://auth.example.invalid/sign-in",
-    authnBaseUrl: "https://auth.example.invalid",
-    relayBaseUrl: "wss://relay.example.invalid/attach",
-    hasLocalHost: true,
-    validateAuthToken: () => Promise.resolve({ kind: "rejected" as const }),
-    validateAuthTokenIdentity: () =>
-      Promise.resolve({ kind: "rejected" as const }),
-    refreshAuthToken: () => Promise.resolve({ kind: "network-error" as const }),
-    listRegisteredHosts: () =>
-      Promise.resolve({ kind: "network-error" as const }),
-    updateHostVersionPolicy: () =>
-      Promise.resolve({ kind: "network-error" as const }),
-    openExternalLink: () => Promise.resolve(),
-    getRegisteredUrlSchemes: () => Promise.resolve([]),
-    requestMicrophoneAccess: () => Promise.resolve("granted" as const),
-    openMicrophoneSettings: () => Promise.resolve(),
-    beginAuthAttempt: () => undefined,
-    onAuthCallback: () => ({ dispose: () => undefined }),
-    deviceFlow: { start: () => Promise.resolve(null) },
-    secureStorage: {
-      get: () => Promise.resolve(null),
-      set: () => Promise.resolve(),
-      delete: () => Promise.resolve(),
-    },
-    notifications: {
-      show: () => Promise.resolve(),
-      onClick: () => ({ dispose: () => undefined }),
-    },
-    tray: {
-      setEpics: () => Promise.resolve(),
-      setIndicator: () => Promise.resolve(),
-      onEpicSelected: () => ({ dispose: () => undefined }),
-    },
-    hostPicker: {
-      get isOpen(): boolean {
-        return false;
-      },
-      requestOpen: () => undefined,
-      requestClose: () => undefined,
-      onChange: () => ({ dispose: () => undefined }),
-    },
-    workspaceFolders: {
-      pickFolders: () => Promise.resolve([]),
-    },
-    fileDrops: {
-      resolveDroppedFilePaths: () => Promise.resolve([]),
-      copyDroppedFilePaths: (paths) => Promise.resolve(paths),
-    },
-    tokenStore: {
-      get: () => Promise.resolve(null),
-      set: () => Promise.resolve(),
-      delete: () => Promise.resolve(),
-    },
-    onLocalHostChange: () => ({ dispose: () => undefined }),
-    onSystemResumed: () => ({ dispose: () => undefined }),
-    requestHostRespawn: () => Promise.resolve(),
-    service: null,
-    traycerCli: null,
-    migration: null,
+  return createFakeRunnerHost({
     hostManagement: management,
     hostTray: tray,
-    zoom: null,
-  };
+  });
 }
 
 function renderListener(host: IRunnerHost): QueryClient {

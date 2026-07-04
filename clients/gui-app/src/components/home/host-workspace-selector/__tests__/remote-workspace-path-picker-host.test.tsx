@@ -157,8 +157,10 @@ describe("RemoteWorkspacePathPickerHost", () => {
     fireEvent.click(screen.getByRole("button", { name: /open/i }));
 
     expect(mocks.mutateCalls).toHaveLength(1);
-    mocks.mutateCalls[0].onSuccess({
-      validation: { ok: true, resolvedPath: "/srv/monorepo" },
+    act(() => {
+      mocks.mutateCalls[0].onSuccess({
+        validation: { ok: true, resolvedPath: "/srv/monorepo" },
+      });
     });
 
     expect(await pending).toEqual(["/srv/monorepo"]);

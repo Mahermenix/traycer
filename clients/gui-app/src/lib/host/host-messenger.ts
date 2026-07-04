@@ -55,11 +55,17 @@ export function buildRawHostMessengerForTarget<
 >(
   params: BuildRawHostMessengerForTargetParams<Registry>,
 ): BuiltHostMessenger<Registry> | null {
-  if (
-    params.target.kind === "remote" &&
-    isRemoteHostDirectoryEntry(params.target) &&
-    params.target.websocketUrl !== null
-  ) {
+  if (params.target.kind === "remote") {
+    if (
+      !isRemoteHostDirectoryEntry(params.target) ||
+      params.target.websocketUrl === null
+    ) {
+      // A "remote" entry that isn't fully formed (missing publicKey/remoteStatus,
+      // or no dialable websocketUrl) must never fall through to the local
+      // WsRpcClient path below - that would skip the Noise transport entirely.
+      return null;
+    }
+
     const remoteTransport = createRemoteHostTransport<
       Registry,
       HostStreamRpcRegistry
@@ -240,11 +246,13 @@ function remoteTransportKey(entry: HostDirectoryEntry): string | null {
   ) {
     return null;
   }
+  // `status` is deliberately excluded: it doesn't feed `createRemoteHostTransport`,
+  // so folding it into the identity key would rotate the session (tearing down a
+  // healthy Noise/relay transport) on every availability/busy poll update.
   return [
     entry.hostId,
     entry.websocketUrl,
     entry.version ?? "",
-    entry.status,
     entry.publicKey,
   ].join(TRANSPORT_KEY_SEPARATOR);
 }

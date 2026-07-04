@@ -183,10 +183,14 @@ function appendPendingAction(
       evicted: false,
     };
   }
-  const trimmed: Record<string, PendingTerminalAction> = {};
-  for (const key of keys.slice(keys.length - MAX_PENDING_ACTIONS + 1)) {
-    trimmed[key] = pendingActions[key];
-  }
+  const trimmed = Object.fromEntries(
+    keys
+      .slice(keys.length - MAX_PENDING_ACTIONS + 1)
+      .map((key): [string, PendingTerminalAction] => [
+        key,
+        pendingActions[key],
+      ]),
+  );
   trimmed[next.clientActionId] = next;
   return { pendingActions: trimmed, evicted: true };
 }
@@ -623,8 +627,11 @@ export function createTerminalSessionStore(
           ),
         }));
         if (status !== "open") return;
-        flushRequestedResize();
+        // Replay stale pending actions from BEFORE this reconnect first, so the
+        // fresh resize `flushRequestedResize` is about to dispatch isn't
+        // immediately swept up and removed as one of those stale entries.
         replayPendingActionsAfterReconnect();
+        flushRequestedResize();
       },
     };
 

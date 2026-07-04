@@ -140,6 +140,9 @@ export class LogicalStream implements IStreamSession {
     if (this.disposed) {
       return;
     }
+    if (status === "closed") {
+      this.disposed = true;
+    }
     this.transition(status, reason);
   }
 

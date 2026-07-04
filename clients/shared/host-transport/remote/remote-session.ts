@@ -877,10 +877,9 @@ export class RemoteSession<
     if (!this.isCurrent(generation) || this.phase === "closed") {
       return;
     }
-    void cause;
     this.phase = "reconnecting";
     this.restoredStreamIds.clear();
-    this.teardownConnection("connection-lost");
+    this.teardownConnection(cause);
     // In-flight unary calls are post-send from the caller's view → not
     // retryable (the host may have applied them). Reject, never replay.
     this.rejectAllPendingUnary(

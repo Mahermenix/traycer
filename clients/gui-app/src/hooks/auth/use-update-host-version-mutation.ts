@@ -9,8 +9,13 @@ import type {
   UpdateHostVersionPolicyInput,
 } from "@traycer-clients/shared/host-client/host-version-policy-fetcher";
 import { toastFromAuthError } from "@/lib/auth-error-toast";
+import type { AuthService } from "@/lib/auth/auth-service";
 import { useHostBinding } from "@/lib/host";
 import { authMutationKeys, authQueryKeys } from "@/lib/query-keys";
+
+interface UpdateHostVersionPolicyMutationContext {
+  readonly auth: AuthService | null;
+}
 
 /**
  * Unwraps the discriminated `PATCH /api/v3/hosts/:hostId` result into the
@@ -56,13 +61,17 @@ export function useUpdateHostVersionPolicy(
 ): UseMutationResult<
   HostVersionPolicyResult,
   Error,
-  UpdateHostVersionPolicyInput
+  UpdateHostVersionPolicyInput,
+  UpdateHostVersionPolicyMutationContext
 > {
   const binding = useHostBinding();
   const queryClient = useQueryClient();
 
   return useMutation({
     mutationKey: authMutationKeys.updateHostVersionPolicy(hostId),
+    onMutate: (): UpdateHostVersionPolicyMutationContext => ({
+      auth: binding === null ? null : binding.auth,
+    }),
     mutationFn: async (
       input: UpdateHostVersionPolicyInput,
     ): Promise<HostVersionPolicyResult> => {
@@ -72,12 +81,12 @@ export function useUpdateHostVersionPolicy(
       const result = await binding.auth.updateHostVersionPolicy(hostId, input);
       return unwrapUpdateHostVersionPolicyResult(result);
     },
-    onSuccess: () => {
-      if (binding === null) {
+    onSuccess: (_data, _variables, context) => {
+      if (context.auth === null) {
         return;
       }
       void queryClient.invalidateQueries({
-        queryKey: authQueryKeys.registeredHosts(binding.auth),
+        queryKey: authQueryKeys.registeredHosts(context.auth),
       });
     },
     onError: (error) => toastFromAuthError(error, "Couldn't update this host."),

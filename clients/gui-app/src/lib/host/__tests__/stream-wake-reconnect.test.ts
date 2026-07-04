@@ -38,6 +38,9 @@ function makeClient() {
     bearer: () => null,
     authnBaseUrl: "http://localhost:5005",
     auth: null,
+    // Local (plain-WS) target: `autoStart` only gates the remote session, so
+    // this stays inert either way.
+    autoStart: false,
   });
   if (client === null) {
     throw new Error("expected a local WsStreamClient, got null");

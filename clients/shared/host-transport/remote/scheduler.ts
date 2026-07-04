@@ -134,7 +134,11 @@ export class PriorityScheduler<T extends SchedulerItem> {
         await this.options.write(item);
       }
     } catch (error) {
-      this.options.onWriteError(error);
+      try {
+        this.options.onWriteError(error);
+      } catch {
+        // onWriteError must not throw; swallow to avoid an unhandled rejection.
+      }
     } finally {
       this.pumping = false;
     }

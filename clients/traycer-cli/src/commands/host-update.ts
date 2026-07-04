@@ -15,6 +15,7 @@ import type { CommandFn, CommandResult } from "../runner/runner";
 import { formatServiceLifecycleWarning } from "../service";
 import { createServiceInstallLifecycle } from "../service/install-lifecycle";
 import { withCliLock } from "../store/cli-lock";
+import { errorFromUnknown } from "../logger";
 
 // `traycer host update --version <v> [--force]` - the command the host
 // daemon spawns DETACHED (fire-and-forget, not waited on) once it decides
@@ -135,13 +136,26 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
           // health-checkable state - `installHost`'s own verify-before-
           // replace contract means the OLD host is untouched, so there is
           // nothing to roll back. Still terminate the "updating" marker so
-          // the daemon doesn't see it stuck forever.
-          await writeUpdateProgressMarker(environment, {
-            state: "failed",
-            error: shortErrorDetail(cause),
-            targetVersion: args.version,
-            updatedAt: new Date().toISOString(),
-          });
+          // the daemon doesn't see it stuck forever. Best-effort: a
+          // failure to write the marker must not replace the real install
+          // failure that's actually being reported below.
+          try {
+            await writeUpdateProgressMarker(environment, {
+              state: "failed",
+              error: shortErrorDetail(cause),
+              targetVersion: args.version,
+              updatedAt: new Date().toISOString(),
+            });
+          } catch (markerErr) {
+            ctx.runtime.logger.warn(
+              "Host update failed to persist failure marker",
+              {
+                environment,
+                errorName: errorFromUnknown(markerErr).name,
+                errorMessage: errorFromUnknown(markerErr).message,
+              },
+            );
+          }
           ctx.runtime.logger.error(
             "Host update install failed before health probe",
             { environment, targetVersion: args.version },
@@ -210,42 +224,77 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
           },
           null,
         );
+        // The rollback itself can fail (e.g. the pointer flip or the
+        // service stop/start throws) - that must not skip writing the
+        // "failed" marker below, nor replace the health-check-failure
+        // error we're already in the middle of reporting.
+        let rollbackErrorDetail: string | null = null;
         if (result.previousVersionedDir !== null) {
-          await rollbackToVersionedDir(
-            environment,
-            result.previousVersionedDir,
-          );
-          const rollbackLifecycle = createServiceInstallLifecycle({
-            environment,
-            bootstrap: null,
-          });
-          // Cycle the service again so it stops the failed new process and
-          // comes back up on the now-reverted-to-old binary. Mirrors the
-          // same beforeSwap/afterSwap pair `installHost` runs around a
-          // forward swap.
-          await rollbackLifecycle.lifecycle.beforeSwap();
-          await rollbackLifecycle.lifecycle.afterSwap();
+          try {
+            await rollbackToVersionedDir(
+              environment,
+              result.previousVersionedDir,
+            );
+            const rollbackLifecycle = createServiceInstallLifecycle({
+              environment,
+              bootstrap: null,
+            });
+            // Cycle the service again so it stops the failed new process and
+            // comes back up on the now-reverted-to-old binary. Mirrors the
+            // same beforeSwap/afterSwap pair `installHost` runs around a
+            // forward swap.
+            await rollbackLifecycle.lifecycle.beforeSwap();
+            await rollbackLifecycle.lifecycle.afterSwap();
+          } catch (rollbackCause) {
+            rollbackErrorDetail = shortErrorDetail(rollbackCause);
+            ctx.runtime.logger.error(
+              "Host update rollback failed after health probe failure",
+              { environment, targetVersion: args.version },
+              rollbackCause instanceof Error ? rollbackCause : null,
+            );
+          }
         }
 
-        await writeUpdateProgressMarker(environment, {
-          state: "failed",
-          error: probe.detail,
-          targetVersion: args.version,
-          updatedAt: new Date().toISOString(),
-        });
+        const hadPreviousVersionedDir = result.previousVersionedDir !== null;
+        const rolledBack =
+          hadPreviousVersionedDir && rollbackErrorDetail === null;
+        const failureDetail =
+          rollbackErrorDetail === null
+            ? probe.detail
+            : `${probe.detail} (rollback also failed: ${rollbackErrorDetail})`;
+
+        try {
+          await writeUpdateProgressMarker(environment, {
+            state: "failed",
+            error: failureDetail,
+            targetVersion: args.version,
+            updatedAt: new Date().toISOString(),
+          });
+        } catch (markerErr) {
+          ctx.runtime.logger.warn(
+            "Host update failed to persist failure marker",
+            {
+              environment,
+              errorName: errorFromUnknown(markerErr).name,
+              errorMessage: errorFromUnknown(markerErr).message,
+            },
+          );
+        }
 
         throw cliError({
           code: CLI_ERROR_CODES.HOST_UPDATE_HEALTH_CHECK_FAILED,
-          message:
-            result.previousVersionedDir !== null
-              ? `host update: new host ${result.record.version} failed its post-update health check and was rolled back to ${previous.version}: ${probe.detail}`
-              : `host update: new host ${result.record.version} failed its post-update health check (no previous version to roll back to): ${probe.detail}`,
+          message: !hadPreviousVersionedDir
+            ? `host update: new host ${result.record.version} failed its post-update health check (no previous version to roll back to): ${failureDetail}`
+            : rolledBack
+              ? `host update: new host ${result.record.version} failed its post-update health check and was rolled back to ${previous.version}: ${failureDetail}`
+              : `host update: new host ${result.record.version} failed its post-update health check and rollback to ${previous.version} also failed: ${failureDetail}`,
           details: {
             targetVersion: args.version,
             attemptedVersion: result.record.version,
             previousVersion: previous.version,
-            rolledBack: result.previousVersionedDir !== null,
+            rolledBack,
             probeDetail: probe.detail,
+            rollbackError: rollbackErrorDetail,
           },
           exitCode: 1,
         });

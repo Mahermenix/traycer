@@ -54,6 +54,11 @@ export class ReplayWindow {
    * if they reappear).
    */
   commit(counter: bigint): void {
+    if (!this.check(counter)) {
+      throw new NoiseReplayError(
+        `cannot commit rejected frame counter: ${counter}`,
+      );
+    }
     if (this.highest < 0n) {
       this.highest = counter;
       this.bitmask = 1n;

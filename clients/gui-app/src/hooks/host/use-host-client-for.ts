@@ -106,14 +106,17 @@ export function useHostClientFor(
     });
     client.bind(target);
     client.setRequestContext(requestContext);
-    built.remoteTransport?.session.start();
     return { client, remoteTransport: built.remoteTransport };
   }, [target, registry, requestContext, userId, globalClient, authnBaseUrl]);
 
-  // A remote binding owns a persistent socket; close it when replaced/unmounted.
+  // A remote binding owns a persistent socket; started post-commit (not from
+  // the memo factory) and closed when replaced/unmounted, so a discarded
+  // render (e.g. StrictMode's double-invoke) never starts a socket that
+  // outlives its own cleanup.
   const remoteTransport = binding?.remoteTransport ?? null;
   useEffect(() => {
     if (remoteTransport === null) return;
+    remoteTransport.session.start();
     return () => remoteTransport.session.close();
   }, [remoteTransport]);
 

@@ -4,6 +4,7 @@ import type {
   HostStatusDTO,
   HostUpdateState,
 } from "@traycer/protocol/host/host-status";
+import { HOST_VERSION_PATTERN } from "@traycer/protocol/host/version";
 
 /**
  * Pure status derivation for the My Hosts list (Remote Host Support §7,
@@ -188,17 +189,11 @@ export function deriveUpdatePill(
 // -----------------------------------------------------------------------------
 
 /**
- * Dotted-numeric version pattern ("1", "1.4", "1.4.2") — mirrors authn-v3's
- * server-side `DESIRED_VERSION_PATTERN` in
- * `routes/api/v3/hosts/_hostId/index.ts` verbatim, so a client-accepted
- * value never bounces off the server's 400.
- */
-const HOST_VERSION_PATTERN = /^\d+(\.\d+){0,2}$/;
-
-/**
  * Validates a user-typed "Update now" target version client-side before
  * submit. Trims surrounding whitespace (a pasted value commonly carries it)
- * before matching.
+ * before matching. The pattern is shared with authn-v3's server-side check via
+ * `@traycer/protocol/host/version`, so a client-accepted value never bounces
+ * off the server's 400.
  */
 export function isValidHostVersion(value: string): boolean {
   return HOST_VERSION_PATTERN.test(value.trim());

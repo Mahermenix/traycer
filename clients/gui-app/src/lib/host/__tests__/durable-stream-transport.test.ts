@@ -106,6 +106,15 @@ describe("openDurableStreamTransport", () => {
     expect(order).toEqual(["wake", "ws"]);
   });
 
+  it("throws when buildHostStreamClient returns null (invalid remote public key)", () => {
+    const { params } = buildParams(() => undefined);
+    mocks.buildHostStreamClient.mockReturnValue(null);
+
+    expect(() => openDurableStreamTransport(params)).toThrow(
+      /invalid public key/,
+    );
+  });
+
   it("closes the half-built socket and rethrows if wiring wake throws", () => {
     const closeWs = vi.fn();
     const { params, fakeWs } = buildParams(closeWs);
