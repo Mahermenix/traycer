@@ -51,7 +51,7 @@ export function useHostDirectoryEntry(
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-function hostDirectoryEntryEquals(
+export function hostDirectoryEntryEquals(
   a: HostDirectoryEntry | null,
   b: HostDirectoryEntry | null,
 ): boolean {

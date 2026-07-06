@@ -3,7 +3,7 @@
  * Update that file whenever this settings surface changes.
  */
 import type { ReactNode } from "react";
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { Check, TriangleAlert } from "lucide-react";
 import {
   AGENT_SELECTION_GUIDE_DESCRIPTION,
@@ -13,9 +13,13 @@ import {
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
+import { useHostClientFor } from "@/hooks/host/use-host-client-for";
+import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { useAgentSelectionGuideGlobalQuery } from "@/hooks/agent/use-agent-selection-guide-global-query";
 import { useAgentSelectionGuideSetGlobalMutation } from "@/hooks/agent/use-agent-selection-guide-set-global-mutation";
 import { useAgentSelectionGuideResetGlobalMutation } from "@/hooks/agent/use-agent-selection-guide-reset-global-mutation";
+import { HostRuntimeContext, useHostBinding } from "@/lib/host/runtime";
+import { SettingsHostSelect } from "./settings-host-select";
 
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -95,15 +99,62 @@ function agentsGuideEditorReducer(
 }
 
 export function AgentSelectionGuideSection() {
+  const activeHostId = useReactiveActiveHostId();
+  const hostsQuery = useHostDirectoryList();
+  const hosts = useMemo(() => hostsQuery.data ?? [], [hostsQuery.data]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const effectiveId = selectedId ?? activeHostId;
+  const selectedEntry = useMemo(
+    () => hosts.find((entry) => entry.hostId === effectiveId) ?? null,
+    [hosts, effectiveId],
+  );
+  const targetEntry = useMemo(() => {
+    if (effectiveId === null || effectiveId === activeHostId) return null;
+    return selectedEntry;
+  }, [effectiveId, activeHostId, selectedEntry]);
+  const transientClient = useHostClientFor(targetEntry);
+  const realBinding = useHostBinding();
+  const scopedBinding = useMemo(() => {
+    if (transientClient === null || realBinding === null) return null;
+    return { ...realBinding, hostClient: transientClient };
+  }, [transientClient, realBinding]);
+  const hostPicker =
+    hosts.length > 0 ? (
+      <SettingsHostSelect
+        hosts={hosts}
+        value={effectiveId}
+        onChange={setSelectedId}
+        ariaLabel="Agent instructions host"
+      />
+    ) : null;
+
+  const inner = (
+    <AgentSelectionGuideSectionInner
+      hostId={effectiveId}
+      hostPicker={hostPicker}
+    />
+  );
+  if (scopedBinding === null) return inner;
+  return (
+    <HostRuntimeContext.Provider value={scopedBinding}>
+      {inner}
+    </HostRuntimeContext.Provider>
+  );
+}
+
+function AgentSelectionGuideSectionInner(props: {
+  readonly hostId: string | null;
+  readonly hostPicker: ReactNode;
+}) {
+  const { hostId, hostPicker } = props;
   // Device-scoped file: remount the editor with fresh content whenever the
-  // active host changes so a host swap never carries one machine's edits.
-  const hostId = useReactiveActiveHostId();
+  // selected host changes so one machine's edits never carry to another.
   const query = useAgentSelectionGuideGlobalQuery();
 
   let panelContent: ReactNode;
   if (query.isError) {
     panelContent = (
-      <AgentSelectionGuideMessage>
+      <AgentSelectionGuideMessage hostPicker={hostPicker}>
         <div className="text-ui-sm text-muted-foreground">
           Couldn't load agent instructions for this host.
         </div>
@@ -111,39 +162,62 @@ export function AgentSelectionGuideSection() {
     );
   } else if (query.data === undefined) {
     panelContent = (
-      <AgentSelectionGuideMessage>
+      <AgentSelectionGuideMessage hostPicker={hostPicker}>
         <EditorSkeleton />
       </AgentSelectionGuideMessage>
     );
   } else {
     panelContent = (
-      <AgentsGuideEditor
-        key={hostId}
-        initialContent={query.data.content}
-        generatedDefaultContent={query.data.generatedDefaultContent}
-      />
+      <>
+        <AgentSelectionGuideHostPicker hostPicker={hostPicker} />
+        <AgentsGuideEditor
+          key={hostId}
+          initialContent={query.data.content}
+          generatedDefaultContent={query.data.generatedDefaultContent}
+        />
+      </>
     );
   }
 
   return <div className="shrink-0 px-5 py-5">{panelContent}</div>;
 }
 
-function AgentSelectionGuideMessage(props: { readonly children: ReactNode }) {
+function AgentSelectionGuideHostPicker(props: {
+  readonly hostPicker: ReactNode;
+}) {
+  if (props.hostPicker === null) return null;
+  return (
+    <div className="mb-3 flex justify-end">
+      <div className="flex items-center gap-2">
+        <span className="text-ui-xs text-muted-foreground">Host</span>
+        {props.hostPicker}
+      </div>
+    </div>
+  );
+}
+
+function AgentSelectionGuideMessage(props: {
+  readonly children: ReactNode;
+  readonly hostPicker: ReactNode;
+}) {
   return (
     <section
       aria-labelledby="agent-selection-guide-heading"
       className="flex flex-col gap-3"
     >
-      <div className="min-w-0">
-        <h2
-          id="agent-selection-guide-heading"
-          className="text-ui-md font-semibold text-foreground"
-        >
-          {AGENT_SELECTION_GUIDE_TITLE}
-        </h2>
-        <p className="mt-1 text-ui-xs text-muted-foreground">
-          {AGENT_SELECTION_GUIDE_DESCRIPTION}
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2
+            id="agent-selection-guide-heading"
+            className="text-ui-md font-semibold text-foreground"
+          >
+            {AGENT_SELECTION_GUIDE_TITLE}
+          </h2>
+          <p className="mt-1 text-ui-xs text-muted-foreground">
+            {AGENT_SELECTION_GUIDE_DESCRIPTION}
+          </p>
+        </div>
+        {props.hostPicker}
       </div>
       {props.children}
     </section>

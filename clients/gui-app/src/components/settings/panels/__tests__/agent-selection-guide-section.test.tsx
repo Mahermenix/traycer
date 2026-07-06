@@ -7,7 +7,20 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { StrictMode, act } from "react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from "vitest";
+
+type GuideData = {
+  readonly content: string;
+  readonly generatedDefaultContent: string;
+};
 
 type Deferred<T> = {
   readonly promise: Promise<T>;
@@ -15,29 +28,99 @@ type Deferred<T> = {
   readonly reject: (error: Error) => void;
 };
 
-const guideMocks = vi.hoisted(() => ({
-  queryData: {
-    content: "claude guide",
-    generatedDefaultContent: "claude guide",
-  },
-  setGlobalMutateAsync: vi.fn(),
-  resetGlobalMutateAsync: vi.fn(),
-}));
+const guideMocks = vi.hoisted(
+  (): {
+    activeHostId: string;
+    scopedHostId: string;
+    queryData: GuideData;
+    queryDataByHost: Record<string, GuideData>;
+    setGlobalMutateAsync: Mock<
+      (input: { readonly content: string }) => Promise<GuideData>
+    >;
+    resetGlobalMutateAsync: Mock<
+      (input: Record<string, never>) => Promise<GuideData>
+    >;
+    setGlobalHostIds: string[];
+    resetGlobalHostIds: string[];
+    lastTransientTarget: { readonly hostId: string } | null;
+  } => ({
+    activeHostId: "local",
+    scopedHostId: "local",
+    queryData: {
+      content: "claude guide",
+      generatedDefaultContent: "claude guide",
+    },
+    queryDataByHost: {},
+    setGlobalMutateAsync: vi.fn(),
+    resetGlobalMutateAsync: vi.fn(),
+    setGlobalHostIds: [],
+    resetGlobalHostIds: [],
+    lastTransientTarget: null,
+  }),
+);
 
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "local",
+  useReactiveActiveHostId: () => guideMocks.activeHostId,
 }));
+
+vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
+  useHostDirectoryList: () => ({
+    data: [
+      {
+        hostId: "local",
+        label: "Local host",
+        status: "available",
+        websocketUrl: "ws://local.invalid",
+      },
+      {
+        hostId: "remote",
+        label: "Remote host",
+        status: "available",
+        websocketUrl: "ws://remote.invalid",
+      },
+    ],
+  }),
+}));
+
+vi.mock("@/hooks/host/use-host-client-for", () => ({
+  useHostClientFor: (target: { readonly hostId: string } | null) => {
+    guideMocks.lastTransientTarget = target;
+    guideMocks.scopedHostId =
+      target === null ? guideMocks.activeHostId : target.hostId;
+    if (target === null) return null;
+    return {
+      getActiveHostId: () => target.hostId,
+    };
+  },
+}));
+
+vi.mock("@/lib/host/runtime", async () => {
+  const react = await import("react");
+  return {
+    HostRuntimeContext: react.createContext(null),
+    useHostBinding: () => ({
+      hostClient: {
+        getActiveHostId: () => guideMocks.activeHostId,
+      },
+    }),
+  };
+});
 
 vi.mock("@/hooks/agent/use-agent-selection-guide-global-query", () => ({
   useAgentSelectionGuideGlobalQuery: () => ({
-    data: guideMocks.queryData,
+    data:
+      guideMocks.queryDataByHost[guideMocks.scopedHostId] ??
+      guideMocks.queryData,
     isError: false,
   }),
 }));
 
 vi.mock("@/hooks/agent/use-agent-selection-guide-set-global-mutation", () => ({
   useAgentSelectionGuideSetGlobalMutation: () => ({
-    mutateAsync: guideMocks.setGlobalMutateAsync,
+    mutateAsync: (input: { readonly content: string }) => {
+      guideMocks.setGlobalHostIds.push(guideMocks.scopedHostId);
+      return guideMocks.setGlobalMutateAsync(input);
+    },
   }),
 }));
 
@@ -45,7 +128,10 @@ vi.mock(
   "@/hooks/agent/use-agent-selection-guide-reset-global-mutation",
   () => ({
     useAgentSelectionGuideResetGlobalMutation: () => ({
-      mutateAsync: guideMocks.resetGlobalMutateAsync,
+      mutateAsync: (input: Record<string, never>) => {
+        guideMocks.resetGlobalHostIds.push(guideMocks.scopedHostId);
+        return guideMocks.resetGlobalMutateAsync(input);
+      },
     }),
   }),
 );
@@ -55,6 +141,11 @@ import { AgentSelectionGuideSection } from "@/components/settings/panels/agent-s
 function renderPanel() {
   return render(
     <StrictMode>
+      <span
+        aria-hidden
+        data-testid="active-host-probe"
+        data-bound-host-id={guideMocks.activeHostId}
+      />
       <AgentSelectionGuideSection />
     </StrictMode>,
   );
@@ -63,6 +154,11 @@ function renderPanel() {
 function strictPanel() {
   return (
     <StrictMode>
+      <span
+        aria-hidden
+        data-testid="active-host-probe"
+        data-bound-host-id={guideMocks.activeHostId}
+      />
       <AgentSelectionGuideSection />
     </StrictMode>
   );
@@ -74,6 +170,12 @@ describe("AgentSelectionGuideSection", () => {
       content: "claude guide",
       generatedDefaultContent: "claude guide",
     };
+    guideMocks.queryDataByHost = {};
+    guideMocks.activeHostId = "local";
+    guideMocks.scopedHostId = "local";
+    guideMocks.lastTransientTarget = null;
+    guideMocks.setGlobalHostIds = [];
+    guideMocks.resetGlobalHostIds = [];
     guideMocks.setGlobalMutateAsync.mockReset();
     guideMocks.setGlobalMutateAsync.mockResolvedValue({
       content: "claude guide",
@@ -114,6 +216,60 @@ describe("AgentSelectionGuideSection", () => {
     });
     expect(guideMocks.setGlobalMutateAsync).not.toHaveBeenCalled();
     expect(guideMocks.resetGlobalMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("switches the guide editor host without changing the app-wide active host", async () => {
+    guideMocks.queryDataByHost = {
+      local: {
+        content: "local guide",
+        generatedDefaultContent: "local guide",
+      },
+      remote: {
+        content: "remote guide",
+        generatedDefaultContent: "remote guide",
+      },
+    };
+    renderPanel();
+
+    expect(
+      screen
+        .getByTestId("active-host-probe")
+        .getAttribute("data-bound-host-id"),
+    ).toBe("local");
+    expect(
+      screen.getByTestId<HTMLTextAreaElement>("agents-selection-guide-input")
+        .value,
+    ).toBe("local guide");
+
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "Agent instructions host" }),
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "Remote host" }));
+
+    await waitFor(() => {
+      expect(guideMocks.lastTransientTarget?.hostId).toBe("remote");
+      expect(
+        screen.getByTestId<HTMLTextAreaElement>("agents-selection-guide-input")
+          .value,
+      ).toBe("remote guide");
+    });
+    expect(
+      screen
+        .getByTestId("active-host-probe")
+        .getAttribute("data-bound-host-id"),
+    ).toBe("local");
+
+    fireEvent.change(screen.getByTestId("agents-selection-guide-input"), {
+      target: { value: "remote edit" },
+    });
+    fireEvent.blur(screen.getByTestId("agents-selection-guide-input"));
+
+    await waitFor(() => {
+      expect(guideMocks.setGlobalMutateAsync).toHaveBeenCalledWith({
+        content: "remote edit",
+      });
+    });
+    expect(guideMocks.setGlobalHostIds[0]).toBe("remote");
   });
 
   it("reverts through the host reset API instead of sending generated content back", async () => {

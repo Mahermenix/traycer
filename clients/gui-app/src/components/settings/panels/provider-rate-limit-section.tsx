@@ -35,6 +35,8 @@ function ProviderRateLimitSettingsCard({
 }: {
   readonly providerId: RateLimitProviderId;
 }): ReactNode {
+  // Context-scoped: inside ProvidersSettingsPanel this reads the transient
+  // HostRuntimeContext for the panel's selected host, not the app-wide picker.
   const hostId = useReactiveActiveHostId();
   const query = useHostProviderRateLimitsQuery(providerId);
   // Single source of truth for this provider's refresh action + spinner state

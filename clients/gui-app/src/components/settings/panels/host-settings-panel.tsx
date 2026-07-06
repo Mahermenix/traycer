@@ -422,85 +422,99 @@ function HostSettingsPanelInner(props: HostSettingsPanelInnerProps) {
       description="Your hosts across every device, plus this machine's local service."
     >
       <MyHostsList />
-      {progress !== null ? <HostProgressBanner progress={progress} /> : null}
-      {packageManagerUpgrade !== null ? (
-        <PackageManagerUpgradeHint hint={packageManagerUpgrade} />
-      ) : null}
+      <section aria-labelledby="local-host-management-heading">
+        <div className="border-b border-border/40 px-5 py-4">
+          <h2
+            id="local-host-management-heading"
+            className="text-ui font-semibold text-foreground"
+          >
+            This machine
+          </h2>
+          <p className="mt-1 text-ui-sm text-muted-foreground">
+            Install, update, restart, register, deregister, and rename the
+            Traycer host service running on this machine.
+          </p>
+        </div>
+        {progress !== null ? <HostProgressBanner progress={progress} /> : null}
+        {packageManagerUpgrade !== null ? (
+          <PackageManagerUpgradeHint hint={packageManagerUpgrade} />
+        ) : null}
 
-      <HostNameRow
-        settings={hostNameSettings}
-        pending={hostNamePending}
-        draftName={hostNameDraft}
-        savePending={hostNameMutation.isPending}
-        onDraftNameChange={(value) => setHostNameDraftOverride(value)}
-        onSave={() => {
-          hostNameMutation.mutate(
-            customNameFromDraft(hostNameDraft, hostNameSettings),
-          );
-        }}
-        onReset={() => {
-          hostNameMutation.mutate(null);
-        }}
-      />
-      <StatusRow status={status} pending={statusPending} />
-      <ActionsRow
-        status={status}
-        pending={statusPending}
-        anyPending={anyPending}
-        installPending={installPending}
-        restartPending={restartMutation.isPending}
-        onInstall={() => installMutation.mutate(null)}
-        onRestart={() => setRestartConfirmOpen(true)}
-        onOpenDoctor={() => setDoctorOpen(true)}
-      />
-      <RestartHostConfirmDialog
-        open={restartConfirmOpen}
-        onOpenChange={(open) => {
-          if (!open) setRestartConfirmOpen(false);
-        }}
-        isPending={restartMutation.isPending}
-        onConfirm={() => restartMutation.mutate()}
-      />
-      {status?.state === "not-installed" ? null : (
-        <UpdatesRow
-          registryState={registryState}
-          registryFetching={
-            registryFetching || refreshRegistryMutation.isPending
-          }
-          anyPending={anyPending}
-          updatePending={updatePending}
-          latestReleasedAt={latestReleasedAt}
-          nowMs={nowMs}
-          onUpdate={() => updateMutation.mutate()}
-          onRefresh={handleRefreshRegistry}
+        <HostNameRow
+          settings={hostNameSettings}
+          pending={hostNamePending}
+          draftName={hostNameDraft}
+          savePending={hostNameMutation.isPending}
+          onDraftNameChange={(value) => setHostNameDraftOverride(value)}
+          onSave={() => {
+            hostNameMutation.mutate(
+              customNameFromDraft(hostNameDraft, hostNameSettings),
+            );
+          }}
+          onReset={() => {
+            hostNameMutation.mutate(null);
+          }}
         />
-      )}
-
-      <InstallationDetailsDisclosure
-        record={installedRecord ?? null}
-        loading={installedPending}
-      />
-      <AdvancedDisclosure
-        installedVersion={installedRecord?.version ?? null}
-        availableSnapshot={availableSnapshot}
-        availablePending={availablePending}
-        availableErrorMessage={extractErrorMessage(
-          availableError,
-          registryState,
+        <StatusRow status={status} pending={statusPending} />
+        <ActionsRow
+          status={status}
+          pending={statusPending}
+          anyPending={anyPending}
+          installPending={installPending}
+          restartPending={restartMutation.isPending}
+          onInstall={() => installMutation.mutate(null)}
+          onRestart={() => setRestartConfirmOpen(true)}
+          onOpenDoctor={() => setDoctorOpen(true)}
+        />
+        <RestartHostConfirmDialog
+          open={restartConfirmOpen}
+          onOpenChange={(open) => {
+            if (!open) setRestartConfirmOpen(false);
+          }}
+          isPending={restartMutation.isPending}
+          onConfirm={() => restartMutation.mutate()}
+        />
+        {status?.state === "not-installed" ? null : (
+          <UpdatesRow
+            registryState={registryState}
+            registryFetching={
+              registryFetching || refreshRegistryMutation.isPending
+            }
+            anyPending={anyPending}
+            updatePending={updatePending}
+            latestReleasedAt={latestReleasedAt}
+            nowMs={nowMs}
+            onUpdate={() => updateMutation.mutate()}
+            onRefresh={handleRefreshRegistry}
+          />
         )}
-        availableFetching={availableFetching}
-        includePreReleases={includePreReleases}
-        registryState={registryState}
-        statusState={status?.state}
-        anyPending={anyPending}
-        registerPending={registerPending}
-        deregisterPending={deregisterServiceMutation.isPending}
-        onInstallVersion={(version) => installMutation.mutate(version)}
-        onRegisterService={() => registerServiceMutation.mutate()}
-        onDeregisterService={() => deregisterServiceMutation.mutate()}
-        onRefreshAvailable={handleRefreshRegistry}
-        onIncludePreReleasesChange={setIncludePreReleases}
-      />
+
+        <InstallationDetailsDisclosure
+          record={installedRecord ?? null}
+          loading={installedPending}
+        />
+        <AdvancedDisclosure
+          installedVersion={installedRecord?.version ?? null}
+          availableSnapshot={availableSnapshot}
+          availablePending={availablePending}
+          availableErrorMessage={extractErrorMessage(
+            availableError,
+            registryState,
+          )}
+          availableFetching={availableFetching}
+          includePreReleases={includePreReleases}
+          registryState={registryState}
+          statusState={status?.state}
+          anyPending={anyPending}
+          registerPending={registerPending}
+          deregisterPending={deregisterServiceMutation.isPending}
+          onInstallVersion={(version) => installMutation.mutate(version)}
+          onRegisterService={() => registerServiceMutation.mutate()}
+          onDeregisterService={() => deregisterServiceMutation.mutate()}
+          onRefreshAvailable={handleRefreshRegistry}
+          onIncludePreReleasesChange={setIncludePreReleases}
+        />
+      </section>
 
       <DoctorSheet
         open={doctorOpen}

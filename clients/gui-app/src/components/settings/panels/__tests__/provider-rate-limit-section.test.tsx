@@ -6,20 +6,46 @@ import {
   screen,
   within,
 } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+} from "vitest";
 import type { ProviderRateLimits } from "@traycer/protocol/host";
 import { formatResetDateTime } from "@/lib/relative-time";
 
-const mocks = vi.hoisted(() => ({
-  data: undefined as
-    { providerRateLimits: ProviderRateLimits | null } | undefined,
-  isPending: false,
-  isError: false,
-  isFetching: false,
-  refetch: vi.fn(() => Promise.resolve({})),
-  draining: false,
-  enqueue: vi.fn((..._args: unknown[]) => Promise.resolve()),
-}));
+type TurnRefreshCall = {
+  readonly providerId: string | null;
+  readonly hostId: string | null;
+};
+
+const mocks = vi.hoisted(
+  (): {
+    data: { providerRateLimits: ProviderRateLimits | null } | undefined;
+    isPending: boolean;
+    isError: boolean;
+    isFetching: boolean;
+    refetch: Mock<() => Promise<Record<string, never>>>;
+    draining: boolean;
+    enqueue: Mock<(...args: unknown[]) => Promise<unknown>>;
+    hostId: string;
+    turnRefreshCalls: TurnRefreshCall[];
+  } => ({
+    data: undefined,
+    isPending: false,
+    isError: false,
+    isFetching: false,
+    refetch: vi.fn(() => Promise.resolve({})),
+    draining: false,
+    enqueue: vi.fn((..._args: unknown[]) => Promise.resolve()),
+    hostId: "host-1",
+    turnRefreshCalls: [],
+  }),
+);
 
 vi.mock("@/hooks/host/use-host-provider-rate-limits-query", () => ({
   useHostProviderRateLimitsQuery: () => ({
@@ -31,13 +57,18 @@ vi.mock("@/hooks/host/use-host-provider-rate-limits-query", () => ({
   }),
 }));
 vi.mock("@/hooks/host/use-refresh-provider-rate-limits-on-turn", () => ({
-  useRefreshProviderRateLimitsOnTurn: () => {},
+  useRefreshProviderRateLimitsOnTurn: (
+    providerId: string | null,
+    hostId: string | null,
+  ) => {
+    mocks.turnRefreshCalls.push({ providerId, hostId });
+  },
 }));
 vi.mock("@/hooks/host/use-refresh-provider-rate-limits-on-mount", () => ({
   useRefreshProviderRateLimitsOnMount: () => {},
 }));
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "host-1",
+  useReactiveActiveHostId: () => mocks.hostId,
 }));
 vi.mock("@/hooks/rate-limits/use-is-rate-limit-queue-draining", () => ({
   useIsRateLimitQueueDraining: () => mocks.draining,
@@ -120,6 +151,8 @@ describe("ProviderRateLimitForProvider", () => {
     mocks.isFetching = false;
     mocks.draining = false;
     mocks.enqueue = vi.fn((..._args: unknown[]) => Promise.resolve());
+    mocks.hostId = "host-1";
+    mocks.turnRefreshCalls = [];
   });
 
   afterEach(() => {
@@ -139,6 +172,17 @@ describe("ProviderRateLimitForProvider", () => {
     render(<ProviderRateLimitForProvider providerId="claude-code" />);
     expect(screen.getByText("Usage limits")).toBeTruthy();
     expect(screen.getByText("Loading usage limits")).toBeTruthy();
+  });
+
+  it("routes turn-completion refreshes through the current scoped host id", () => {
+    mocks.hostId = "scoped-host";
+
+    render(<ProviderRateLimitForProvider providerId="codex" />);
+
+    expect(mocks.turnRefreshCalls).toContainEqual({
+      providerId: "codex",
+      hostId: "scoped-host",
+    });
   });
 
   it("renders nothing (not an eternal spinner) while pending but not fetching", () => {
