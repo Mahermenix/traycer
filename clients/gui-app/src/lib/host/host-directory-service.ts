@@ -11,6 +11,8 @@ import type {
 import type { Disposable } from "@traycer-clients/shared/platform/uri-callback";
 import { appLogger } from "@/lib/logger";
 
+const HOST_DIRECTORY_REFRESH_POLL_MS = 15_000;
+
 export interface HostDirectoryServiceOptions {
   readonly runnerHost: IRunnerHost;
   /**
@@ -72,12 +74,20 @@ export class HostDirectoryService implements IHostDirectoryService {
   >();
   private localSubscription: Disposable | null = null;
   private started = false;
+  private refreshIntervalId: number | null = null;
+  private visibilityDocument: Document | null = null;
   /**
    * Coalesces concurrent `refresh()` callers onto a single in-flight fetch
    * (T20 / audit P4) - a foundation for T21's interval + open-time triggers,
    * which would otherwise stack requests.
    */
   private refreshInFlight: Promise<readonly HostDirectoryEntry[]> | null = null;
+  private readonly handleVisibilityChange = (): void => {
+    if (this.isDocumentHidden()) {
+      return;
+    }
+    void this.refresh();
+  };
 
   constructor(options: HostDirectoryServiceOptions) {
     this.runnerHost = options.runnerHost;
@@ -107,6 +117,18 @@ export class HostDirectoryService implements IHostDirectoryService {
       this.emit();
     });
     await this.refresh();
+    // Read through a method, not the bare field: `dispose()` can flip
+    // `this.started` to `false` while this `await` is pending, but a direct
+    // `this.started` read here is narrowed by the compiler to the literal
+    // `true` assigned above and the guard is flagged as dead code.
+    if (!this.isStarted()) {
+      return;
+    }
+    this.startRefreshPolling();
+  }
+
+  private isStarted(): boolean {
+    return this.started;
   }
 
   list(): Promise<readonly HostDirectoryEntry[]> {
@@ -227,9 +249,46 @@ export class HostDirectoryService implements IHostDirectoryService {
       this.localSubscription.dispose();
       this.localSubscription = null;
     }
+    this.stopRefreshPolling();
     this.listeners.clear();
     this.selectionListeners.clear();
     this.started = false;
+  }
+
+  private startRefreshPolling(): void {
+    if (this.refreshIntervalId !== null) {
+      return;
+    }
+    if (typeof window === "undefined") {
+      return;
+    }
+    this.visibilityDocument = typeof document === "undefined" ? null : document;
+    this.refreshIntervalId = window.setInterval(() => {
+      if (this.isDocumentHidden()) {
+        return;
+      }
+      void this.refresh();
+    }, HOST_DIRECTORY_REFRESH_POLL_MS);
+    this.visibilityDocument?.addEventListener(
+      "visibilitychange",
+      this.handleVisibilityChange,
+    );
+  }
+
+  private stopRefreshPolling(): void {
+    if (this.refreshIntervalId !== null && typeof window !== "undefined") {
+      window.clearInterval(this.refreshIntervalId);
+    }
+    this.refreshIntervalId = null;
+    this.visibilityDocument?.removeEventListener(
+      "visibilitychange",
+      this.handleVisibilityChange,
+    );
+    this.visibilityDocument = null;
+  }
+
+  private isDocumentHidden(): boolean {
+    return this.visibilityDocument !== null && this.visibilityDocument.hidden;
   }
 
   /**

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
 import { mockRemoteHostEntry } from "@traycer-clients/shared/host-client/mock/mock-host-directory";
 import type { LocalHostSnapshot } from "@traycer-clients/shared/platform/runner-host";
@@ -7,7 +7,12 @@ import type {
   RemoteHostFetchOutcome,
   RemoteHostFetcher,
 } from "@traycer-clients/shared/host-client/remote-fetcher";
-import { HostDirectoryService } from "@/lib/host/host-directory-service";
+import {
+  HostDirectoryService,
+  type HostDirectoryServiceOptions,
+} from "@/lib/host/host-directory-service";
+
+const HOST_DIRECTORY_REFRESH_POLL_MS = 15_000;
 
 const localSnapshot: LocalHostSnapshot = {
   hostId: "desktop-pid-123",
@@ -36,6 +41,50 @@ function makeHost(localHost: LocalHostSnapshot | null): MockRunnerHost {
   });
 }
 
+const directories: HostDirectoryService[] = [];
+let restoreDocumentHidden: (() => void) | null = null;
+
+function makeDirectory(
+  options: HostDirectoryServiceOptions,
+): HostDirectoryService {
+  const directory = new HostDirectoryService(options);
+  directories.push(directory);
+  return directory;
+}
+
+function setDocumentHidden(hidden: boolean): void {
+  if (restoreDocumentHidden === null) {
+    const descriptor = Object.getOwnPropertyDescriptor(document, "hidden");
+    restoreDocumentHidden = () => {
+      if (descriptor === undefined) {
+        Reflect.deleteProperty(document, "hidden");
+        return;
+      }
+      Object.defineProperty(document, "hidden", descriptor);
+    };
+  }
+  Object.defineProperty(document, "hidden", {
+    configurable: true,
+    get: () => hidden,
+  });
+}
+
+async function flushPromises(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
+
+afterEach(() => {
+  for (const directory of directories.splice(0)) {
+    directory.dispose();
+  }
+  if (restoreDocumentHidden !== null) {
+    restoreDocumentHidden();
+    restoreDocumentHidden = null;
+  }
+  vi.useRealTimers();
+});
+
 /** A `RemoteHostFetcher` that returns queued outcomes in order and counts calls. */
 function queuedFetcher(outcomes: readonly RemoteHostFetchOutcome[]): {
   readonly fetcher: RemoteHostFetcher;
@@ -57,7 +106,7 @@ function queuedFetcher(outcomes: readonly RemoteHostFetchOutcome[]): {
 describe("HostDirectoryService", () => {
   it("seeds the local entry from the runner-host onLocalHostChange subscription", async () => {
     const host = makeHost(localSnapshot);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -77,7 +126,7 @@ describe("HostDirectoryService", () => {
       displayName: "Design Studio",
     };
     const host = makeHost(renamedSnapshot);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -90,7 +139,7 @@ describe("HostDirectoryService", () => {
     const host = makeHost(localSnapshot);
     const remoteFetcher: RemoteHostFetcher = () =>
       Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] });
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher,
     });
@@ -102,7 +151,7 @@ describe("HostDirectoryService", () => {
 
   it("defaults to the shared stubbed remote fetcher when none is supplied", async () => {
     const host = makeHost(null);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -113,7 +162,7 @@ describe("HostDirectoryService", () => {
 
   it("prefers the local entry as the default when one exists", async () => {
     const host = makeHost(localSnapshot);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: () =>
         Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
@@ -127,7 +176,7 @@ describe("HostDirectoryService", () => {
 
   it("falls back to the single remote entry when no local host exists and the directory has exactly one entry", async () => {
     const host = makeHost(null);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: () =>
         Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
@@ -153,7 +202,7 @@ describe("HostDirectoryService", () => {
       version: "0.0.0-mock",
       status: "available",
     };
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: () =>
         Promise.resolve({
@@ -170,7 +219,7 @@ describe("HostDirectoryService", () => {
 
   it("reports cardinality 'zero' when the directory has no local or remote entries", async () => {
     const host = makeHost(null);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -182,7 +231,7 @@ describe("HostDirectoryService", () => {
 
   it("emits onSelectionChange after selectById()", async () => {
     const host = makeHost(localSnapshot);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: () =>
         Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
@@ -204,7 +253,7 @@ describe("HostDirectoryService", () => {
 
   it("clears stale selection when the selected host is no longer in the directory", async () => {
     const host = makeHost(localSnapshot);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -219,7 +268,7 @@ describe("HostDirectoryService", () => {
 
   it("refreshes the local entry when the runner emits an update", async () => {
     const host = makeHost(null);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -241,7 +290,7 @@ describe("HostDirectoryService", () => {
 
   it("emits a fresh selected local entry when the same host id changes endpoint", async () => {
     const host = makeHost(localSnapshot);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -277,7 +326,7 @@ describe("HostDirectoryService", () => {
     const host = makeHost(null);
     host.setLocalHost(localSnapshot);
 
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -298,7 +347,7 @@ describe("HostDirectoryService", () => {
     // The directory must promote that entry into the effective selection and
     // fire `onSelectionChange(...)` so the runtime rebinds without a remount.
     const host = makeHost(null);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -321,7 +370,7 @@ describe("HostDirectoryService", () => {
 
   it("preserves an explicit non-null selection when the local host appears later", async () => {
     const host = makeHost(null);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: () =>
         Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
@@ -346,7 +395,7 @@ describe("HostDirectoryService", () => {
     // the service must not silently re-promote the local default. The startup
     // auto-bind only runs when the user has made no explicit selection yet.
     const host = makeHost(null);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -372,7 +421,7 @@ describe("HostDirectoryService", () => {
 
   it("does not fall back to another host while an explicit selected host is offline", async () => {
     const host = makeHost(localSnapshot);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: () =>
         Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
@@ -405,7 +454,7 @@ describe("HostDirectoryService", () => {
 
   it("restores an explicitly selected host when the same id returns after going offline", async () => {
     const host = makeHost(localSnapshot);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: null,
     });
@@ -433,7 +482,7 @@ describe("HostDirectoryService", () => {
 
   it("resolves entries by id across local and remote", async () => {
     const host = makeHost(localSnapshot);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: () =>
         Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
@@ -445,13 +494,70 @@ describe("HostDirectoryService", () => {
     expect(directory.findById("missing")).toBeNull();
   });
 
+  it("polls remote hosts every 15s while visible", async () => {
+    vi.useFakeTimers();
+    const host = makeHost(null);
+    let remoteEntries: readonly HostDirectoryEntry[] = [];
+    let fetchCalls = 0;
+    const fetcher: RemoteHostFetcher = () => {
+      fetchCalls += 1;
+      return Promise.resolve({ kind: "hosts", entries: remoteEntries });
+    };
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+
+    await directory.start();
+    expect(fetchCalls).toBe(1);
+    expect(await directory.list()).toEqual([]);
+
+    remoteEntries = [mockRemoteHostEntry];
+    await vi.advanceTimersByTimeAsync(HOST_DIRECTORY_REFRESH_POLL_MS);
+
+    expect(fetchCalls).toBe(2);
+    expect(directory.findById(mockRemoteHostEntry.hostId)).not.toBeNull();
+  });
+
+  it("pauses interval refreshes while hidden and refreshes immediately on visibility return", async () => {
+    vi.useFakeTimers();
+    setDocumentHidden(false);
+    const host = makeHost(null);
+    let remoteEntries: readonly HostDirectoryEntry[] = [];
+    let fetchCalls = 0;
+    const fetcher: RemoteHostFetcher = () => {
+      fetchCalls += 1;
+      return Promise.resolve({ kind: "hosts", entries: remoteEntries });
+    };
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+
+    await directory.start();
+    setDocumentHidden(true);
+    remoteEntries = [mockRemoteHostEntry];
+
+    await vi.advanceTimersByTimeAsync(HOST_DIRECTORY_REFRESH_POLL_MS * 2);
+
+    expect(fetchCalls).toBe(1);
+    expect(directory.findById(mockRemoteHostEntry.hostId)).toBeNull();
+
+    setDocumentHidden(false);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flushPromises();
+
+    expect(fetchCalls).toBe(2);
+    expect(directory.findById(mockRemoteHostEntry.hostId)).not.toBeNull();
+  });
+
   it("retains the last-known remote entries and selection when a refresh fails (T20 / audit P4)", async () => {
     const host = makeHost(null);
     const { fetcher } = queuedFetcher([
       { kind: "hosts", entries: [mockRemoteHostEntry] },
       { kind: "failed" },
     ]);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: fetcher,
     });
@@ -476,7 +582,7 @@ describe("HostDirectoryService", () => {
       { kind: "hosts", entries: [mockRemoteHostEntry] },
       { kind: "signed-out" },
     ]);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: fetcher,
     });
@@ -502,7 +608,7 @@ describe("HostDirectoryService", () => {
       { kind: "hosts", entries: [mockRemoteHostEntry, secondRemote] },
       { kind: "failed" },
     ]);
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: fetcher,
     });
@@ -533,7 +639,7 @@ describe("HostDirectoryService", () => {
         pending.resolve = resolve;
       });
     };
-    const directory = new HostDirectoryService({
+    const directory = makeDirectory({
       runnerHost: host,
       remoteFetcher: fetcher,
     });
@@ -548,6 +654,42 @@ describe("HostDirectoryService", () => {
     await Promise.all([startPromise, refreshA, refreshB]);
 
     expect(calls).toBe(1);
+    expect(await directory.list()).toHaveLength(1);
+  });
+
+  it("coalesces overlapping explicit and interval refresh triggers onto a single fetch", async () => {
+    vi.useFakeTimers();
+    const host = makeHost(null);
+    let calls = 0;
+    const pending: {
+      resolve: ((outcome: RemoteHostFetchOutcome) => void) | null;
+    } = { resolve: null };
+    const fetcher: RemoteHostFetcher = () => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve({ kind: "hosts", entries: [] });
+      }
+      return new Promise<RemoteHostFetchOutcome>((resolve) => {
+        pending.resolve = resolve;
+      });
+    };
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+
+    await directory.start();
+    const explicitRefresh = directory.refresh();
+    expect(calls).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(HOST_DIRECTORY_REFRESH_POLL_MS);
+    expect(calls).toBe(2);
+
+    pending.resolve?.({ kind: "hosts", entries: [mockRemoteHostEntry] });
+    await explicitRefresh;
+    await flushPromises();
+
+    expect(calls).toBe(2);
     expect(await directory.list()).toHaveLength(1);
   });
 });

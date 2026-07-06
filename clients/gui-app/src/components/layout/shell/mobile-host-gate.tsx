@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { HostDirectoryService } from "@/lib/host/host-directory-service";
 import { useHostBinding } from "@/lib/host";
+import { useRefreshHostDirectoryOnOpen } from "@/hooks/host/use-refresh-host-directory-on-open";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
@@ -60,6 +61,9 @@ export function MobileHostGate(props: MobileHostGateProps): ReactNode {
   const pickerRequestedRef = useRef<boolean>(false);
   const directory = binding === null ? null : binding.directory;
   const state = useDirectoryState(directory);
+  const shouldRefreshForCardinality =
+    authStatus === "signed-in" && !props.bypass && binding !== null;
+  useRefreshHostDirectoryOnOpen(shouldRefreshForCardinality, directory);
 
   useEffect(() => {
     if (binding === null) {

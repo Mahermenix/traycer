@@ -29,6 +29,7 @@ import {
   useHostClient,
   type HostRpcRegistry,
 } from "@/lib/host";
+import { useRefreshHostDirectoryOnOpen } from "@/hooks/host/use-refresh-host-directory-on-open";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useHostClientFor } from "@/hooks/host/use-host-client-for";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
@@ -771,6 +772,10 @@ function HostOnlySelect(props: {
   readonly onSelect: (hostId: string) => void;
   readonly loading: boolean;
 }) {
+  const binding = useHostBinding();
+  const directory = binding === null ? null : binding.directory;
+  const [open, setOpen] = useState<boolean>(false);
+  useRefreshHostDirectoryOnOpen(open, directory);
   const options = hostSelectOptions(
     props.entries,
     props.activeHostId,
@@ -779,6 +784,8 @@ function HostOnlySelect(props: {
   const disabled = props.mode === "locked";
   return (
     <Select
+      open={open}
+      onOpenChange={setOpen}
       value={props.activeHostId ?? undefined}
       onValueChange={props.onSelect}
       disabled={disabled}

@@ -11,6 +11,7 @@ import { collectPanes } from "@/stores/epics/canvas/tile-tree";
 import type { EpicCanvasTileRef } from "@/stores/epics/canvas/types";
 
 const selectById = vi.fn();
+const refreshDirectory = vi.fn(() => Promise.resolve([]));
 
 interface BindingsQueryStub {
   readonly data: { readonly rows: WorktreeBindingSelectorRow[] } | undefined;
@@ -59,7 +60,9 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 }));
 
 vi.mock("@/lib/host", () => ({
-  useHostBinding: () => ({ directory: { selectById } }),
+  useHostBinding: () => ({
+    directory: { refresh: refreshDirectory, selectById },
+  }),
 }));
 
 function makeRow(
@@ -107,6 +110,7 @@ describe("<NewTerminalPicker />", () => {
     cleanup();
     resetCanvas();
     selectById.mockClear();
+    refreshDirectory.mockClear();
     stubLoadedBindings();
   });
 

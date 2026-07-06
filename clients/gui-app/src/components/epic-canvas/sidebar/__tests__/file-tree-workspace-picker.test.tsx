@@ -10,6 +10,7 @@ import type { WorktreeBindingSelectorRow } from "@traycer/protocol/host";
 import { FileTreeWorkspacePicker } from "../file-tree-workspace-picker";
 
 const selectById = vi.fn();
+const refreshDirectory = vi.fn(() => Promise.resolve([]));
 
 interface ListQueryStub {
   readonly data: { readonly rows: WorktreeBindingSelectorRow[] } | undefined;
@@ -45,7 +46,9 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 }));
 
 vi.mock("@/lib/host", () => ({
-  useHostBinding: () => ({ directory: { selectById } }),
+  useHostBinding: () => ({
+    directory: { refresh: refreshDirectory, selectById },
+  }),
 }));
 
 function makeRows(): WorktreeBindingSelectorRow[] {
@@ -136,6 +139,7 @@ describe("<FileTreeWorkspacePicker />", () => {
   beforeEach(() => {
     cleanup();
     selectById.mockClear();
+    refreshDirectory.mockClear();
     stubLoadedWorkspaces();
   });
 
