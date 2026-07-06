@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import type { TerminalSubscribeClientFrame } from "@traycer/protocol/host/terminal/subscribe";
 import type {
   TerminalSessionExitReason,
+  TerminalSessionInfo,
   TerminalSessionKind,
 } from "@traycer/protocol/host/terminal/unary-schemas";
 import type {
@@ -140,6 +141,8 @@ export interface TerminalSessionState {
    * than silently swallowing it.
    */
   readonly lastInputLostAt: number | null;
+  readonly title: string | null;
+  readonly activeProcessName: string | null;
 
   /** Tile registers an xterm `term.write` proxy here once mounted. */
   setWriter: (writer: TerminalDataWriter | null) => void;
@@ -302,6 +305,15 @@ function terminalOutputPreview(content: string | Uint8Array): string | null {
     .at(-1);
   if (preview === undefined) return null;
   return preview.slice(0, 240);
+}
+
+function activeProcessNameFromSession(
+  session: TerminalSessionInfo,
+): string | null {
+  const name = session.activeProcessName;
+  if (name === undefined || name === null) return null;
+  const trimmed = name.trim();
+  return trimmed.length === 0 ? null : trimmed;
 }
 
 export function createTerminalSessionStore(
@@ -565,6 +577,8 @@ export function createTerminalSessionStore(
           effectiveRows: frame.session.rows,
           reattachMode: "live",
           lastOutputPreview,
+          title: frame.session.title,
+          activeProcessName: activeProcessNameFromSession(frame.session),
         });
         flushRequestedResize();
       },
@@ -605,6 +619,7 @@ export function createTerminalSessionStore(
         set({
           status: "exited",
           exitCode: frame.exitCode,
+          activeProcessName: null,
         });
       },
       onActionAck: (frame) => {
@@ -615,6 +630,15 @@ export function createTerminalSessionStore(
             frame.clientActionId,
           ),
         }));
+      },
+      onSessionUpdated: (frame) => {
+        if (disposed || frame.sessionId !== options.sessionId) return;
+        set({
+          status: frame.session.status === "exited" ? "exited" : "running",
+          exitCode: frame.session.exitCode,
+          title: frame.session.title,
+          activeProcessName: activeProcessNameFromSession(frame.session),
+        });
       },
       onConnectionStatus: (
         status: StreamConnectionStatus,
@@ -675,6 +699,8 @@ export function createTerminalSessionStore(
       pendingActions: {},
       lastOutputPreview: null,
       lastInputLostAt: null,
+      title: null,
+      activeProcessName: null,
 
       setWriter: (next) => {
         writer = next;

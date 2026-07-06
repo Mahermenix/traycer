@@ -18,6 +18,10 @@ type TerminalDataFrame = Extract<
   TerminalSubscribeServerFrame,
   { readonly kind: "data" }
 >;
+type TerminalSessionUpdatedFrame = Extract<
+  TerminalSubscribeServerFrame,
+  { readonly kind: "sessionUpdated" }
+>;
 type TerminalExitFrame = Extract<
   TerminalSubscribeServerFrame,
   { readonly kind: "exit" }
@@ -64,6 +68,29 @@ function data(chunk: string): TerminalDataFrame {
     hasBinaryPayload: false,
     sessionId: "terminal-1",
     chunk,
+  };
+}
+
+function sessionUpdated(
+  activeProcessName: string | null,
+): TerminalSessionUpdatedFrame {
+  return {
+    kind: "sessionUpdated",
+    hasBinaryPayload: false,
+    sessionId: "terminal-1",
+    session: {
+      ...terminalInfoWithSize(80, 24),
+      activeProcessName,
+    },
+  };
+}
+
+function exit(exitCode: number): TerminalExitFrame {
+  return {
+    kind: "exit",
+    hasBinaryPayload: false,
+    sessionId: "terminal-1",
+    exitCode,
   };
 }
 
@@ -420,6 +447,33 @@ describe("createTerminalSessionStore", () => {
       expect(
         Object.keys(harness.handle.store.getState().pendingActions),
       ).toHaveLength(64);
+    });
+  });
+
+  it("stores active process metadata from session updates", () => {
+    const harness = createHarness();
+
+    emitSnapshot(harness.callbacks(), snapshot(""));
+    harness.callbacks().onSessionUpdated(sessionUpdated("vim"));
+
+    expect(harness.handle.store.getState()).toMatchObject({
+      status: "running",
+      title: null,
+      activeProcessName: "vim",
+    });
+  });
+
+  it("clears active process metadata when the session exits", () => {
+    const harness = createHarness();
+
+    emitSnapshot(harness.callbacks(), snapshot(""));
+    harness.callbacks().onSessionUpdated(sessionUpdated("vim"));
+    harness.callbacks().onExit(exit(0));
+
+    expect(harness.handle.store.getState()).toMatchObject({
+      status: "exited",
+      exitCode: 0,
+      activeProcessName: null,
     });
   });
 

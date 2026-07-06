@@ -230,19 +230,33 @@ export function useTerminalSessionHandle(
 
   useEffect(() => {
     if (handle === null) return;
-    let previousStatus = handle.store.getState().status;
+    const initialState = handle.store.getState();
+    let previousStatus = initialState.status;
+    let previousTitle = initialState.title;
+    let previousActiveProcessName = initialState.activeProcessName;
     return handle.store.subscribe((state) => {
-      if (state.status === previousStatus) return;
+      const statusChanged = state.status !== previousStatus;
+      const metadataChanged =
+        state.title !== previousTitle ||
+        state.activeProcessName !== previousActiveProcessName;
       previousStatus = state.status;
+      previousTitle = state.title;
+      previousActiveProcessName = state.activeProcessName;
+      if (metadataChanged) {
+        void queryClient.invalidateQueries({
+          queryKey: hostQueryKeys.methodScope(args.hostId, "terminal.list"),
+        });
+      }
       if (
-        state.status !== "exited" &&
-        state.status !== "lost" &&
-        state.status !== "reaped"
-      )
-        return;
-      void queryClient.invalidateQueries({
-        queryKey: hostQueryKeys.scope(args.hostId),
-      });
+        statusChanged &&
+        (state.status === "exited" ||
+          state.status === "lost" ||
+          state.status === "reaped")
+      ) {
+        void queryClient.invalidateQueries({
+          queryKey: hostQueryKeys.scope(args.hostId),
+        });
+      }
     });
   }, [args.hostId, handle, queryClient]);
 
