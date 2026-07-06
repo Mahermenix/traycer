@@ -3,6 +3,10 @@ import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-ru
 import { mockRemoteHostEntry } from "@traycer-clients/shared/host-client/mock/mock-host-directory";
 import type { LocalHostSnapshot } from "@traycer-clients/shared/platform/runner-host";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
+import type {
+  RemoteHostFetchOutcome,
+  RemoteHostFetcher,
+} from "@traycer-clients/shared/host-client/remote-fetcher";
 import { HostDirectoryService } from "@/lib/host/host-directory-service";
 
 const localSnapshot: LocalHostSnapshot = {
@@ -30,6 +34,24 @@ function makeHost(localHost: LocalHostSnapshot | null): MockRunnerHost {
     hasLocalHost: undefined,
     traycerCli: undefined,
   });
+}
+
+/** A `RemoteHostFetcher` that returns queued outcomes in order and counts calls. */
+function queuedFetcher(outcomes: readonly RemoteHostFetchOutcome[]): {
+  readonly fetcher: RemoteHostFetcher;
+  readonly callCount: () => number;
+} {
+  const queue = [...outcomes];
+  let calls = 0;
+  const fetcher: RemoteHostFetcher = () => {
+    calls += 1;
+    const next = queue.shift();
+    if (next === undefined) {
+      throw new Error("queuedFetcher exhausted");
+    }
+    return Promise.resolve(next);
+  };
+  return { fetcher, callCount: () => calls };
 }
 
 describe("HostDirectoryService", () => {
@@ -66,8 +88,8 @@ describe("HostDirectoryService", () => {
 
   it("composes local snapshots with the configured remote fetcher", async () => {
     const host = makeHost(localSnapshot);
-    const remoteFetcher = (): Promise<readonly HostDirectoryEntry[]> =>
-      Promise.resolve([mockRemoteHostEntry]);
+    const remoteFetcher: RemoteHostFetcher = () =>
+      Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] });
     const directory = new HostDirectoryService({
       runnerHost: host,
       remoteFetcher,
@@ -93,7 +115,8 @@ describe("HostDirectoryService", () => {
     const host = makeHost(localSnapshot);
     const directory = new HostDirectoryService({
       runnerHost: host,
-      remoteFetcher: () => Promise.resolve([mockRemoteHostEntry]),
+      remoteFetcher: () =>
+        Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
     });
     await directory.start();
 
@@ -106,7 +129,8 @@ describe("HostDirectoryService", () => {
     const host = makeHost(null);
     const directory = new HostDirectoryService({
       runnerHost: host,
-      remoteFetcher: () => Promise.resolve([mockRemoteHostEntry]),
+      remoteFetcher: () =>
+        Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
     });
     await directory.start();
 
@@ -131,7 +155,11 @@ describe("HostDirectoryService", () => {
     };
     const directory = new HostDirectoryService({
       runnerHost: host,
-      remoteFetcher: () => Promise.resolve([mockRemoteHostEntry, secondRemote]),
+      remoteFetcher: () =>
+        Promise.resolve({
+          kind: "hosts",
+          entries: [mockRemoteHostEntry, secondRemote],
+        }),
     });
     await directory.start();
 
@@ -156,7 +184,8 @@ describe("HostDirectoryService", () => {
     const host = makeHost(localSnapshot);
     const directory = new HostDirectoryService({
       runnerHost: host,
-      remoteFetcher: () => Promise.resolve([mockRemoteHostEntry]),
+      remoteFetcher: () =>
+        Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
     });
     await directory.start();
 
@@ -294,7 +323,8 @@ describe("HostDirectoryService", () => {
     const host = makeHost(null);
     const directory = new HostDirectoryService({
       runnerHost: host,
-      remoteFetcher: () => Promise.resolve([mockRemoteHostEntry]),
+      remoteFetcher: () =>
+        Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
     });
     await directory.start();
 
@@ -344,7 +374,8 @@ describe("HostDirectoryService", () => {
     const host = makeHost(localSnapshot);
     const directory = new HostDirectoryService({
       runnerHost: host,
-      remoteFetcher: () => Promise.resolve([mockRemoteHostEntry]),
+      remoteFetcher: () =>
+        Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
     });
     await directory.start();
 
@@ -404,12 +435,119 @@ describe("HostDirectoryService", () => {
     const host = makeHost(localSnapshot);
     const directory = new HostDirectoryService({
       runnerHost: host,
-      remoteFetcher: () => Promise.resolve([mockRemoteHostEntry]),
+      remoteFetcher: () =>
+        Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
     });
     await directory.start();
 
     expect(directory.findById(localSnapshot.hostId)?.kind).toBe("local");
     expect(directory.findById(mockRemoteHostEntry.hostId)?.kind).toBe("remote");
     expect(directory.findById("missing")).toBeNull();
+  });
+
+  it("retains the last-known remote entries and selection when a refresh fails (T20 / audit P4)", async () => {
+    const host = makeHost(null);
+    const { fetcher } = queuedFetcher([
+      { kind: "hosts", entries: [mockRemoteHostEntry] },
+      { kind: "failed" },
+    ]);
+    const directory = new HostDirectoryService({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+    await directory.start();
+    expect(directory.getSelected()?.hostId).toBe(mockRemoteHostEntry.hostId);
+
+    const observed: Array<HostDirectoryEntry | null> = [];
+    directory.onSelectionChange((entry) => {
+      observed.push(entry);
+    });
+
+    await directory.refresh();
+
+    expect(await directory.list()).toHaveLength(1);
+    expect(directory.getSelected()?.hostId).toBe(mockRemoteHostEntry.hostId);
+    expect(observed).toEqual([]);
+  });
+
+  it("clears remote entries when a refresh reports signed-out", async () => {
+    const host = makeHost(null);
+    const { fetcher } = queuedFetcher([
+      { kind: "hosts", entries: [mockRemoteHostEntry] },
+      { kind: "signed-out" },
+    ]);
+    const directory = new HostDirectoryService({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+    await directory.start();
+    expect(await directory.list()).toHaveLength(1);
+
+    await directory.refresh();
+
+    expect(await directory.list()).toEqual([]);
+  });
+
+  it("keeps an explicitly selected remote host bound through a failed refresh, with no onSelectionChange(null)", async () => {
+    const host = makeHost(null);
+    const secondRemote: HostDirectoryEntry = {
+      hostId: "mock-remote-2",
+      label: "Second Remote",
+      kind: "remote",
+      websocketUrl: "wss://mock-remote-2.traycer.invalid/rpc",
+      version: "0.0.0-mock",
+      status: "available",
+    };
+    const { fetcher } = queuedFetcher([
+      { kind: "hosts", entries: [mockRemoteHostEntry, secondRemote] },
+      { kind: "failed" },
+    ]);
+    const directory = new HostDirectoryService({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+    await directory.start();
+    directory.selectById(secondRemote.hostId);
+    expect(directory.getSelected()?.hostId).toBe(secondRemote.hostId);
+
+    const observed: Array<HostDirectoryEntry | null> = [];
+    directory.onSelectionChange((entry) => {
+      observed.push(entry);
+    });
+
+    await directory.refresh();
+
+    expect(directory.getSelected()?.hostId).toBe(secondRemote.hostId);
+    expect(observed).toEqual([]);
+  });
+
+  it("coalesces concurrent refresh() calls onto a single fetch", async () => {
+    const host = makeHost(null);
+    let calls = 0;
+    const pending: {
+      resolve: ((outcome: RemoteHostFetchOutcome) => void) | null;
+    } = { resolve: null };
+    const fetcher: RemoteHostFetcher = () => {
+      calls += 1;
+      return new Promise<RemoteHostFetchOutcome>((resolve) => {
+        pending.resolve = resolve;
+      });
+    };
+    const directory = new HostDirectoryService({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+
+    const startPromise = directory.start();
+    const refreshA = directory.refresh();
+    const refreshB = directory.refresh();
+
+    expect(calls).toBe(1);
+    pending.resolve?.({ kind: "hosts", entries: [mockRemoteHostEntry] });
+
+    await Promise.all([startPromise, refreshA, refreshB]);
+
+    expect(calls).toBe(1);
+    expect(await directory.list()).toHaveLength(1);
   });
 });

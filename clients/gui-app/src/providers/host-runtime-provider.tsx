@@ -336,22 +336,34 @@ export function createHostRuntime<
  * directory"). Reuses `AuthService.fetchRegisteredHosts()` - the same
  * bearer-gated `GET /api/v3/hosts` call My Hosts already makes - rather than
  * exposing a separate raw-bearer getter (the bearer deliberately never leaves
- * `AuthService`). `fetchRegisteredHosts()` throws on a network error (so
- * TanStack Query can retry My Hosts); a `RemoteHostFetcher` must never throw,
- * so a network failure here degrades to an empty remote set for this refresh
- * cycle instead - the merged directory just stays whatever it was.
+ * `AuthService`).
+ *
+ * Maps `fetchRegisteredHosts()`'s contract onto `RemoteHostFetchOutcome`
+ * (T20 / audit P4): a `null` return (no bearer, or one the registry
+ * rejected - `AuthService` deliberately does not distinguish the two so a
+ * background poll never forces a sign-out) becomes `signed-out`; a thrown
+ * network error becomes `failed` so `HostDirectoryService.refresh()` retains
+ * the last-known remote entries instead of wiping the merged directory and
+ * unbinding an active remote selection.
  */
 function buildDefaultRemoteFetcher(
   auth: AuthService,
   runnerHost: IRunnerHost,
 ): RemoteHostFetcher {
   return async () => {
-    const response = await auth.fetchRegisteredHosts().catch(() => null);
-    if (response === null) {
-      return [];
+    try {
+      const response = await auth.fetchRegisteredHosts();
+      if (response === null) {
+        return { kind: "signed-out" };
+      }
+      return {
+        kind: "hosts",
+        entries: response.hosts.map((item) =>
+          hostListItemToDirectoryEntry(item, runnerHost.relayBaseUrl),
+        ),
+      };
+    } catch {
+      return { kind: "failed" };
     }
-    return response.hosts.map((item) =>
-      hostListItemToDirectoryEntry(item, runnerHost.relayBaseUrl),
-    );
   };
 }

@@ -520,7 +520,8 @@ describe("<TraycerApp />", () => {
         mockRemoteHostEntry,
         mockInProcessHostEntry,
       ];
-      const remoteFetcher: RemoteHostFetcher = () => Promise.resolve(entries);
+      const remoteFetcher: RemoteHostFetcher = () =>
+        Promise.resolve({ kind: "hosts", entries });
 
       render(
         <TraycerApp

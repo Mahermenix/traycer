@@ -67,7 +67,7 @@ function buildHost(initialLocal: LocalHostSnapshot | null): MockRunnerHost {
 function staticFetcher(
   entries: readonly HostDirectoryEntry[],
 ): RemoteHostFetcher {
-  return () => Promise.resolve(entries);
+  return () => Promise.resolve({ kind: "hosts", entries });
 }
 
 describe("<HostPicker /> directory-change reactivity", () => {

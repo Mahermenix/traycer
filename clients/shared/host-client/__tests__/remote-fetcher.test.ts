@@ -162,13 +162,13 @@ describe("hostListItemToDirectoryEntry", () => {
 });
 
 describe("createRemoteHostFetcher", () => {
-  it("returns an empty list when signed out (no bearer)", async () => {
+  it("returns signed-out when there is no bearer", async () => {
     const fetcher = createRemoteHostFetcher({
       listHosts: async () => ({ kind: "ok", response: envelope() }),
       getBearerToken: () => null,
       relayBaseUrl: RELAY_BASE_URL,
     });
-    expect(await fetcher()).toEqual([]);
+    expect(await fetcher()).toEqual({ kind: "signed-out" });
   });
 
   it("maps the envelope to directory entries when ok", async () => {
@@ -177,24 +177,31 @@ describe("createRemoteHostFetcher", () => {
       getBearerToken: () => "jwt",
       relayBaseUrl: RELAY_BASE_URL,
     });
-    const entries = await fetcher();
-    expect(entries).toHaveLength(1);
-    expect(entries[0].kind).toBe("remote");
-    expect(entries[0].websocketUrl).toBe(RELAY_BASE_URL);
+    const outcome = await fetcher();
+    expect(outcome.kind).toBe("hosts");
+    if (outcome.kind === "hosts") {
+      expect(outcome.entries).toHaveLength(1);
+      expect(outcome.entries[0].kind).toBe("remote");
+      expect(outcome.entries[0].websocketUrl).toBe(RELAY_BASE_URL);
+    }
   });
 
-  it("degrades to an empty list on a non-ok result", async () => {
-    const results: HostListFetchResult[] = [
-      { kind: "unauthorized" },
-      { kind: "network-error" },
-    ];
-    for (const result of results) {
-      const fetcher = createRemoteHostFetcher({
-        listHosts: async () => result,
-        getBearerToken: () => "jwt",
-        relayBaseUrl: RELAY_BASE_URL,
-      });
-      expect(await fetcher()).toEqual([]);
-    }
+  it("maps a rejected bearer (unauthorized) to signed-out (never a forced sign-out from a poll)", async () => {
+    const fetcher = createRemoteHostFetcher({
+      listHosts: async () => ({ kind: "unauthorized" }),
+      getBearerToken: () => "jwt",
+      relayBaseUrl: RELAY_BASE_URL,
+    });
+    expect(await fetcher()).toEqual({ kind: "signed-out" });
+  });
+
+  it("maps a network-error to failed so a transient blip is distinguishable from signed-out", async () => {
+    const result: HostListFetchResult = { kind: "network-error" };
+    const fetcher = createRemoteHostFetcher({
+      listHosts: async () => result,
+      getBearerToken: () => "jwt",
+      relayBaseUrl: RELAY_BASE_URL,
+    });
+    expect(await fetcher()).toEqual({ kind: "failed" });
   });
 });

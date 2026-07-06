@@ -156,15 +156,32 @@ export function hostListItemToDirectoryEntry(
 
 /**
  * The stubbed fetcher the `HostDirectoryService` uses by default. Returns an
- * empty list so the merged directory has a stable shape and stays local-only in
- * S1 (feeding unconnectable remote entries into the selectable directory would
- * be a premature connect affordance / auto-bind hazard). Swapped for
- * `createRemoteHostFetcher` when the relay lands (S2).
+ * empty hosts result so the merged directory has a stable shape and stays
+ * local-only in S1 (feeding unconnectable remote entries into the selectable
+ * directory would be a premature connect affordance / auto-bind hazard).
+ * Swapped for `createRemoteHostFetcher` when the relay lands (S2).
  */
-export type RemoteHostFetcher = () => Promise<readonly HostDirectoryEntry[]>;
+export type RemoteHostFetcher = () => Promise<RemoteHostFetchOutcome>;
+
+/**
+ * Outcome contract every `RemoteHostFetcher` returns, so
+ * `HostDirectoryService.refresh()` (T20 / audit P4) can tell a genuine
+ * (possibly empty) hosts result apart from a legitimate sign-out clear and a
+ * transient failure instead of collapsing all three into an empty list:
+ *  - `hosts`      — a genuine registry result; replaces `remoteEntries`.
+ *  - `signed-out` — no bearer (or one the registry rejected); a legitimate
+ *                   clear, same as today.
+ *  - `failed`     — transport/timeout/non-ok/parse failure; the directory
+ *                   must retain its last-known `remoteEntries` instead of
+ *                   wiping them and unbinding an active remote selection.
+ */
+export type RemoteHostFetchOutcome =
+  | { readonly kind: "hosts"; readonly entries: readonly HostDirectoryEntry[] }
+  | { readonly kind: "signed-out" }
+  | { readonly kind: "failed" };
 
 export const fetchRemoteHosts: RemoteHostFetcher = async () => {
-  return [];
+  return { kind: "hosts", entries: [] };
 };
 
 export interface RemoteHostFetcherDeps {
@@ -181,9 +198,12 @@ export interface RemoteHostFetcherDeps {
 }
 
 /**
- * Builds a `RemoteHostFetcher` for the directory service (S2 wiring). Signed
- * out, or any non-`ok` result, yields an empty remote set so a transient blip
- * never drops the merged directory into an error state.
+ * Builds a `RemoteHostFetcher` for the directory service (S2 wiring). No
+ * bearer, or one the registry rejected (`unauthorized`), maps to
+ * `signed-out` — a legitimate clear, matching
+ * `AuthService.fetchRegisteredHosts()`'s choice not to force a sign-out from
+ * a background list poll. A `network-error` result maps to `failed` so a
+ * transient blip never drops the merged directory (T20 / audit P4).
  */
 export function createRemoteHostFetcher(
   deps: RemoteHostFetcherDeps,
@@ -191,14 +211,20 @@ export function createRemoteHostFetcher(
   return async () => {
     const bearerToken = deps.getBearerToken();
     if (bearerToken === null) {
-      return [];
+      return { kind: "signed-out" };
     }
     const result = await deps.listHosts(bearerToken);
-    if (result.kind !== "ok") {
-      return [];
+    if (result.kind === "unauthorized") {
+      return { kind: "signed-out" };
     }
-    return result.response.hosts.map((item) =>
-      hostListItemToDirectoryEntry(item, deps.relayBaseUrl),
-    );
+    if (result.kind === "network-error") {
+      return { kind: "failed" };
+    }
+    return {
+      kind: "hosts",
+      entries: result.response.hosts.map((item) =>
+        hostListItemToDirectoryEntry(item, deps.relayBaseUrl),
+      ),
+    };
   };
 }

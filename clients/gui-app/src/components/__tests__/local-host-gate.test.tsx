@@ -260,7 +260,9 @@ function mountGateWithRuntime(
             messengerFactory={buildMessengerFactory(hostStatus)}
             invalidator={null}
             requestId={null}
-            remoteFetcher={() => Promise.resolve([])}
+            remoteFetcher={() =>
+              Promise.resolve({ kind: "hosts", entries: [] })
+            }
             fallback={<div data-testid="runtime-fallback">runtime loading</div>}
           >
             <HostCompatibilityProvider>

@@ -159,7 +159,7 @@ function mountEpicsList(opts: MountOptions): MountResult {
           messengerFactory={buildMessengerFactory(opts)}
           invalidator={null}
           requestId={null}
-          remoteFetcher={() => Promise.resolve([])}
+          remoteFetcher={() => Promise.resolve({ kind: "hosts", entries: [] })}
           fallback={<div data-testid="runtime-fallback">loading runtime…</div>}
         >
           {children}

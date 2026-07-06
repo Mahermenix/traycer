@@ -164,7 +164,7 @@ function mountSignInButton(host: MockRunnerHost): MountResult {
           messengerFactory={makeMessengerFactory()}
           invalidator={null}
           requestId={null}
-          remoteFetcher={() => Promise.resolve([])}
+          remoteFetcher={() => Promise.resolve({ kind: "hosts", entries: [] })}
           fallback={<div data-testid="runtime-fallback">…</div>}
         >
           <AuthSessionExpiredToastBridge />
@@ -223,7 +223,7 @@ function mountDeviceCodeProgress(host: MockRunnerHost): () => void {
           messengerFactory={makeMessengerFactory()}
           invalidator={null}
           requestId={null}
-          remoteFetcher={() => Promise.resolve([])}
+          remoteFetcher={() => Promise.resolve({ kind: "hosts", entries: [] })}
           fallback={<div data-testid="runtime-fallback">…</div>}
         >
           <DeviceCodeProgress

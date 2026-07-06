@@ -15,9 +15,9 @@ export interface HostDirectoryServiceOptions {
   readonly runnerHost: IRunnerHost;
   /**
    * Fetcher for remote hosts. Defaults to the shared stubbed
-   * `fetchRemoteHosts` (returns an empty list) so the composition is the
-   * same in production and tests; tests can pass a custom fetcher to assert
-   * merged directory behavior.
+   * `fetchRemoteHosts` (returns an empty hosts result) so the composition is
+   * the same in production and tests; tests can pass a custom fetcher to
+   * assert merged directory behavior.
    */
   readonly remoteFetcher: RemoteHostFetcher | null;
 }
@@ -35,7 +35,10 @@ export type HostDirectoryListener = (
  * the shared stubbed `fetchRemoteHosts` so the merged directory has a
  * stable shape regardless of remote discovery progress (D3). Selection state
  * is owned here - `HostRuntime.start()` reads `getSelected()` and listens
- * to `onSelectionChange(...)` to rebind `HostClient`.
+ * to `onSelectionChange(...)` to rebind `HostClient`. `refresh()` only ever
+ * replaces `remoteEntries` on a genuine `hosts` or `signed-out` fetcher
+ * outcome; a `failed` outcome retains the last-known entries instead of
+ * unbinding an active remote selection (T20 / audit P4).
  *
  * The service never calls any `getLocalHost()` accessor; the current
  * snapshot is the most recent value delivered through the subscription.
@@ -69,6 +72,12 @@ export class HostDirectoryService implements IHostDirectoryService {
   >();
   private localSubscription: Disposable | null = null;
   private started = false;
+  /**
+   * Coalesces concurrent `refresh()` callers onto a single in-flight fetch
+   * (T20 / audit P4) - a foundation for T21's interval + open-time triggers,
+   * which would otherwise stack requests.
+   */
+  private refreshInFlight: Promise<readonly HostDirectoryEntry[]> | null = null;
 
   constructor(options: HostDirectoryServiceOptions) {
     this.runnerHost = options.runnerHost;
@@ -104,16 +113,13 @@ export class HostDirectoryService implements IHostDirectoryService {
     return Promise.resolve(this.snapshot());
   }
 
-  async refresh(): Promise<readonly HostDirectoryEntry[]> {
-    this.remoteEntries = await this.remoteFetcher();
-    this.reconcileSelection();
-    this.emit();
-    appLogger.debug("[host-directory] refresh complete", {
-      localCount: this.localEntry === null ? 0 : 1,
-      remoteCount: this.remoteEntries.length,
-      totalCount: this.snapshot().length,
-    });
-    return this.snapshot();
+  refresh(): Promise<readonly HostDirectoryEntry[]> {
+    if (this.refreshInFlight === null) {
+      this.refreshInFlight = this.performRefresh().finally(() => {
+        this.refreshInFlight = null;
+      });
+    }
+    return this.refreshInFlight;
   }
 
   findById(hostId: string): HostDirectoryEntry | null {
@@ -224,6 +230,33 @@ export class HostDirectoryService implements IHostDirectoryService {
     this.listeners.clear();
     this.selectionListeners.clear();
     this.started = false;
+  }
+
+  /**
+   * On `failed`, retains the last-known `remoteEntries` and skips
+   * `reconcileSelection()` - a transient blip must never unbind an active
+   * remote selection (T20 / audit P4). `signed-out` clears remotes exactly
+   * as a successful empty `hosts` result would.
+   */
+  private async performRefresh(): Promise<readonly HostDirectoryEntry[]> {
+    const outcome = await this.remoteFetcher();
+    if (outcome.kind === "failed") {
+      appLogger.debug(
+        "[host-directory] refresh failed, retaining last-known remote entries",
+        { remoteCount: this.remoteEntries.length },
+      );
+      return this.snapshot();
+    }
+    this.remoteEntries = outcome.kind === "hosts" ? outcome.entries : [];
+    this.reconcileSelection();
+    this.emit();
+    appLogger.debug("[host-directory] refresh complete", {
+      outcome: outcome.kind,
+      localCount: this.localEntry === null ? 0 : 1,
+      remoteCount: this.remoteEntries.length,
+      totalCount: this.snapshot().length,
+    });
+    return this.snapshot();
   }
 
   private snapshot(): readonly HostDirectoryEntry[] {
