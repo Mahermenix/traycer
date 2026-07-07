@@ -87,6 +87,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
 import type { HostWorkspaceControlsHostScope } from "./host-workspace-controls-scope";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { cloneChatOnHostSwitch } from "@/lib/commands/actions/clone-chat-on-host-switch";
@@ -815,11 +816,30 @@ function HostOnlySelect(props: {
             value={host.hostId}
             disabled={props.mode === "locked" || host.status === "unavailable"}
           >
-            {settingsHostOptionLabel(host)}
+            <HostSelectOptionContent host={host} />
           </SelectItem>
         ))}
       </SelectContent>
     </Select>
+  );
+}
+
+function HostSelectOptionContent(props: { readonly host: HostDirectoryEntry }) {
+  return (
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="min-w-0 truncate">
+        {settingsHostOptionLabel(props.host)}
+      </span>
+      {props.host.kind === "local" ? (
+        <Badge
+          variant="outline"
+          className="shrink-0 border-border/70 bg-background/60 text-muted-foreground [[data-slot=select-trigger]_&]:hidden"
+          data-testid={`composer-host-local-chip-${props.host.hostId}`}
+        >
+          Local
+        </Badge>
+      ) : null}
+    </span>
   );
 }
 

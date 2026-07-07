@@ -371,11 +371,17 @@ export class HostDirectoryService implements IHostDirectoryService {
 
   private snapshot(): readonly HostDirectoryEntry[] {
     const entries: HostDirectoryEntry[] = [];
+    const seenHostIds = new Set<string>();
     if (this.localEntry !== null) {
       entries.push(this.localEntry);
+      seenHostIds.add(this.localEntry.hostId);
     }
     for (const entry of this.remoteEntries) {
+      if (seenHostIds.has(entry.hostId)) {
+        continue;
+      }
       entries.push(entry);
+      seenHostIds.add(entry.hostId);
     }
     return entries;
   }

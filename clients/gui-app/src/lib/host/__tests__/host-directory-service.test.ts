@@ -178,6 +178,36 @@ describe("HostDirectoryService", () => {
     expect(entries.map((e) => e.kind)).toEqual(["local", "remote"]);
   });
 
+  it("deduplicates the registered remote copy of the local host", async () => {
+    const host = makeHost(localSnapshot);
+    const registeredLocalHostEntry: HostDirectoryEntry = {
+      hostId: localSnapshot.hostId,
+      label: "Registry copy",
+      kind: "remote",
+      websocketUrl: "wss://relay.traycer.invalid/attach",
+      version: localSnapshot.version,
+      status: "available",
+    };
+    const remoteFetcher: RemoteHostFetcher = () =>
+      Promise.resolve({
+        kind: "hosts",
+        entries: [registeredLocalHostEntry, mockRemoteHostEntry],
+      });
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher,
+    });
+    await directory.start();
+
+    const entries = await directory.list();
+    expect(entries.map((entry) => entry.hostId)).toEqual([
+      localSnapshot.hostId,
+      mockRemoteHostEntry.hostId,
+    ]);
+    expect(directory.findById(localSnapshot.hostId)?.kind).toBe("local");
+    expect(directory.getDefaultEntry()?.hostId).toBe(localSnapshot.hostId);
+  });
+
   it("defaults to the shared stubbed remote fetcher when none is supplied", async () => {
     const host = makeHost(null);
     const directory = makeDirectory({
