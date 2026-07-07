@@ -13,6 +13,7 @@ import {
 } from "@traycer-clients/shared/host-transport/retrying-messenger";
 import { DEFAULT_DIAL_TIMEOUT_MS } from "@traycer-clients/shared/host-transport/transport-config";
 import { createWhatwgWebSocketFactory } from "@traycer-clients/shared/host-transport/whatwg-ws-factory";
+import type { RequestContext } from "@traycer/protocol/auth/request-context";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
 import type { HostStreamRpcRegistry } from "@traycer/protocol/host/registry";
 import { useHostClient } from "@/lib/host/runtime";
@@ -45,6 +46,18 @@ const NO_OP_INVALIDATOR: IHostQueryInvalidator = {
 };
 
 interface HostClientBinding {
+  /**
+   * The inputs this binding was built from. Compared against the hook's
+   * current `target`/`requestContext`/`userId` on every render so a commit
+   * that changes one of them never returns the PREVIOUS binding's client -
+   * React re-renders with the new props before this hook's own effect has had
+   * a chance to run and rebuild `binding`, so without this guard the hook
+   * would hand back a client still bound to the old target for that one
+   * render.
+   */
+  readonly target: HostDirectoryEntry;
+  readonly requestContext: RequestContext;
+  readonly userId: string;
   readonly client: HostClient<HostRpcRegistry>;
   /**
    * The remote session backing this client, when `target.kind === "remote"`.
@@ -62,15 +75,15 @@ interface HostClientBinding {
  * WITHOUT `bind()`-ing it as the app-wide active host (which would reload the
  * Epic list and swap app-wide host state).
  *
- * LOCAL HOSTS ONLY: a fresh `WsRpcClient` dials `target.websocketUrl` per
- * request (the transport holds no socket across calls), so a second instance
- * is cheap and side-effect-free. A `remote` target's `websocketUrl` is a
- * relay attach URL, not a directly-dialable local endpoint - reaching it needs
- * the Noise-NK handshake + persistent session that `useHostClientFor` below
- * manages via an effect (start/close), which this plain, one-shot function has
- * no lifecycle hook to run. Callers that may resolve a remote
- * `HostDirectoryEntry` (e.g. by looking one up from `useHostDirectory()`)
- * should be aware this returns a client that will fail to reach it.
+ * LOCAL (AND MOCK) HOSTS ONLY: a fresh `WsRpcClient` dials
+ * `target.websocketUrl` per request (the transport holds no socket across
+ * calls), so a second instance is cheap and side-effect-free. A `remote`
+ * target's `websocketUrl` is a relay attach URL, not a directly-dialable
+ * local endpoint - reaching it needs the Noise-NK handshake + persistent
+ * session that `useHostClientFor` below manages via an effect (start/close),
+ * which this plain, one-shot function has no lifecycle hook to run. Fails
+ * closed (returns `null`) for a `remote` target rather than handing back a
+ * client that would dial the relay URL directly and never connect.
  *
  * The bearer is the **shared** `RequestContext` from `globalClient` -
  * auth is per-user, valid across hosts - so there is no separate sign-in.
@@ -78,8 +91,8 @@ interface HostClientBinding {
  * `setRequestContext()` (needed only to satisfy the request preflight)
  * stay inert beyond this instance's own state.
  *
- * Returns `null` when `target` has no websocket URL, or there is no
- * authenticated request context / bound user on `globalClient`. Plain
+ * Returns `null` when `target` is `remote`, has no websocket URL, or there is
+ * no authenticated request context / bound user on `globalClient`. Plain
  * function (no hooks) so imperative call sites - a callback or `mutationFn`
  * invoked once per differing `hostId` - can resolve a routed client without
  * violating the rules of hooks.
@@ -88,6 +101,12 @@ export function buildTransientHostClient(
   globalClient: HostClient<HostRpcRegistry>,
   target: HostDirectoryEntry,
 ): HostClient<HostRpcRegistry> | null {
+  // Fail closed: a "remote" target's `websocketUrl` is a relay attach URL,
+  // not a directly-dialable endpoint - reaching it needs the Noise-NK
+  // handshake + persistent session `useHostClientFor` manages via an effect,
+  // which this plain, one-shot function has no lifecycle hook to run. Never
+  // fall through to the plain `WsRpcClient` branch below for one.
+  if (target.kind === "remote") return null;
   if (target.websocketUrl === null) return null;
   const requestContext = globalClient.getRequestContext();
   // `null` when signed out or the credential lease was released - the
@@ -229,12 +248,31 @@ export function useHostClientFor(
     client.setRequestContext(requestContext);
 
     built.remoteTransport?.session.start();
-    setBinding({ client, remoteTransport: built.remoteTransport });
+    setBinding({
+      target,
+      requestContext,
+      userId,
+      client,
+      remoteTransport: built.remoteTransport,
+    });
 
     return () => {
       built.remoteTransport?.session.close();
     };
   }, [target, registry, requestContext, userId, globalClient, authnBaseUrl]);
 
-  return binding?.client ?? null;
+  // Guard against the one-render window where `target`/`requestContext`/
+  // `userId` have already changed but this hook's own effect (above) has not
+  // yet run to rebuild `binding` for them - without this check, that render
+  // would hand back the PREVIOUS binding's client as if it belonged to the
+  // new inputs.
+  if (
+    binding === null ||
+    binding.target !== target ||
+    binding.requestContext !== requestContext ||
+    binding.userId !== userId
+  ) {
+    return null;
+  }
+  return binding.client;
 }
