@@ -27,11 +27,9 @@ export function useChatsOpenerItems(
   const projection = useActiveEpicProjection(ctx.activeEpicId);
   const directoryList = useHostDirectoryList();
   const hostLabelById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const entry of directoryList.data ?? []) {
-      map.set(entry.hostId, entry.label);
-    }
-    return map;
+    return new Map(
+      (directoryList.data ?? []).map((entry) => [entry.hostId, entry.label]),
+    );
   }, [directoryList.data]);
 
   return useMemo<ReadonlyArray<CommandItem>>(() => {

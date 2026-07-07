@@ -164,7 +164,7 @@ function AgentSelectionGuideSectionInner(props: {
         </div>
       </AgentSelectionGuideMessage>
     );
-  } else if (status === "connecting" || query.data === undefined) {
+  } else if (status === "connecting") {
     panelContent = (
       <AgentSelectionGuideMessage hostPicker={hostPicker}>
         <EditorSkeleton />
@@ -176,6 +176,12 @@ function AgentSelectionGuideSectionInner(props: {
         <div className="text-ui-sm text-muted-foreground">
           Couldn't load agent instructions for this host.
         </div>
+      </AgentSelectionGuideMessage>
+    );
+  } else if (query.data === undefined) {
+    panelContent = (
+      <AgentSelectionGuideMessage hostPicker={hostPicker}>
+        <EditorSkeleton />
       </AgentSelectionGuideMessage>
     );
   } else {

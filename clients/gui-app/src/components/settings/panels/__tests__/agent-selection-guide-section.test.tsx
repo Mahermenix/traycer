@@ -32,8 +32,9 @@ const guideMocks = vi.hoisted(
   (): {
     activeHostId: string;
     scopedHostId: string;
-    queryData: GuideData;
+    queryData: GuideData | undefined;
     queryDataByHost: Record<string, GuideData>;
+    queryIsError: boolean;
     setGlobalMutateAsync: Mock<
       (input: { readonly content: string }) => Promise<GuideData>
     >;
@@ -57,6 +58,7 @@ const guideMocks = vi.hoisted(
       generatedDefaultContent: "claude guide",
     },
     queryDataByHost: {},
+    queryIsError: false,
     setGlobalMutateAsync: vi.fn(),
     resetGlobalMutateAsync: vi.fn(),
     setGlobalHostIds: [],
@@ -99,50 +101,78 @@ vi.mock("@/hooks/host/use-host-client-for", () => ({
   },
 }));
 
-vi.mock("@/lib/host/runtime", async () => {
+function requireHostId(hostId: string | null): string {
+  if (hostId === null) {
+    throw new Error("expected host id");
+  }
+  return hostId;
+}
+
+vi.mock("@/lib/host/runtime", async (importOriginal) => {
   const react = await import("react");
-  return {
-    HostRuntimeContext: react.createContext(null),
-    useHostBinding: () => ({
-      hostClient: {
-        getActiveHostId: () => guideMocks.activeHostId,
-      },
-      directory: { refresh: () => Promise.resolve([]) },
-    }),
-    useHostClient: () => ({
+  const actual = await importOriginal<typeof import("@/lib/host/runtime")>();
+  const defaultBinding = {
+    hostClient: {
       getActiveHostId: () => guideMocks.activeHostId,
-    }),
+    },
+    directory: { refresh: () => Promise.resolve([]) },
+  };
+  const useHostBinding = () =>
+    react.useContext(actual.HostRuntimeContext) ?? defaultBinding;
+  return {
+    ...actual,
+    useHostBinding,
+    useHostClient: () => useHostBinding().hostClient,
   };
 });
 
-vi.mock("@/hooks/agent/use-agent-selection-guide-global-query", () => ({
-  useAgentSelectionGuideGlobalQuery: () => ({
-    data:
-      guideMocks.queryDataByHost[guideMocks.scopedHostId] ??
-      guideMocks.queryData,
-    isError: false,
-  }),
-}));
-
-vi.mock("@/hooks/agent/use-agent-selection-guide-set-global-mutation", () => ({
-  useAgentSelectionGuideSetGlobalMutation: () => ({
-    mutateAsync: (input: { readonly content: string }) => {
-      guideMocks.setGlobalHostIds.push(guideMocks.scopedHostId);
-      return guideMocks.setGlobalMutateAsync(input);
+vi.mock("@/hooks/agent/use-agent-selection-guide-global-query", async () => {
+  const runtime = await import("@/lib/host/runtime");
+  return {
+    useAgentSelectionGuideGlobalQuery: () => {
+      const hostId = requireHostId(runtime.useHostClient().getActiveHostId());
+      return {
+        data: guideMocks.queryDataByHost[hostId] ?? guideMocks.queryData,
+        isError: guideMocks.queryIsError,
+      };
     },
-  }),
-}));
+  };
+});
+
+vi.mock(
+  "@/hooks/agent/use-agent-selection-guide-set-global-mutation",
+  async () => {
+    const runtime = await import("@/lib/host/runtime");
+    return {
+      useAgentSelectionGuideSetGlobalMutation: () => {
+        const hostId = requireHostId(runtime.useHostClient().getActiveHostId());
+        return {
+          mutateAsync: (input: { readonly content: string }) => {
+            guideMocks.setGlobalHostIds.push(hostId);
+            return guideMocks.setGlobalMutateAsync(input);
+          },
+        };
+      },
+    };
+  },
+);
 
 vi.mock(
   "@/hooks/agent/use-agent-selection-guide-reset-global-mutation",
-  () => ({
-    useAgentSelectionGuideResetGlobalMutation: () => ({
-      mutateAsync: (input: Record<string, never>) => {
-        guideMocks.resetGlobalHostIds.push(guideMocks.scopedHostId);
-        return guideMocks.resetGlobalMutateAsync(input);
+  async () => {
+    const runtime = await import("@/lib/host/runtime");
+    return {
+      useAgentSelectionGuideResetGlobalMutation: () => {
+        const hostId = requireHostId(runtime.useHostClient().getActiveHostId());
+        return {
+          mutateAsync: (input: Record<string, never>) => {
+            guideMocks.resetGlobalHostIds.push(hostId);
+            return guideMocks.resetGlobalMutateAsync(input);
+          },
+        };
       },
-    }),
-  }),
+    };
+  },
 );
 
 import { AgentSelectionGuideSection } from "@/components/settings/panels/agent-selection-guide-section";
@@ -180,6 +210,7 @@ describe("AgentSelectionGuideSection", () => {
       generatedDefaultContent: "claude guide",
     };
     guideMocks.queryDataByHost = {};
+    guideMocks.queryIsError = false;
     guideMocks.activeHostId = "local";
     guideMocks.scopedHostId = "local";
     guideMocks.lastTransientTarget = null;
@@ -239,6 +270,18 @@ describe("AgentSelectionGuideSection", () => {
     });
     expect(guideMocks.setGlobalMutateAsync).not.toHaveBeenCalled();
     expect(guideMocks.resetGlobalMutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("shows the load failure instead of a skeleton when the first guide fetch fails", () => {
+    guideMocks.queryData = undefined;
+    guideMocks.queryIsError = true;
+
+    renderPanel();
+
+    expect(
+      screen.getByText("Couldn't load agent instructions for this host."),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("agents-selection-guide-input")).toBeNull();
   });
 
   it("switches the guide editor host without changing the app-wide active host", async () => {

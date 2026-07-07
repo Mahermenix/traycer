@@ -69,7 +69,11 @@ export function MobileHostGate(props: MobileHostGateProps): ReactNode {
   // this would double the startup fetch on every signed-in mobile boot.
   const hasEvaluatedCardinalityRefreshRef = useRef<boolean>(false);
   useEffect(() => {
-    if (!shouldRefreshForCardinality || directory === null) {
+    if (directory === null) {
+      return;
+    }
+    if (!shouldRefreshForCardinality) {
+      hasEvaluatedCardinalityRefreshRef.current = true;
       return;
     }
     if (!hasEvaluatedCardinalityRefreshRef.current) {

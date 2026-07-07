@@ -22,11 +22,7 @@ import { WorktreePickerHostSection } from "@/components/worktree/worktree-picker
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useWorktreeListBindingsForEpic } from "@/hooks/worktree/use-worktree-list-bindings-for-epic-query";
 import { worktreeRowKey } from "@/lib/worktree/worktree-row-key";
-
-export interface TerminalLaunchTarget {
-  readonly hostId: string;
-  readonly cwd: string;
-}
+import type { TerminalLaunchTarget } from "@/components/epic-canvas/sidebar/new-terminal-tile-ref";
 
 export interface NewTerminalPickerBodyProps {
   readonly epicId: string;

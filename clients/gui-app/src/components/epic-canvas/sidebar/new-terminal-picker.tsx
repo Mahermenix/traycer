@@ -13,7 +13,6 @@
  * starts fresh every open without an imperative reset.
  */
 import { useCallback, useState } from "react";
-import { v4 as uuidv4 } from "uuid";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,11 +20,11 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { NewTerminalPickerBody } from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
 import {
-  NewTerminalPickerBody,
+  buildTerminalTileRef,
   type TerminalLaunchTarget,
-} from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
-import { DEFAULT_TERMINAL_TITLE } from "@/lib/terminals/terminal-title";
+} from "@/components/epic-canvas/sidebar/new-terminal-tile-ref";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 
 interface NewTerminalPickerProps {
@@ -39,15 +38,7 @@ export function NewTerminalPicker(props: NewTerminalPickerProps) {
 
   const handleLaunch = useCallback(
     (target: TerminalLaunchTarget) => {
-      openTileInTab(props.tabId, {
-        id: `term-${uuidv4()}`,
-        instanceId: uuidv4(),
-        type: "terminal",
-        name: DEFAULT_TERMINAL_TITLE,
-        titleSource: "default",
-        hostId: target.hostId,
-        cwd: target.cwd,
-      });
+      openTileInTab(props.tabId, buildTerminalTileRef(target));
       setIsOpen(false);
     },
     [openTileInTab, props.tabId],

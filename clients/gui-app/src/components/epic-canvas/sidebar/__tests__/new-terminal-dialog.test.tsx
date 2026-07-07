@@ -221,4 +221,24 @@ describe("<NewTerminalDialogHost />", () => {
     expect(useNewTerminalModalOpenStore.getState().request).toBeNull();
     expect(screen.queryByTestId("new-terminal-dialog")).toBeNull();
   });
+
+  it("clears a matching open request when its host unmounts during a tab switch", () => {
+    const { tabId, groupId } = openTabWithGroup();
+    const rendered = render(
+      <NewTerminalDialogHost epicId="epic-1" tabId={tabId} />,
+    );
+
+    act(() => {
+      useNewTerminalModalOpenStore.getState().open({
+        epicId: "epic-1",
+        tabId,
+        groupId,
+      });
+    });
+    expect(useNewTerminalModalOpenStore.getState().request).not.toBeNull();
+
+    rendered.unmount();
+
+    expect(useNewTerminalModalOpenStore.getState().request).toBeNull();
+  });
 });

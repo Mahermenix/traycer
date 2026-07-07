@@ -14,7 +14,6 @@
  * ACTIVE session tab), so it can't silently re-pop when the user returns.
  */
 import { useCallback, useEffect } from "react";
-import { v4 as uuidv4 } from "uuid";
 import { XIcon } from "lucide-react";
 import {
   Dialog,
@@ -23,12 +22,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
+import { NewTerminalPickerBody } from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
 import {
-  NewTerminalPickerBody,
+  buildTerminalTileRef,
   type TerminalLaunchTarget,
-} from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
+} from "@/components/epic-canvas/sidebar/new-terminal-tile-ref";
 import { openTileIntoTargetGroup } from "@/lib/commands/actions";
-import { DEFAULT_TERMINAL_TITLE } from "@/lib/terminals/terminal-title";
 import { useNewTerminalModalOpenStore } from "@/stores/epics/new-terminal-modal-open-store";
 
 export function NewTerminalDialogHost(props: {
@@ -65,15 +64,7 @@ export function NewTerminalDialogHost(props: {
       openTileIntoTargetGroup({
         tabId: request.tabId,
         groupId: request.groupId,
-        ref: {
-          id: `term-${uuidv4()}`,
-          instanceId: uuidv4(),
-          type: "terminal",
-          name: DEFAULT_TERMINAL_TITLE,
-          titleSource: "default",
-          hostId: target.hostId,
-          cwd: target.cwd,
-        },
+        ref: buildTerminalTileRef(target),
       });
       close();
     },
