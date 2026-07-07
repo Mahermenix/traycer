@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
 import { mockRemoteHostEntry } from "@traycer-clients/shared/host-client/mock/mock-host-directory";
 import type { LocalHostSnapshot } from "@traycer-clients/shared/platform/runner-host";
@@ -11,8 +11,10 @@ import {
   HostDirectoryService,
   type HostDirectoryServiceOptions,
 } from "@/lib/host/host-directory-service";
+import { lastSelectedHostKey } from "@/lib/persist";
 
 const HOST_DIRECTORY_REFRESH_POLL_MS = 15_000;
+const LAST_SELECTED_HOST_STORAGE_KEY = lastSelectedHostKey();
 
 const localSnapshot: LocalHostSnapshot = {
   hostId: "desktop-pid-123",
@@ -27,6 +29,24 @@ const localSnapshotNewEndpoint: LocalHostSnapshot = {
   ...localSnapshot,
   websocketUrl: "ws://127.0.0.1:4918/rpc",
   pid: 4243,
+};
+
+const rememberedRemoteHostEntry: HostDirectoryEntry = {
+  hostId: "remembered-remote-host",
+  label: "Remembered Remote",
+  kind: "remote",
+  websocketUrl: "wss://remembered-remote.traycer.invalid/rpc",
+  version: "0.0.0-mock",
+  status: "available",
+};
+
+const secondRemoteHostEntry: HostDirectoryEntry = {
+  hostId: "second-remote-host",
+  label: "Second Remote",
+  kind: "remote",
+  websocketUrl: "wss://second-remote.traycer.invalid/rpc",
+  version: "0.0.0-mock",
+  status: "available",
 };
 
 function makeHost(localHost: LocalHostSnapshot | null): MockRunnerHost {
@@ -69,15 +89,24 @@ function setDocumentHidden(hidden: boolean): void {
   });
 }
 
+function rememberHostSelection(hostId: string): void {
+  window.localStorage.setItem(LAST_SELECTED_HOST_STORAGE_KEY, hostId);
+}
+
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
 }
 
+beforeEach(() => {
+  window.localStorage.removeItem(LAST_SELECTED_HOST_STORAGE_KEY);
+});
+
 afterEach(() => {
   for (const directory of directories.splice(0)) {
     directory.dispose();
   }
+  window.localStorage.removeItem(LAST_SELECTED_HOST_STORAGE_KEY);
   if (restoreDocumentHidden !== null) {
     restoreDocumentHidden();
     restoreDocumentHidden = null;
@@ -249,6 +278,157 @@ describe("HostDirectoryService", () => {
     expect(observed).toHaveLength(2);
     expect(observed[0]?.hostId).toBe(mockRemoteHostEntry.hostId);
     expect(observed[1]).toBeNull();
+  });
+
+  it("persists explicit host selection gestures including clear", async () => {
+    const host = makeHost(localSnapshot);
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: () =>
+        Promise.resolve({ kind: "hosts", entries: [mockRemoteHostEntry] }),
+    });
+    await directory.start();
+
+    directory.selectById(mockRemoteHostEntry.hostId);
+    expect(window.localStorage.getItem(LAST_SELECTED_HOST_STORAGE_KEY)).toBe(
+      mockRemoteHostEntry.hostId,
+    );
+
+    directory.selectById(null);
+    expect(
+      window.localStorage.getItem(LAST_SELECTED_HOST_STORAGE_KEY),
+    ).toBeNull();
+  });
+
+  it("restores the persisted host during startup before local default-promotion can bind", async () => {
+    rememberHostSelection(rememberedRemoteHostEntry.hostId);
+    const host = makeHost(localSnapshot);
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: () =>
+        Promise.resolve({
+          kind: "hosts",
+          entries: [rememberedRemoteHostEntry, mockRemoteHostEntry],
+        }),
+    });
+
+    await directory.start();
+
+    expect(directory.getSelected()?.hostId).toBe(
+      rememberedRemoteHostEntry.hostId,
+    );
+    expect(directory.getSelected()?.kind).toBe("remote");
+  });
+
+  it("falls back to the local default synchronously with initial refresh when the persisted host is absent", async () => {
+    rememberHostSelection("offline-remembered-host");
+    const host = makeHost(localSnapshot);
+    const pending: {
+      resolve: ((outcome: RemoteHostFetchOutcome) => void) | null;
+    } = { resolve: null };
+    const fetcher: RemoteHostFetcher = () =>
+      new Promise<RemoteHostFetchOutcome>((resolve) => {
+        pending.resolve = resolve;
+      });
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+
+    const startPromise = directory.start();
+    expect(directory.getSelected()).toBeNull();
+
+    pending.resolve?.({ kind: "hosts", entries: [] });
+    await startPromise;
+
+    expect(directory.getSelected()?.hostId).toBe(localSnapshot.hostId);
+  });
+
+  it("does not switch to a late-arriving persisted host after startup fell back to the local default", async () => {
+    rememberHostSelection(rememberedRemoteHostEntry.hostId);
+    const host = makeHost(localSnapshot);
+    const { fetcher } = queuedFetcher([
+      { kind: "hosts", entries: [] },
+      { kind: "hosts", entries: [rememberedRemoteHostEntry] },
+    ]);
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+
+    await directory.start();
+    expect(directory.getSelected()?.hostId).toBe(localSnapshot.hostId);
+
+    const observed: Array<HostDirectoryEntry | null> = [];
+    directory.onSelectionChange((entry) => {
+      observed.push(entry);
+    });
+
+    await directory.refresh();
+
+    expect(directory.getSelected()?.hostId).toBe(localSnapshot.hostId);
+    expect(observed).toEqual([]);
+  });
+
+  it("uses one post-startup restore attempt when a no-local shell remains unbound", async () => {
+    rememberHostSelection(rememberedRemoteHostEntry.hostId);
+    const host = makeHost(null);
+    const { fetcher } = queuedFetcher([
+      { kind: "hosts", entries: [] },
+      {
+        kind: "hosts",
+        entries: [rememberedRemoteHostEntry, secondRemoteHostEntry],
+      },
+    ]);
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+
+    await directory.start();
+    expect(directory.getSelected()).toBeNull();
+
+    const observed: Array<HostDirectoryEntry | null> = [];
+    directory.onSelectionChange((entry) => {
+      observed.push(entry);
+    });
+
+    await directory.refresh();
+
+    expect(directory.getSelected()?.hostId).toBe(
+      rememberedRemoteHostEntry.hostId,
+    );
+    expect(observed.map((entry) => entry?.hostId ?? null)).toEqual([
+      rememberedRemoteHostEntry.hostId,
+    ]);
+  });
+
+  it("consumes the no-local post-startup restore attempt on the first remote delivery", async () => {
+    rememberHostSelection(rememberedRemoteHostEntry.hostId);
+    const host = makeHost(null);
+    const { fetcher } = queuedFetcher([
+      { kind: "hosts", entries: [] },
+      {
+        kind: "hosts",
+        entries: [mockRemoteHostEntry, secondRemoteHostEntry],
+      },
+      {
+        kind: "hosts",
+        entries: [rememberedRemoteHostEntry, secondRemoteHostEntry],
+      },
+    ]);
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+
+    await directory.start();
+    await directory.refresh();
+    expect(directory.getSelected()).toBeNull();
+
+    await directory.refresh();
+
+    expect(directory.getSelected()).toBeNull();
   });
 
   it("clears stale selection when the selected host is no longer in the directory", async () => {

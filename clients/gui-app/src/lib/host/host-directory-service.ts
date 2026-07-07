@@ -9,9 +9,11 @@ import type {
   LocalHostSnapshot,
 } from "@traycer-clients/shared/platform/runner-host";
 import type { Disposable } from "@traycer-clients/shared/platform/uri-callback";
-import { appLogger } from "@/lib/logger";
+import { appLogger, describeLogError } from "@/lib/logger";
+import { lastSelectedHostKey } from "@/lib/persist";
 
 const HOST_DIRECTORY_REFRESH_POLL_MS = 15_000;
+const LAST_SELECTED_HOST_STORAGE_KEY = lastSelectedHostKey();
 
 export interface HostDirectoryServiceOptions {
   readonly runnerHost: IRunnerHost;
@@ -68,6 +70,17 @@ export class HostDirectoryService implements IHostDirectoryService {
    * auto-promotion until the user chooses again.
    */
   private explicitSelection: ExplicitHostSelection | null = null;
+  /**
+   * Non-null only during `start()`: suppresses default-promotion until the
+   * initial remote refresh has had a chance to resolve the persisted host.
+   */
+  private startupRestoreHostId: string | null = null;
+  /**
+   * One post-startup retry for web/mobile shells that remained fully unbound
+   * after the startup restore attempt. Consumed by the next refresh that
+   * actually delivers at least one remote entry.
+   */
+  private unboundFollowUpRestoreHostId: string | null = null;
   private readonly listeners = new Set<HostDirectoryListener>();
   private readonly selectionListeners = new Set<
     (entry: HostDirectoryEntry | null) => void
@@ -105,6 +118,7 @@ export class HostDirectoryService implements IHostDirectoryService {
       return;
     }
     this.started = true;
+    this.preparePersistedSelectionRestore();
     this.localSubscription = this.runnerHost.onLocalHostChange((snapshot) => {
       this.localEntry = toLocalEntry(snapshot);
       appLogger.debug("[host-directory] local host snapshot changed", {
@@ -124,6 +138,7 @@ export class HostDirectoryService implements IHostDirectoryService {
     if (!this.isStarted()) {
       return;
     }
+    this.resolveStartupRestore();
     this.startRefreshPolling();
   }
 
@@ -163,6 +178,9 @@ export class HostDirectoryService implements IHostDirectoryService {
       }
       return this.findById(this.explicitSelection.hostId);
     }
+    if (this.startupRestoreHostId !== null) {
+      return this.findById(this.startupRestoreHostId);
+    }
     return this.getDefaultEntry();
   }
 
@@ -171,11 +189,19 @@ export class HostDirectoryService implements IHostDirectoryService {
       hostId,
       clearingSelection: hostId === null,
     });
+    this.startupRestoreHostId = null;
+    this.unboundFollowUpRestoreHostId = null;
     this.explicitSelection = { hostId };
     if (hostId === null) {
+      // An explicit clear erases the remembered host entirely rather than
+      // persisting a "cleared" marker - otherwise every future launch would
+      // restore that marker and stay unbound forever instead of falling back
+      // to today's getDefaultEntry() behavior.
+      removePersistedHostSelection();
       this.setSelected(null);
       return;
     }
+    persistHostSelection(hostId);
     const entry = this.findById(hostId);
     this.setSelected(entry);
   }
@@ -307,6 +333,9 @@ export class HostDirectoryService implements IHostDirectoryService {
       return this.snapshot();
     }
     this.remoteEntries = outcome.kind === "hosts" ? outcome.entries : [];
+    if (outcome.kind === "hosts") {
+      this.consumeUnboundFollowUpRestore(outcome.entries);
+    }
     this.reconcileSelection();
     this.emit();
     appLogger.debug("[host-directory] refresh complete", {
@@ -344,6 +373,66 @@ export class HostDirectoryService implements IHostDirectoryService {
     }
   }
 
+  private preparePersistedSelectionRestore(): void {
+    this.startupRestoreHostId = null;
+    this.unboundFollowUpRestoreHostId = null;
+    if (this.explicitSelection !== null) {
+      return;
+    }
+    this.startupRestoreHostId = loadPersistedHostSelection();
+  }
+
+  private resolveStartupRestore(): void {
+    const hostId = this.startupRestoreHostId;
+    if (hostId === null) {
+      return;
+    }
+    this.startupRestoreHostId = null;
+    if (this.restorePersistedHostById(hostId)) {
+      return;
+    }
+    this.reconcileSelection();
+    if (
+      this.selected === null &&
+      this.explicitSelection === null &&
+      this.localEntry === null &&
+      this.getDefaultEntry() === null
+    ) {
+      this.unboundFollowUpRestoreHostId = hostId;
+    }
+  }
+
+  private consumeUnboundFollowUpRestore(
+    remoteEntries: readonly HostDirectoryEntry[],
+  ): void {
+    const hostId = this.unboundFollowUpRestoreHostId;
+    if (hostId === null) {
+      return;
+    }
+    if (remoteEntries.length === 0) {
+      return;
+    }
+    this.unboundFollowUpRestoreHostId = null;
+    if (this.selected !== null || this.explicitSelection !== null) {
+      return;
+    }
+    this.restorePersistedHostById(hostId);
+  }
+
+  private restorePersistedHostById(hostId: string): boolean {
+    const entry = this.findById(hostId);
+    if (entry === null) {
+      return false;
+    }
+    this.explicitSelection = { hostId };
+    this.unboundFollowUpRestoreHostId = null;
+    appLogger.debug("[host-directory] persisted host selection restored", {
+      hostId,
+    });
+    this.setSelected(entry);
+    return true;
+  }
+
   private reconcileSelection(): void {
     if (this.selected !== null) {
       const fresh = this.findById(this.selected.hostId);
@@ -364,6 +453,9 @@ export class HostDirectoryService implements IHostDirectoryService {
       }
       return;
     }
+    if (this.startupRestoreHostId !== null) {
+      return;
+    }
     if (this.explicitSelection !== null) {
       if (this.explicitSelection.hostId === null) {
         return;
@@ -376,6 +468,7 @@ export class HostDirectoryService implements IHostDirectoryService {
     }
     const defaultEntry = this.getDefaultEntry();
     if (defaultEntry !== null) {
+      this.unboundFollowUpRestoreHostId = null;
       this.setSelected(defaultEntry);
     }
   }
@@ -390,6 +483,48 @@ export class HostDirectoryService implements IHostDirectoryService {
 
 interface ExplicitHostSelection {
   readonly hostId: string | null;
+}
+
+function loadPersistedHostSelection(): string | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+  try {
+    const raw = window.localStorage.getItem(LAST_SELECTED_HOST_STORAGE_KEY);
+    return raw !== null && raw.length > 0 ? raw : null;
+  } catch (error) {
+    appLogger.warn("[host-directory] persisted host selection load failed", {
+      storageKey: LAST_SELECTED_HOST_STORAGE_KEY,
+      error: describeLogError(error),
+    });
+    return null;
+  }
+}
+
+function persistHostSelection(hostId: string): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.setItem(LAST_SELECTED_HOST_STORAGE_KEY, hostId);
+  } catch (error) {
+    appLogger.warn("[host-directory] persisted host selection write failed", {
+      storageKey: LAST_SELECTED_HOST_STORAGE_KEY,
+      hostId,
+      error: describeLogError(error),
+    });
+  }
+}
+
+function removePersistedHostSelection(): void {
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(LAST_SELECTED_HOST_STORAGE_KEY);
+  } catch {
+    // Best-effort cleanup; the load failure path already logged context.
+  }
 }
 
 function toLocalEntry(

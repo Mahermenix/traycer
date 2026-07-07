@@ -4,6 +4,7 @@ import {
   composerHarnessMemoryKey,
   composerRunSettingsKey,
   epicCanvasKey,
+  lastSelectedHostKey,
   openEpicKey,
   persistKey,
   scopeBucket,
@@ -123,6 +124,10 @@ describe("persist key builders — output-preserving against current source", ()
     // Today's arg order is (userId, epicId); the emitted string must stay
     // `…:open-epic:{bucket}:{epicId}`.
     expect(openEpicKey(null, "e1")).toBe("traycer-gui-app:open-epic:anon:e1");
+  });
+
+  it("emits the app-level last-selected-host localStorage key", () => {
+    expect(lastSelectedHostKey()).toBe("traycer-gui-app:last-selected-host");
   });
 
   it("has no two catalog entries sharing a leaf", () => {

@@ -5,6 +5,7 @@ export {
   composerHarnessMemoryKey,
   composerRunSettingsKey,
   epicCanvasKey,
+  lastSelectedHostKey,
   openEpicKey,
   persistKey,
   scopeBucket,
