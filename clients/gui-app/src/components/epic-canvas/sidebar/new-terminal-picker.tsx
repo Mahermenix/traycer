@@ -8,9 +8,9 @@
  * `runningDir` persisted as the PTY working directory.
  *
  * Host+folder selection itself lives in `NewTerminalPickerBody`, shared with
- * the ⌘K palette's "Create new terminal" dialog. `PopoverContent` only mounts
- * this body while `isOpen`, so its state (explicit row, launch latch) starts
- * fresh every open without an imperative reset.
+ * the Cmd+K palette's "Create new terminal" dialog. `PopoverContent` only
+ * mounts this body while `isOpen`, so its state (explicit row, launch latch)
+ * starts fresh every open without an imperative reset.
  */
 import { useCallback, useState } from "react";
 import { v4 as uuidv4 } from "uuid";

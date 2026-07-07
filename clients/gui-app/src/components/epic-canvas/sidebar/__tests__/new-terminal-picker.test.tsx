@@ -14,13 +14,12 @@ const selectById = vi.fn();
 const refreshDirectory = vi.fn(() => Promise.resolve([]));
 
 interface BindingsQueryStub {
-  readonly data: { readonly rows: WorktreeBindingSelectorRow[] } | undefined;
-  readonly isPending: boolean;
-  readonly isError: boolean;
-}
-
-interface DefaultCwdQueryStub {
-  readonly data: { readonly cwd: string } | undefined;
+  readonly data:
+    | {
+        readonly rows: WorktreeBindingSelectorRow[];
+        readonly folderlessCwd: string | null;
+      }
+    | undefined;
   readonly isPending: boolean;
   readonly isError: boolean;
 }
@@ -29,20 +28,8 @@ const bindingsQuery = vi.hoisted(() => ({
   current: null as BindingsQueryStub | null,
 }));
 
-const defaultCwdQuery: { current: DefaultCwdQueryStub } = vi.hoisted(() => ({
-  current: {
-    data: { cwd: "/Users/tgill" },
-    isPending: false,
-    isError: false,
-  },
-}));
-
 vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
   useWorktreeListBindingsForEpic: () => bindingsQuery.current,
-}));
-
-vi.mock("@/hooks/terminal/use-terminal-default-cwd-query", () => ({
-  useTerminalDefaultCwd: () => defaultCwdQuery.current,
 }));
 
 function stubLoadedBindings(): void {
@@ -52,6 +39,7 @@ function stubLoadedBindings(): void {
         makeRow("host-1", "/work/traycer", "main", null),
         makeRow("host-2", "/work/traycer-wt/feature-x", "feature-x", null),
       ],
+      folderlessCwd: "/Users/tgill",
     },
     isPending: false,
     isError: false,
@@ -130,11 +118,6 @@ describe("<NewTerminalPicker />", () => {
     selectById.mockClear();
     refreshDirectory.mockClear();
     stubLoadedBindings();
-    defaultCwdQuery.current = {
-      data: { cwd: "/Users/tgill" },
-      isPending: false,
-      isError: false,
-    };
   });
 
   it("opens a popover with the host section and workspace rows", () => {
@@ -175,6 +158,7 @@ describe("<NewTerminalPicker />", () => {
           makeRow("host-2", "/work/traycer-wt/feature-x", "feature-x", null),
           makeRow("host-1", "/work/traycer", "main", null),
         ],
+        folderlessCwd: "/Users/tgill",
       },
       isPending: false,
       isError: false,
@@ -199,6 +183,7 @@ describe("<NewTerminalPicker />", () => {
           makeRow("host-1", "/work/traycer", "main", "missing_worktree_path"),
           makeRow("host-2", "/work/traycer-wt/feature-x", "feature-x", null),
         ],
+        folderlessCwd: "/Users/tgill",
       },
       isPending: false,
       isError: false,
@@ -222,6 +207,7 @@ describe("<NewTerminalPicker />", () => {
           makeRow("host-1", "/work/traycer", "main", "missing_worktree_path"),
           makeRow("host-2", "/work/traycer-wt/feature-x", "feature-x", null),
         ],
+        folderlessCwd: "/Users/tgill",
       },
       isPending: false,
       isError: false,
@@ -250,6 +236,7 @@ describe("<NewTerminalPicker />", () => {
             "setup_failed",
           ),
         ],
+        folderlessCwd: "/Users/tgill",
       },
       isPending: false,
       isError: false,
@@ -268,7 +255,7 @@ describe("<NewTerminalPicker />", () => {
 
   it("launches a terminal in the host default cwd when no workspaces are bound", () => {
     bindingsQuery.current = {
-      data: { rows: [] },
+      data: { rows: [], folderlessCwd: "/Users/tgill" },
       isPending: false,
       isError: false,
     };
@@ -293,22 +280,14 @@ describe("<NewTerminalPicker />", () => {
     expect(terminals[0].cwd).toBe("/Users/tgill");
   });
 
-  it("keeps Launch disabled while folderless default cwd is loading", () => {
+  it("keeps Launch disabled while workspace bindings are loading", () => {
     bindingsQuery.current = {
-      data: { rows: [] },
-      isPending: false,
-      isError: false,
-    };
-    defaultCwdQuery.current = {
       data: undefined,
       isPending: true,
       isError: false,
     };
     const tabId = openPicker();
 
-    expect(
-      screen.getByTestId("new-terminal-folderless-cwd-pending"),
-    ).toBeDefined();
     expect(
       screen.getByRole("button", { name: "Launch" }).hasAttribute("disabled"),
     ).toBe(true);
@@ -320,16 +299,13 @@ describe("<NewTerminalPicker />", () => {
     expect(terminals).toHaveLength(0);
   });
 
-  it("keeps Launch disabled when folderless default cwd fails", () => {
+  it("keeps Launch disabled when the host cannot resolve a folderless cwd", () => {
+    // A v1.0 host predates folderless workspaces; the bridged response
+    // carries `folderlessCwd: null`.
     bindingsQuery.current = {
-      data: { rows: [] },
+      data: { rows: [], folderlessCwd: null },
       isPending: false,
       isError: false,
-    };
-    defaultCwdQuery.current = {
-      data: undefined,
-      isPending: false,
-      isError: true,
     };
     const tabId = openPicker();
 

@@ -17,7 +17,12 @@ import { useNewTerminalModalOpenStore } from "@/stores/epics/new-terminal-modal-
 const selectById = vi.fn();
 
 interface BindingsQueryStub {
-  readonly data: { readonly rows: WorktreeBindingSelectorRow[] } | undefined;
+  readonly data:
+    | {
+        readonly rows: WorktreeBindingSelectorRow[];
+        readonly folderlessCwd: string | null;
+      }
+    | undefined;
   readonly isPending: boolean;
   readonly isError: boolean;
 }
@@ -28,18 +33,6 @@ const bindingsQuery = vi.hoisted(() => ({
 
 vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
   useWorktreeListBindingsForEpic: () => bindingsQuery.current,
-}));
-
-// Bindings are never empty in these tests, so the folderless path never
-// activates - stubbed only to keep `NewTerminalPickerBody` from reaching the
-// real host-query machinery (which needs a `QueryClientProvider` this test
-// doesn't set up).
-vi.mock("@/hooks/terminal/use-terminal-default-cwd-query", () => ({
-  useTerminalDefaultCwd: () => ({
-    data: undefined,
-    isPending: false,
-    isError: false,
-  }),
 }));
 
 vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
@@ -107,6 +100,7 @@ function stubLoadedBindings(): void {
         makeRow("host-1", "/work/traycer", "main", true),
         makeRow("host-2", "/work/traycer-wt/feature-x", "feature-x", false),
       ],
+      folderlessCwd: "/Users/tgill",
     },
     isPending: false,
     isError: false,
