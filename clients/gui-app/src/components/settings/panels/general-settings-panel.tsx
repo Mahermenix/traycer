@@ -345,6 +345,7 @@ function SettingsFileEditSnapshotsSection() {
     HostRpcRegistry,
     "snapshots.getLocalStorageSize"
   >({
+    cacheKeyIdentity: undefined,
     client,
     method: "snapshots.getLocalStorageSize",
     params: SNAPSHOTS_LOCAL_STORAGE_PARAMS,

@@ -30,6 +30,18 @@ vi.mock("@/hooks/worktree/use-worktree-list-bindings-for-epic-query", () => ({
   useWorktreeListBindingsForEpic: () => bindingsQuery.current,
 }));
 
+// Bindings are never empty in these tests, so the folderless path never
+// activates - stubbed only to keep `NewTerminalPickerBody` from reaching the
+// real host-query machinery (which needs a `QueryClientProvider` this test
+// doesn't set up).
+vi.mock("@/hooks/terminal/use-terminal-default-cwd-query", () => ({
+  useTerminalDefaultCwd: () => ({
+    data: undefined,
+    isPending: false,
+    isError: false,
+  }),
+}));
+
 vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
   useHostDirectoryList: () => ({
     data: [

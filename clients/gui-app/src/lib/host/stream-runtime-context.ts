@@ -1,5 +1,6 @@
-import { createContext, use } from "react";
+import { createContext, use, useCallback, useSyncExternalStore } from "react";
 import type { IHostStreamClient } from "@traycer-clients/shared/host-transport/host-stream-client";
+import type { StreamMethodSupport } from "@traycer-clients/shared/host-transport/ws-stream-client";
 import type { HostStreamRpcRegistry } from "@traycer/protocol/host/registry";
 
 /**
@@ -21,4 +22,27 @@ export const StreamRuntimeContext = createContext<StreamRuntimeBinding | null>(
 export function useWsStreamClient(): IHostStreamClient<HostStreamRpcRegistry> | null {
   const value = use(StreamRuntimeContext);
   return value === null ? null : value.wsStreamClient;
+}
+
+export function useStreamMethodSupport(
+  method: keyof HostStreamRpcRegistry & string,
+): StreamMethodSupport | null {
+  const value = use(StreamRuntimeContext);
+  const client = value?.wsStreamClient ?? null;
+  const subscribe = useCallback(
+    (callback: () => void) => {
+      if (client === null) {
+        return () => undefined;
+      }
+      return client.subscribeMethodSupport(callback);
+    },
+    [client],
+  );
+  const getSnapshot = useCallback(() => {
+    if (client === null) {
+      return null;
+    }
+    return client.getMethodSupport(method);
+  }, [client, method]);
+  return useSyncExternalStore(subscribe, getSnapshot, () => null);
 }

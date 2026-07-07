@@ -1,5 +1,6 @@
 import type { VersionedStreamRpcRegistry } from "@traycer/protocol/framework/versioned-stream-rpc";
 import type { IStreamClient } from "./i-stream-client";
+import type { StreamMethodSupport } from "./ws-stream-client";
 
 /**
  * The stream-client lifecycle surface the app-wide/durable provider tree
@@ -29,4 +30,17 @@ export interface IHostStreamClient<
    * machinery already owns reconnection.
    */
   reconnectAll(reason: string): void;
+  /**
+   * Learned per-method compatibility with the connected host, keyed by
+   * stream method name. `"unknown"` until a subscribe attempt resolves.
+   * `RemoteStreamClient` always reports `"unknown"` today - the mux session
+   * surfaces an incompatible method as a fatal error on that one stream
+   * rather than a cacheable pre-check, so remote hosts don't yet get the
+   * degrade-quietly treatment `WsStreamClient` provides for local hosts.
+   */
+  getMethodSupport<Method extends keyof Registry & string>(
+    method: Method,
+  ): StreamMethodSupport;
+  /** Notified whenever any method's `getMethodSupport` result changes. */
+  subscribeMethodSupport(listener: () => void): () => void;
 }

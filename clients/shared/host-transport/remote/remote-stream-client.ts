@@ -2,7 +2,7 @@ import type { VersionedRpcRegistry } from "@traycer/protocol/framework/index";
 import type { VersionedStreamRpcRegistry } from "@traycer/protocol/framework/versioned-stream-rpc";
 import type { IHostStreamClient } from "../host-stream-client";
 import type { IStreamSession } from "../i-stream-session";
-import type { ParamsOf } from "../ws-stream-client";
+import type { ParamsOf, StreamMethodSupport } from "../ws-stream-client";
 import type { IRemoteSession } from "./remote-session";
 
 /**
@@ -52,4 +52,21 @@ export class RemoteStreamClient<
    * resume/backoff loop (Architecture §3) already owns reconnection.
    */
   reconnectAll(_reason: string): void {}
+
+  /**
+   * Always `"unknown"` (see {@link IHostStreamClient.getMethodSupport}): the
+   * mux session resolves an incompatible method as a fatal error on that
+   * stream's subscribe attempt, not a queryable pre-check, so there is no
+   * learned-support cache to report here yet.
+   */
+  getMethodSupport<Method extends keyof StreamRegistry & string>(
+    _method: Method,
+  ): StreamMethodSupport {
+    return "unknown";
+  }
+
+  /** No-op: {@link getMethodSupport} never changes, so nothing to notify. */
+  subscribeMethodSupport(_listener: () => void): () => void {
+    return () => {};
+  }
 }

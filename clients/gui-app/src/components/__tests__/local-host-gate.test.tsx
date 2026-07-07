@@ -292,6 +292,7 @@ function mountGateWithRuntime(
 function HostBackedTasksProbe(): ReactNode {
   const client = useHostClient();
   useHostQuery<HostRpcRegistry, "epic.listTasks">({
+    cacheKeyIdentity: undefined,
     client,
     method: "epic.listTasks",
     params: {

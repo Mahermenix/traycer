@@ -69,6 +69,7 @@ function agent(id: string, title: string): TuiAgentProjection {
     userId: null,
     hostId: "agent-host",
     workspaceFolders: [],
+    workspaceMode: undefined,
     model: null,
     reasoningEffort: null,
     agentMode: "regular",

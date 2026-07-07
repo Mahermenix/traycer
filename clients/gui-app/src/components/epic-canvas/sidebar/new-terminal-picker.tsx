@@ -15,14 +15,16 @@
 import { useCallback, useState } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { Plus } from "lucide-react";
-import type { WorktreeBindingSelectorRow } from "@traycer/protocol/host";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { NewTerminalPickerBody } from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
+import {
+  NewTerminalPickerBody,
+  type TerminalLaunchTarget,
+} from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
 import { DEFAULT_TERMINAL_TITLE } from "@/lib/terminals/terminal-title";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 
@@ -36,15 +38,15 @@ export function NewTerminalPicker(props: NewTerminalPickerProps) {
   const openTileInTab = useEpicCanvasStore((s) => s.openTileInTab);
 
   const handleLaunch = useCallback(
-    (row: WorktreeBindingSelectorRow) => {
+    (target: TerminalLaunchTarget) => {
       openTileInTab(props.tabId, {
         id: `term-${uuidv4()}`,
         instanceId: uuidv4(),
         type: "terminal",
         name: DEFAULT_TERMINAL_TITLE,
         titleSource: "default",
-        hostId: row.hostId,
-        cwd: row.runningDir,
+        hostId: target.hostId,
+        cwd: target.cwd,
       });
       setIsOpen(false);
     },

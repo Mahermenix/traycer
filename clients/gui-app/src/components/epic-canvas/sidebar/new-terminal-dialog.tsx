@@ -16,7 +16,6 @@
 import { useCallback, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { XIcon } from "lucide-react";
-import type { WorktreeBindingSelectorRow } from "@traycer/protocol/host";
 import {
   Dialog,
   DialogClose,
@@ -24,7 +23,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { NewTerminalPickerBody } from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
+import {
+  NewTerminalPickerBody,
+  type TerminalLaunchTarget,
+} from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
 import { openTileIntoTargetGroup } from "@/lib/commands/actions";
 import { DEFAULT_TERMINAL_TITLE } from "@/lib/terminals/terminal-title";
 import { useNewTerminalModalOpenStore } from "@/stores/epics/new-terminal-modal-open-store";
@@ -58,7 +60,7 @@ export function NewTerminalDialogHost(props: {
   }, [props.epicId, props.tabId]);
 
   const handleLaunch = useCallback(
-    (row: WorktreeBindingSelectorRow) => {
+    (target: TerminalLaunchTarget) => {
       if (request === null) return;
       openTileIntoTargetGroup({
         tabId: request.tabId,
@@ -69,8 +71,8 @@ export function NewTerminalDialogHost(props: {
           type: "terminal",
           name: DEFAULT_TERMINAL_TITLE,
           titleSource: "default",
-          hostId: row.hostId,
-          cwd: row.runningDir,
+          hostId: target.hostId,
+          cwd: target.cwd,
         },
       });
       close();

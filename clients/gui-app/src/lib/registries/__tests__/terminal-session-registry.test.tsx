@@ -133,6 +133,8 @@ function fakeWsStreamClient(): IHostStreamClient<HostStreamRpcRegistry> {
     isClosed: () => false,
     notifyBearerRotated: () => undefined,
     reconnectAll: () => undefined,
+    getMethodSupport: () => "unknown",
+    subscribeMethodSupport: () => () => undefined,
   };
 }
 

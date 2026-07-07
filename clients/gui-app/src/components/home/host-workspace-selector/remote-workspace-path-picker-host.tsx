@@ -98,6 +98,7 @@ function RemoteWorkspacePathPickerBody(
     client,
     method: "workspace.prepareFolders",
     params: { operation: "getHomeDir", folderPaths: null, path: null },
+    cacheKeyIdentity: undefined,
     options: {},
   });
   const recentQuery = useHostQuery<HostRpcRegistry, "workspace.prepareFolders">(
@@ -109,6 +110,7 @@ function RemoteWorkspacePathPickerBody(
         folderPaths: null,
         path: null,
       },
+      cacheKeyIdentity: undefined,
       options: {},
     },
   );

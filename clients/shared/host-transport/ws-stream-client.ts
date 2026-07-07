@@ -118,6 +118,8 @@ export class WsStreamClient<
 > implements IStreamClient<Registry> {
   private readonly options: WsStreamClientOptions<Registry>;
   private readonly ownedSessions = new Set<StreamSession<Registry>>();
+  private readonly methodSupport = new Map<string, StreamMethodSupport>();
+  private readonly methodSupportListeners = new Set<() => void>();
   private closed = false;
 
   constructor(options: WsStreamClientOptions<Registry>) {
@@ -166,6 +168,9 @@ export class WsStreamClient<
       initialBackoffMs: this.options.initialBackoffMs,
       maxBackoffMs: this.options.maxBackoffMs,
       onDispose: () => removeSession(),
+      onMethodSupport: (nextMethod, support) => {
+        this.setMethodSupport(nextMethod, support);
+      },
     });
     removeSession = () => {
       this.ownedSessions.delete(session);
@@ -193,6 +198,19 @@ export class WsStreamClient<
    */
   isClosed(): boolean {
     return this.closed;
+  }
+
+  getMethodSupport<Method extends keyof Registry & string>(
+    method: Method,
+  ): StreamMethodSupport {
+    return this.methodSupport.get(method) ?? "unknown";
+  }
+
+  subscribeMethodSupport(listener: () => void): () => void {
+    this.methodSupportListeners.add(listener);
+    return () => {
+      this.methodSupportListeners.delete(listener);
+    };
   }
 
   /**
@@ -234,6 +252,17 @@ export class WsStreamClient<
       session.forceReconnect(reason);
     }
   }
+
+  private setMethodSupport(method: string, support: StreamMethodSupport): void {
+    const previous = this.methodSupport.get(method) ?? "unknown";
+    if (previous === support) {
+      return;
+    }
+    this.methodSupport.set(method, support);
+    for (const listener of Array.from(this.methodSupportListeners)) {
+      listener();
+    }
+  }
 }
 
 /**
@@ -244,6 +273,8 @@ export type ParamsOf<
   Registry extends VersionedStreamRpcRegistry,
   Method extends keyof Registry & string,
 > = ExtractOpenRequest<Registry[Method]>;
+
+export type StreamMethodSupport = "unknown" | "supported" | "unsupported";
 
 type ExtractOpenRequest<MethodRegistry> =
   MethodRegistry extends Readonly<Record<number, infer Line>>
@@ -277,6 +308,10 @@ interface StreamSessionOptions<Registry extends VersionedStreamRpcRegistry> {
   readonly initialBackoffMs: number;
   readonly maxBackoffMs: number;
   readonly onDispose: () => void;
+  readonly onMethodSupport: (
+    method: keyof Registry & string,
+    support: StreamMethodSupport,
+  ) => void;
 }
 
 /**
@@ -699,6 +734,7 @@ class StreamSession<
     }
 
     if (!compat.ok) {
+      this.config.onMethodSupport(this.config.method, "unsupported");
       const terminalFrame: ClientStreamFatalErrorFrame = {
         kind: "fatalError",
         details: compat.details,
@@ -733,6 +769,7 @@ class StreamSession<
       this.onSendFailure(socket);
       return;
     }
+    this.config.onMethodSupport(this.config.method, "supported");
     this.phase = "subscribed";
     this.reconnectAttempt = 0;
     this.noProgressUnauthorizedReconnects = 0;
