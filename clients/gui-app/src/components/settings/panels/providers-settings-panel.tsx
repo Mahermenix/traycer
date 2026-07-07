@@ -66,6 +66,7 @@ import { ProviderAuthBadge, ProviderAuthLine } from "./provider-auth-display";
 import { EnvOverrideEditor } from "./env-override-editor";
 import { TraycerSubscriptionSection } from "./traycer-subscription-section";
 import { ProviderRateLimitForProvider } from "./provider-rate-limit-section";
+import { settingsHostOptionLabel } from "./settings-host-labels";
 
 type ProviderId = ProviderCliState["providerId"];
 type ProvidersListQuery = UseQueryResult<
@@ -290,17 +291,12 @@ function ProvidersHostSelect(props: {
       <SelectContent>
         {props.hosts.map((host) => (
           <SelectItem key={host.hostId} value={host.hostId}>
-            {hostOptionLabel(host)}
+            {settingsHostOptionLabel(host)}
           </SelectItem>
         ))}
       </SelectContent>
     </Select>
   );
-}
-
-function hostOptionLabel(host: HostDirectoryEntry): string {
-  const label = host.label.length > 0 ? host.label : host.hostId;
-  return host.status === "unavailable" ? `${label} (offline)` : label;
 }
 
 function ProvidersSettingsPanelInner({

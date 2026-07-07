@@ -22,7 +22,8 @@ import type { CommandContext, CommandItem } from "@/lib/commands/types";
 export function useChatsOpenerItems(
   ctx: CommandContext,
 ): ReadonlyArray<CommandItem> {
-  const defaultHostId = useReactiveActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
+  const activeHostId = useReactiveActiveHostId();
+  const defaultHostId = activeHostId ?? UNKNOWN_HOST_PLACEHOLDER;
   const projection = useActiveEpicProjection(ctx.activeEpicId);
   const directoryList = useHostDirectoryList();
   const hostLabelById = useMemo(() => {
@@ -57,9 +58,15 @@ export function useChatsOpenerItems(
       const chat = projection.chats.byId[id];
       // A chat with no recorded hostId falls back to (and thus matches) the
       // active host, so only a real, differing hostId ever earns a badge.
+      // Requires `activeHostId` to be genuinely resolved first - while it's
+      // still `null` (boot, host reconnect window) `defaultHostId` would be
+      // the `UNKNOWN_HOST_PLACEHOLDER` sentinel, which no real hostId can
+      // ever equal, false-badging every chat as cross-host.
       const hostBadge =
-        chat.hostId !== null && chat.hostId !== defaultHostId
-          ? (hostLabelById.get(chat.hostId) ?? chat.hostId)
+        activeHostId !== null &&
+        chat.hostId !== null &&
+        chat.hostId !== activeHostId
+          ? chatHostBadgeLabel(hostLabelById, chat.hostId)
           : null;
       return openerExistingLeaf(
         "chats",
@@ -76,5 +83,14 @@ export function useChatsOpenerItems(
       );
     });
     return [newChat, ...existing];
-  }, [ctx, projection, defaultHostId, hostLabelById]);
+  }, [ctx, projection, activeHostId, defaultHostId, hostLabelById]);
+}
+
+/** Falls back to the raw hostId when the directory has no (or a blank) label for it. */
+function chatHostBadgeLabel(
+  hostLabelById: ReadonlyMap<string, string>,
+  hostId: string,
+): string {
+  const label = hostLabelById.get(hostId);
+  return label !== undefined && label.length > 0 ? label : hostId;
 }

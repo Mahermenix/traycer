@@ -15,8 +15,15 @@
  */
 import { useCallback, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
+import { XIcon } from "lucide-react";
 import type { WorktreeBindingSelectorRow } from "@traycer/protocol/host";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
 import { NewTerminalPickerBody } from "@/components/epic-canvas/sidebar/new-terminal-picker-body";
 import { openTileIntoTargetGroup } from "@/lib/commands/actions";
 import { DEFAULT_TERMINAL_TITLE } from "@/lib/terminals/terminal-title";
@@ -84,6 +91,17 @@ export function NewTerminalDialogHost(props: {
         showCloseButton={false}
         onOpenAutoFocus={(event) => event.preventDefault()}
       >
+        <DialogClose asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Close"
+            className="absolute right-0 top-0 z-10 size-6 -translate-y-1/2 translate-x-1/2 rounded-full border border-border/70 bg-popover text-muted-foreground opacity-70 shadow-sm transition-opacity hover:opacity-100 focus-visible:opacity-100"
+          >
+            <XIcon className="size-3.5" />
+          </Button>
+        </DialogClose>
         <DialogTitle className="sr-only">Create new terminal</DialogTitle>
         {isOpen ? (
           <NewTerminalPickerBody

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
@@ -14,10 +14,7 @@ import { useRunnerHost } from "@/providers/use-runner-host";
 import { useRunnerUninstallTraycer } from "@/hooks/runner/use-runner-uninstall-traycer-mutation";
 import { requestAppQuit } from "@/lib/desktop-app-lifecycle";
 import { useHostQuery, useHostMutation } from "@/hooks/host/use-host-query";
-import { useHostClientFor } from "@/hooks/host/use-host-client-for";
-import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
-import { useHostClient, type HostRpcRegistry } from "@/lib/host";
+import type { HostRpcRegistry } from "@/lib/host";
 import {
   hostQueryKeys,
   runnerMutationKeys,
@@ -43,7 +40,7 @@ import { useAuthStore } from "@/stores/auth/auth-store";
 import { useLocalSnapshotClearStore } from "@/stores/settings/local-snapshot-clear-store";
 import { useOnboardingStore } from "@/stores/onboarding/onboarding-store";
 import { SettingsHostSelect } from "./settings-host-select";
-import { settingsHostLabelFor } from "./settings-host-labels";
+import { useSettingsHostScope } from "./use-settings-host-scope";
 
 const MIGRATION_PROGRESS_LABEL = "Migrating tasks";
 const SNAPSHOTS_LOCAL_STORAGE_PARAMS = {};
@@ -338,23 +335,8 @@ function RemoveTraycerDangerRow(props: {
 
 function SettingsFileEditSnapshotsSection() {
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const defaultClient = useHostClient();
-  const activeHostId = useReactiveActiveHostId();
-  const hostsQuery = useHostDirectoryList();
-  const hosts = useMemo(() => hostsQuery.data ?? [], [hostsQuery.data]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const effectiveId = selectedId ?? activeHostId;
-  const selectedEntry = useMemo(
-    () => hosts.find((entry) => entry.hostId === effectiveId) ?? null,
-    [hosts, effectiveId],
-  );
-  const targetEntry = useMemo(() => {
-    if (effectiveId === null || effectiveId === activeHostId) return null;
-    return selectedEntry;
-  }, [effectiveId, activeHostId, selectedEntry]);
-  const transientClient = useHostClientFor(targetEntry);
-  const client = targetEntry === null ? defaultClient : transientClient;
-  const hostLabel = settingsHostLabelFor(hosts, effectiveId);
+  const { hosts, effectiveId, setSelectedId, hostLabel, status, client } =
+    useSettingsHostScope();
   const queryClient = useQueryClient();
   const currentUserId = useAuthStore(
     (state) => state.contextMetadata?.userId ?? state.profile?.userId ?? null,
@@ -429,6 +411,15 @@ function SettingsFileEditSnapshotsSection() {
                 Host: {hostLabel}
               </span>
             )}
+            {status === "unavailable" ? (
+              <span
+                className="text-ui-xs text-destructive"
+                data-testid="settings-file-edit-snapshots-host-unavailable"
+              >
+                {hostLabel} is no longer available - pick a different host
+                above.
+              </span>
+            ) : null}
             <div
               className="font-mono text-code-xs text-muted-foreground"
               data-testid="settings-local-snapshots-size"

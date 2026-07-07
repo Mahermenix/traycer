@@ -43,6 +43,12 @@ const guideMocks = vi.hoisted(
     setGlobalHostIds: string[];
     resetGlobalHostIds: string[];
     lastTransientTarget: { readonly hostId: string } | null;
+    directoryEntries: ReadonlyArray<{
+      readonly hostId: string;
+      readonly label: string;
+      readonly status: string;
+      readonly websocketUrl: string;
+    }>;
   } => ({
     activeHostId: "local",
     scopedHostId: "local",
@@ -56,16 +62,7 @@ const guideMocks = vi.hoisted(
     setGlobalHostIds: [],
     resetGlobalHostIds: [],
     lastTransientTarget: null,
-  }),
-);
-
-vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => guideMocks.activeHostId,
-}));
-
-vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
-  useHostDirectoryList: () => ({
-    data: [
+    directoryEntries: [
       {
         hostId: "local",
         label: "Local host",
@@ -80,6 +77,14 @@ vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
       },
     ],
   }),
+);
+
+vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
+  useReactiveActiveHostId: () => guideMocks.activeHostId,
+}));
+
+vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
+  useHostDirectoryList: () => ({ data: guideMocks.directoryEntries }),
 }));
 
 vi.mock("@/hooks/host/use-host-client-for", () => ({
@@ -102,6 +107,10 @@ vi.mock("@/lib/host/runtime", async () => {
       hostClient: {
         getActiveHostId: () => guideMocks.activeHostId,
       },
+      directory: { refresh: () => Promise.resolve([]) },
+    }),
+    useHostClient: () => ({
+      getActiveHostId: () => guideMocks.activeHostId,
     }),
   };
 });
@@ -176,6 +185,20 @@ describe("AgentSelectionGuideSection", () => {
     guideMocks.lastTransientTarget = null;
     guideMocks.setGlobalHostIds = [];
     guideMocks.resetGlobalHostIds = [];
+    guideMocks.directoryEntries = [
+      {
+        hostId: "local",
+        label: "Local host",
+        status: "available",
+        websocketUrl: "ws://local.invalid",
+      },
+      {
+        hostId: "remote",
+        label: "Remote host",
+        status: "available",
+        websocketUrl: "ws://remote.invalid",
+      },
+    ];
     guideMocks.setGlobalMutateAsync.mockReset();
     guideMocks.setGlobalMutateAsync.mockResolvedValue({
       content: "claude guide",
@@ -270,6 +293,42 @@ describe("AgentSelectionGuideSection", () => {
       });
     });
     expect(guideMocks.setGlobalHostIds[0]).toBe("remote");
+  });
+
+  it("shows an unavailable notice and stops reading through the active host once the picked host vanishes", async () => {
+    guideMocks.queryDataByHost = {
+      local: { content: "local guide", generatedDefaultContent: "local guide" },
+      remote: {
+        content: "remote guide",
+        generatedDefaultContent: "remote guide",
+      },
+    };
+    const { rerender } = renderPanel();
+
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "Agent instructions host" }),
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "Remote host" }));
+
+    await waitFor(() => {
+      expect(guideMocks.lastTransientTarget?.hostId).toBe("remote");
+    });
+
+    // The picked host is deregistered - it drops out of the directory
+    // entirely, not merely marked unavailable while still listed.
+    guideMocks.directoryEntries = [guideMocks.directoryEntries[0]];
+    rerender(strictPanel());
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          "remote is no longer available. Pick a different host above.",
+        ),
+      ).toBeTruthy();
+    });
+    // The stale local-scoped editor from before the pick must not remain
+    // mounted, silently reading/writing through the active host's client.
+    expect(screen.queryByTestId("agents-selection-guide-input")).toBeNull();
   });
 
   it("reverts through the host reset API instead of sending generated content back", async () => {

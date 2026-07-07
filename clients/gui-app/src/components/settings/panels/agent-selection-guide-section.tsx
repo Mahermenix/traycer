@@ -3,7 +3,7 @@
  * Update that file whenever this settings surface changes.
  */
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef } from "react";
 import { Check, TriangleAlert } from "lucide-react";
 import {
   AGENT_SELECTION_GUIDE_DESCRIPTION,
@@ -12,14 +12,15 @@ import {
 } from "@/components/agent-selection-guide-editor-surface";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
-import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
-import { useHostClientFor } from "@/hooks/host/use-host-client-for";
-import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { useAgentSelectionGuideGlobalQuery } from "@/hooks/agent/use-agent-selection-guide-global-query";
 import { useAgentSelectionGuideSetGlobalMutation } from "@/hooks/agent/use-agent-selection-guide-set-global-mutation";
 import { useAgentSelectionGuideResetGlobalMutation } from "@/hooks/agent/use-agent-selection-guide-reset-global-mutation";
 import { HostRuntimeContext, useHostBinding } from "@/lib/host/runtime";
 import { SettingsHostSelect } from "./settings-host-select";
+import {
+  useSettingsHostScope,
+  type SettingsHostScopeStatus,
+} from "./use-settings-host-scope";
 
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -99,38 +100,36 @@ function agentsGuideEditorReducer(
 }
 
 export function AgentSelectionGuideSection() {
-  const activeHostId = useReactiveActiveHostId();
-  const hostsQuery = useHostDirectoryList();
-  const hosts = useMemo(() => hostsQuery.data ?? [], [hostsQuery.data]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const effectiveId = selectedId ?? activeHostId;
-  const selectedEntry = useMemo(
-    () => hosts.find((entry) => entry.hostId === effectiveId) ?? null,
-    [hosts, effectiveId],
-  );
-  const targetEntry = useMemo(() => {
-    if (effectiveId === null || effectiveId === activeHostId) return null;
-    return selectedEntry;
-  }, [effectiveId, activeHostId, selectedEntry]);
-  const transientClient = useHostClientFor(targetEntry);
+  const scope = useSettingsHostScope();
   const realBinding = useHostBinding();
-  const scopedBinding = useMemo(() => {
-    if (transientClient === null || realBinding === null) return null;
-    return { ...realBinding, hostClient: transientClient };
-  }, [transientClient, realBinding]);
   const hostPicker =
-    hosts.length > 0 ? (
+    scope.hosts.length > 0 ? (
       <SettingsHostSelect
-        hosts={hosts}
-        value={effectiveId}
-        onChange={setSelectedId}
+        hosts={scope.hosts}
+        value={scope.effectiveId}
+        onChange={scope.setSelectedId}
         ariaLabel="Agent instructions host"
       />
-    ) : null;
+    ) : (
+      <span className="text-ui-xs text-muted-foreground">
+        Host: {scope.hostLabel}
+      </span>
+    );
+
+  // Only a fully-resolved override re-provides the scoped client - a
+  // still-connecting or vanished override falls through to
+  // `AgentSelectionGuideSectionInner`'s own status branches instead of
+  // silently reading/writing through the ambient active-host client.
+  const scopedBinding =
+    scope.status === "ready" && realBinding !== null && scope.client !== null
+      ? { ...realBinding, hostClient: scope.client }
+      : null;
 
   const inner = (
     <AgentSelectionGuideSectionInner
-      hostId={effectiveId}
+      hostId={scope.effectiveId}
+      hostLabel={scope.hostLabel}
+      status={scope.status}
       hostPicker={hostPicker}
     />
   );
@@ -144,26 +143,39 @@ export function AgentSelectionGuideSection() {
 
 function AgentSelectionGuideSectionInner(props: {
   readonly hostId: string | null;
+  readonly hostLabel: string;
+  readonly status: SettingsHostScopeStatus;
   readonly hostPicker: ReactNode;
 }) {
-  const { hostId, hostPicker } = props;
+  const { hostId, hostLabel, status, hostPicker } = props;
   // Device-scoped file: remount the editor with fresh content whenever the
   // selected host changes so one machine's edits never carry to another.
+  // The query itself always runs (against whatever client the ambient
+  // context currently provides) - only its result is trusted below, and only
+  // once `status` confirms that client is actually the picked host's.
   const query = useAgentSelectionGuideGlobalQuery();
 
   let panelContent: ReactNode;
-  if (query.isError) {
+  if (status === "unavailable") {
+    panelContent = (
+      <AgentSelectionGuideMessage hostPicker={hostPicker}>
+        <div className="text-ui-sm text-muted-foreground">
+          {hostLabel} is no longer available. Pick a different host above.
+        </div>
+      </AgentSelectionGuideMessage>
+    );
+  } else if (status === "connecting" || query.data === undefined) {
+    panelContent = (
+      <AgentSelectionGuideMessage hostPicker={hostPicker}>
+        <EditorSkeleton />
+      </AgentSelectionGuideMessage>
+    );
+  } else if (query.isError) {
     panelContent = (
       <AgentSelectionGuideMessage hostPicker={hostPicker}>
         <div className="text-ui-sm text-muted-foreground">
           Couldn't load agent instructions for this host.
         </div>
-      </AgentSelectionGuideMessage>
-    );
-  } else if (query.data === undefined) {
-    panelContent = (
-      <AgentSelectionGuideMessage hostPicker={hostPicker}>
-        <EditorSkeleton />
       </AgentSelectionGuideMessage>
     );
   } else {
@@ -172,6 +184,7 @@ function AgentSelectionGuideSectionInner(props: {
         <AgentSelectionGuideHostPicker hostPicker={hostPicker} />
         <AgentsGuideEditor
           key={hostId}
+          hostLabel={hostLabel}
           initialContent={query.data.content}
           generatedDefaultContent={query.data.generatedDefaultContent}
         />
@@ -205,30 +218,29 @@ function AgentSelectionGuideMessage(props: {
       aria-labelledby="agent-selection-guide-heading"
       className="flex flex-col gap-3"
     >
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2
-            id="agent-selection-guide-heading"
-            className="text-ui-md font-semibold text-foreground"
-          >
-            {AGENT_SELECTION_GUIDE_TITLE}
-          </h2>
-          <p className="mt-1 text-ui-xs text-muted-foreground">
-            {AGENT_SELECTION_GUIDE_DESCRIPTION}
-          </p>
-        </div>
-        {props.hostPicker}
+      <div className="min-w-0">
+        <h2
+          id="agent-selection-guide-heading"
+          className="text-ui-md font-semibold text-foreground"
+        >
+          {AGENT_SELECTION_GUIDE_TITLE}
+        </h2>
+        <p className="mt-1 text-ui-xs text-muted-foreground">
+          {AGENT_SELECTION_GUIDE_DESCRIPTION}
+        </p>
       </div>
+      <AgentSelectionGuideHostPicker hostPicker={props.hostPicker} />
       {props.children}
     </section>
   );
 }
 
 function AgentsGuideEditor(props: {
+  readonly hostLabel: string;
   readonly initialContent: string;
   readonly generatedDefaultContent: string;
 }) {
-  const { initialContent, generatedDefaultContent } = props;
+  const { hostLabel, initialContent, generatedDefaultContent } = props;
   const setMutation = useAgentSelectionGuideSetGlobalMutation();
   const resetMutation = useAgentSelectionGuideResetGlobalMutation();
   const [state, dispatch] = useReducer(
@@ -389,7 +401,7 @@ function AgentsGuideEditor(props: {
           dispatch({ type: "confirm-open-changed", open })
         }
         title="Revert to default instructions?"
-        description="This replaces your global agent selection instructions with defaults based on the providers currently available on this device. Your custom instructions will be lost. Workspace-level files are not affected."
+        description={`This replaces your global agent selection instructions with defaults based on the providers currently available on ${hostLabel}. Your custom instructions will be lost. Workspace-level files are not affected.`}
         cascadeSummary={null}
         actionLabel="Revert to default"
         isPending={state.resetInFlight}

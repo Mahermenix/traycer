@@ -17,6 +17,8 @@ export interface WorktreeFolderListBodyProps {
   readonly onSelect: (row: WorktreeBindingSelectorRow) => void;
   /** Forwarded to {@link WorktreeFolderList}: auto-focus the search input. */
   readonly autoFocusSearch: boolean;
+  /** Forwarded to {@link WorktreeFolderList}: shown when `rows` is empty. */
+  readonly emptyMessage: string;
 }
 
 export function WorktreeFolderListBody(props: WorktreeFolderListBodyProps) {
@@ -43,6 +45,7 @@ export function WorktreeFolderListBody(props: WorktreeFolderListBodyProps) {
       disabledLabel={formatWorktreeFolderDisabledReason}
       onSelect={props.onSelect}
       autoFocusSearch={props.autoFocusSearch}
+      emptyMessage={props.emptyMessage}
     />
   );
 }

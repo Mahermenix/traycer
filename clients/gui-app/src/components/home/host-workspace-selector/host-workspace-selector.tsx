@@ -104,6 +104,7 @@ import {
   workspaceRunBranchLabel,
 } from "./workspace-run-item";
 import { workspaceFolderName } from "@/lib/worktree/workspace-folder-name";
+import { settingsHostOptionLabel } from "@/components/settings/panels/settings-host-labels";
 
 /**
  * `home` swaps the bound directory; `chat` clones the chat on switch;
@@ -817,7 +818,7 @@ function HostOnlySelect(props: {
             value={host.hostId}
             disabled={props.mode === "locked" || host.status === "unavailable"}
           >
-            {hostOptionLabel(host)}
+            {settingsHostOptionLabel(host)}
           </SelectItem>
         ))}
       </SelectContent>
@@ -847,11 +848,6 @@ function hostSelectOptions(
     },
     ...entries,
   ];
-}
-
-function hostOptionLabel(host: HostDirectoryEntry): string {
-  const label = host.label.length > 0 ? host.label : host.hostId;
-  return host.status === "unavailable" ? `${label} (offline)` : label;
 }
 
 function workspaceRunItemForResolvedFolder(input: {

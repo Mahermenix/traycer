@@ -196,4 +196,23 @@ describe("<NewTerminalDialogHost />", () => {
     expect(useNewTerminalModalOpenStore.getState().request).toBeNull();
     expect(screen.queryByTestId("new-terminal-dialog")).toBeNull();
   });
+
+  it("closes via its own close button, not just Escape or a launch", () => {
+    const { tabId, groupId } = openTabWithGroup();
+    render(<NewTerminalDialogHost epicId="epic-1" tabId={tabId} />);
+
+    act(() => {
+      useNewTerminalModalOpenStore.getState().open({
+        epicId: "epic-1",
+        tabId,
+        groupId,
+      });
+    });
+    expect(screen.getByTestId("new-terminal-dialog")).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+
+    expect(useNewTerminalModalOpenStore.getState().request).toBeNull();
+    expect(screen.queryByTestId("new-terminal-dialog")).toBeNull();
+  });
 });

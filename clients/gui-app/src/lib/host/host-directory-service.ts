@@ -2,6 +2,7 @@ import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/hos
 import type { IHostDirectoryService } from "@traycer-clients/shared/host-client/host-runtime";
 import {
   fetchRemoteHosts,
+  isRemoteHostDirectoryEntry,
   type RemoteHostFetcher,
 } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type {
@@ -99,6 +100,10 @@ export class HostDirectoryService implements IHostDirectoryService {
     if (this.isDocumentHidden()) {
       return;
     }
+    // Resume from hidden: refresh now AND rearm the poll clock from this
+    // point, so the already-scheduled tick (whatever was left of its
+    // pre-hidden schedule) doesn't also fire moments later.
+    this.armPollInterval();
     void this.refresh();
   };
 
@@ -289,16 +294,33 @@ export class HostDirectoryService implements IHostDirectoryService {
       return;
     }
     this.visibilityDocument = typeof document === "undefined" ? null : document;
+    this.armPollInterval();
+    this.visibilityDocument?.addEventListener(
+      "visibilitychange",
+      this.handleVisibilityChange,
+    );
+  }
+
+  /**
+   * (Re)arms the poll timer from now. Called on initial setup and again on
+   * every visibility resume, so a tab that was hidden gets a fresh
+   * `HOST_DIRECTORY_REFRESH_POLL_MS` window from the moment it resumes
+   * instead of also firing whatever tick was already scheduled seconds
+   * later.
+   */
+  private armPollInterval(): void {
+    if (typeof window === "undefined") {
+      return;
+    }
+    if (this.refreshIntervalId !== null) {
+      window.clearInterval(this.refreshIntervalId);
+    }
     this.refreshIntervalId = window.setInterval(() => {
       if (this.isDocumentHidden()) {
         return;
       }
       void this.refresh();
     }, HOST_DIRECTORY_REFRESH_POLL_MS);
-    this.visibilityDocument?.addEventListener(
-      "visibilitychange",
-      this.handleVisibilityChange,
-    );
   }
 
   private stopRefreshPolling(): void {
@@ -412,10 +434,16 @@ export class HostDirectoryService implements IHostDirectoryService {
     if (remoteEntries.length === 0) {
       return;
     }
-    this.unboundFollowUpRestoreHostId = null;
     if (this.selected !== null || this.explicitSelection !== null) {
+      // Something else already resolved a selection while this was pending
+      // (e.g. a manual pick) - the "still fully unbound" precondition no
+      // longer holds, so retire the one-shot rather than keep chasing it.
+      this.unboundFollowUpRestoreHostId = null;
       return;
     }
+    // Only consumed on an actual match - `restorePersistedHostById` clears
+    // it itself on success. A batch that doesn't contain the remembered host
+    // must not burn the one shot; leave it armed for the next delivery.
     this.restorePersistedHostById(hostId);
   }
 
@@ -440,7 +468,7 @@ export class HostDirectoryService implements IHostDirectoryService {
         this.setSelected(null);
         return;
       }
-      if (fresh !== this.selected) {
+      if (!hostDirectoryEntriesEqual(fresh, this.selected)) {
         this.selected = fresh;
         appLogger.debug("[host-directory] effective host selection refreshed", {
           hostId: fresh.hostId,
@@ -525,6 +553,34 @@ function removePersistedHostSelection(): void {
   } catch {
     // Best-effort cleanup; the load failure path already logged context.
   }
+}
+
+/**
+ * Field-equality check mirroring `useHostDirectoryEntry`'s cache (React
+ * hooks land, this class predates React entirely, so the comparison is
+ * reimplemented rather than imported across that boundary). Remote/local
+ * entries are freshly allocated on every fetch/IPC snapshot even when
+ * nothing observable changed, so a bound remote selection would otherwise
+ * reassign and fan out to every `onSelectionChange` handler on every 15s
+ * poll tick for no reason.
+ */
+function hostDirectoryEntriesEqual(
+  a: HostDirectoryEntry,
+  b: HostDirectoryEntry,
+): boolean {
+  return (
+    a.hostId === b.hostId &&
+    a.label === b.label &&
+    a.kind === b.kind &&
+    a.websocketUrl === b.websocketUrl &&
+    a.version === b.version &&
+    a.status === b.status &&
+    remotePublicKeyOf(a) === remotePublicKeyOf(b)
+  );
+}
+
+function remotePublicKeyOf(entry: HostDirectoryEntry): string | null {
+  return isRemoteHostDirectoryEntry(entry) ? entry.publicKey : null;
 }
 
 function toLocalEntry(

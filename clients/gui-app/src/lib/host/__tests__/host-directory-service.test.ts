@@ -403,7 +403,7 @@ describe("HostDirectoryService", () => {
     ]);
   });
 
-  it("consumes the no-local post-startup restore attempt on the first remote delivery", async () => {
+  it("keeps the no-local post-startup restore attempt armed across a near-miss delivery, then consumes it on an actual match", async () => {
     rememberHostSelection(rememberedRemoteHostEntry.hostId);
     const host = makeHost(null);
     const { fetcher } = queuedFetcher([
@@ -423,12 +423,16 @@ describe("HostDirectoryService", () => {
     });
 
     await directory.start();
+    // A delivery that doesn't contain the remembered host must not burn the
+    // one-shot - it stays armed for a later delivery that does.
     await directory.refresh();
     expect(directory.getSelected()).toBeNull();
 
     await directory.refresh();
 
-    expect(directory.getSelected()).toBeNull();
+    expect(directory.getSelected()?.hostId).toBe(
+      rememberedRemoteHostEntry.hostId,
+    );
   });
 
   it("clears stale selection when the selected host is no longer in the directory", async () => {
@@ -729,6 +733,68 @@ describe("HostDirectoryService", () => {
 
     expect(fetchCalls).toBe(2);
     expect(directory.findById(mockRemoteHostEntry.hostId)).not.toBeNull();
+  });
+
+  it("rearms the poll interval on a visibility-triggered refresh instead of also firing the stale pre-hidden schedule", async () => {
+    vi.useFakeTimers();
+    setDocumentHidden(false);
+    const host = makeHost(null);
+    let fetchCalls = 0;
+    const fetcher: RemoteHostFetcher = () => {
+      fetchCalls += 1;
+      return Promise.resolve({ kind: "hosts", entries: [] });
+    };
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+
+    await directory.start();
+    expect(fetchCalls).toBe(1);
+
+    // Resume/visibility-change fires partway through the poll window - this
+    // should rearm the interval from this point, not just refresh once while
+    // leaving the original schedule armed.
+    await vi.advanceTimersByTimeAsync(HOST_DIRECTORY_REFRESH_POLL_MS / 2);
+    document.dispatchEvent(new Event("visibilitychange"));
+    await flushPromises();
+    expect(fetchCalls).toBe(2);
+
+    // The stale pre-reset schedule would have fired here too; the rearmed
+    // schedule must not fire until a full window from the resume point.
+    await vi.advanceTimersByTimeAsync(HOST_DIRECTORY_REFRESH_POLL_MS / 2 + 1);
+    expect(fetchCalls).toBe(2);
+
+    await vi.advanceTimersByTimeAsync(HOST_DIRECTORY_REFRESH_POLL_MS / 2);
+    expect(fetchCalls).toBe(3);
+  });
+
+  it("does not reassign or notify onSelectionChange when a poll delivers a field-identical remote entry for the bound selection", async () => {
+    const host = makeHost(null);
+    const { fetcher } = queuedFetcher([
+      { kind: "hosts", entries: [mockRemoteHostEntry] },
+      // A fresh object literal, byte-identical to `mockRemoteHostEntry` but a
+      // different reference - exactly what a real poll fetch produces even
+      // when nothing about the host actually changed.
+      { kind: "hosts", entries: [{ ...mockRemoteHostEntry }] },
+    ]);
+    const directory = makeDirectory({
+      runnerHost: host,
+      remoteFetcher: fetcher,
+    });
+    await directory.start();
+    expect(directory.getSelected()?.hostId).toBe(mockRemoteHostEntry.hostId);
+    const boundEntry = directory.getSelected();
+
+    const observed: Array<HostDirectoryEntry | null> = [];
+    directory.onSelectionChange((entry) => {
+      observed.push(entry);
+    });
+
+    await directory.refresh();
+
+    expect(directory.getSelected()).toBe(boundEntry);
+    expect(observed).toEqual([]);
   });
 
   it("retains the last-known remote entries and selection when a refresh fails (T20 / audit P4)", async () => {

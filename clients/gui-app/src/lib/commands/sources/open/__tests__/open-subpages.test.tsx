@@ -17,6 +17,9 @@ const spies = vi.hoisted(() => ({
   createChatMutate: vi.fn(),
   createTuiAgent: vi.fn(),
 }));
+const activeHostIdMock = vi.hoisted<{ current: string | null }>(() => ({
+  current: "default-host",
+}));
 const latestConversationWorkspaceSeedMock = vi.hoisted(() => ({
   intent: {
     entries: [
@@ -91,13 +94,16 @@ function artifact(id: string, title: string): ArtifactProjection {
 const FAKE_PROJECTION: EpicProjectedSlices = {
   ...EMPTY_PROJECTED_SLICES,
   chats: {
-    allIds: ["c1", "c2"],
+    allIds: ["c1", "c2", "c3"],
     byId: {
       // Lives on a different host than the active one ("default-host") -
       // should carry a host badge.
       c1: chat("c1", "Chat One", "chat-host"),
       // Lives on the active host - no badge.
       c2: chat("c2", "Chat Two", "default-host"),
+      // Lives on a directory-listed host whose label is blank - the badge
+      // must fall back to the raw hostId, not render an empty chip.
+      c3: chat("c3", "Chat Three", "blank-label-host"),
     },
   },
   tuiAgents: { allIds: ["a1"], byId: { a1: agent("a1", "Agent One") } },
@@ -112,7 +118,7 @@ vi.mock("@/lib/commands/sources/open/use-active-epic-projection", () => ({
   useActiveEpicProjection: () => FAKE_PROJECTION,
 }));
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
-  useReactiveActiveHostId: () => "default-host",
+  useReactiveActiveHostId: () => activeHostIdMock.current,
 }));
 // terminals-subpage reads the host client (passed to the mocked useTerminalList
 // below); stub it so the hook does not require a <HostRuntimeProvider>.
@@ -140,6 +146,14 @@ vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
       {
         hostId: "chat-host",
         label: "Other Mac",
+        kind: "remote",
+        websocketUrl: null,
+        version: null,
+        status: "available",
+      },
+      {
+        hostId: "blank-label-host",
+        label: "",
         kind: "remote",
         websocketUrl: null,
         version: null,
@@ -238,6 +252,7 @@ function lastTileOpen(): OpenTileIntoTargetGroupArgs {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  activeHostIdMock.current = "default-host";
   useNewConversationModalOpenStore.getState().close();
   useNewConversationModalStore.getState().resetForTests();
   useNewTerminalModalOpenStore.getState().close();
@@ -282,6 +297,23 @@ describe("Chats opener sub-page", () => {
     const items = renderItems(useChatsOpenerItems);
     const matched = items.find((i) => i.id === "open:chats:c2");
     expect(matched?.hostBadge).toBeUndefined();
+  });
+
+  it("falls back to the raw hostId when the directory-listed label is blank", () => {
+    const items = renderItems(useChatsOpenerItems);
+    const blankLabel = items.find((i) => i.id === "open:chats:c3");
+    expect(blankLabel?.hostBadge).toBe("blank-label-host");
+  });
+
+  it("does not badge any chat while the active host id is still unresolved", () => {
+    activeHostIdMock.current = null;
+    const items = renderItems(useChatsOpenerItems);
+    const c1 = items.find((i) => i.id === "open:chats:c1");
+    const c2 = items.find((i) => i.id === "open:chats:c2");
+    const c3 = items.find((i) => i.id === "open:chats:c3");
+    expect(c1?.hostBadge).toBeUndefined();
+    expect(c2?.hostBadge).toBeUndefined();
+    expect(c3?.hostBadge).toBeUndefined();
   });
 });
 

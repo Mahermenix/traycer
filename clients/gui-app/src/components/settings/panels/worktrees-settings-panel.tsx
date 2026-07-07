@@ -68,6 +68,7 @@ import {
   type WorktreeDeleteProgressSummary,
 } from "@/components/settings/panels/use-worktree-delete-run";
 import { WorktreeDeleteProgressModal } from "@/components/settings/panels/worktree-delete-progress-modal";
+import { settingsHostOptionLabel } from "./settings-host-labels";
 
 type WorktreeRowDeleteStatus = "deleting";
 const WORKTREES_REFRESH_TIMEOUT_MS = 10_000;
@@ -190,7 +191,7 @@ function HostSelect(props: {
       <SelectContent>
         {props.hosts.map((host) => (
           <SelectItem key={host.hostId} value={host.hostId}>
-            {hostOptionLabel(host)}
+            {settingsHostOptionLabel(host)}
           </SelectItem>
         ))}
       </SelectContent>
@@ -1266,11 +1267,6 @@ function worktreeSelectionCheckboxVisibility(args: {
 
 function branchLabel(entry: WorktreeHostEntry): string {
   return entry.branch ?? "detached HEAD";
-}
-
-function hostOptionLabel(host: HostDirectoryEntry): string {
-  const label = host.label.length > 0 ? host.label : host.hostId;
-  return host.status === "unavailable" ? `${label} (offline)` : label;
 }
 
 function invalidateWorktreeDeleteCaches(

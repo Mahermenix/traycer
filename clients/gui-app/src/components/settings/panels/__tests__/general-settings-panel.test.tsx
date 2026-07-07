@@ -71,6 +71,12 @@ interface HostQueryMocks {
   getActiveHostId: Mock<() => string | null>;
   activeHostId: string;
   lastTransientTarget: { readonly hostId: string } | null;
+  directoryEntries: ReadonlyArray<{
+    readonly hostId: string;
+    readonly label: string;
+    readonly status: string;
+    readonly websocketUrl: string;
+  }>;
 }
 
 interface TestHostClient {
@@ -148,6 +154,20 @@ const hostQueryMocks = vi.hoisted((): HostQueryMocks => ({
   getActiveHostId: vi.fn(() => "host-test"),
   activeHostId: "host-test",
   lastTransientTarget: null,
+  directoryEntries: [
+    {
+      hostId: "host-test",
+      label: "Local host",
+      status: "available",
+      websocketUrl: "ws://local.invalid",
+    },
+    {
+      hostId: "remote-host",
+      label: "Remote host",
+      status: "available",
+      websocketUrl: "ws://remote.invalid",
+    },
+  ],
 }));
 
 vi.mock("@/components/migration/migration-run-handle", () => ({
@@ -163,6 +183,7 @@ vi.mock("@/lib/host", () => ({
   useHostClient: () => ({
     getActiveHostId: hostQueryMocks.getActiveHostId,
   }),
+  useHostBinding: () => null,
 }));
 
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
@@ -170,22 +191,7 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 }));
 
 vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
-  useHostDirectoryList: () => ({
-    data: [
-      {
-        hostId: "host-test",
-        label: "Local host",
-        status: "available",
-        websocketUrl: "ws://local.invalid",
-      },
-      {
-        hostId: "remote-host",
-        label: "Remote host",
-        status: "available",
-        websocketUrl: "ws://remote.invalid",
-      },
-    ],
-  }),
+  useHostDirectoryList: () => ({ data: hostQueryMocks.directoryEntries }),
 }));
 
 vi.mock("@/hooks/host/use-host-client-for", () => ({
@@ -274,6 +280,20 @@ describe("GeneralSettingsPanel", () => {
     hostQueryMocks.activeHostId = "host-test";
     hostQueryMocks.lastTransientTarget = null;
     hostQueryMocks.getActiveHostId.mockReturnValue("host-test");
+    hostQueryMocks.directoryEntries = [
+      {
+        hostId: "host-test",
+        label: "Local host",
+        status: "available",
+        websocketUrl: "ws://local.invalid",
+      },
+      {
+        hostId: "remote-host",
+        label: "Remote host",
+        status: "available",
+        websocketUrl: "ws://remote.invalid",
+      },
+    ];
     navigateMock.mockReset();
     windowsBridgeMock.current = null;
     runnerHostMock.current = { hostManagement: null };
@@ -477,6 +497,53 @@ describe("GeneralSettingsPanel", () => {
       hostId: "remote-host",
       userId: "owner-test",
     });
+  });
+
+  it("disables clearing and shows an unavailable notice when the picked host vanishes from the directory", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: 0 } },
+    });
+    const { rerender } = render(
+      <QueryClientProvider client={queryClient}>
+        <GeneralSettingsPanel />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(
+      screen.getByRole("combobox", { name: "File edit snapshots host" }),
+    );
+    fireEvent.click(await screen.findByRole("option", { name: "Remote host" }));
+
+    await waitFor(() => {
+      expect(hostQueryMocks.lastTransientTarget?.hostId).toBe("remote-host");
+    });
+
+    // The picked host is deregistered - it drops out of the directory
+    // entirely (not merely marked "unavailable" while still listed).
+    hostQueryMocks.directoryEntries = [hostQueryMocks.directoryEntries[0]];
+    rerender(
+      <QueryClientProvider client={queryClient}>
+        <GeneralSettingsPanel />
+      </QueryClientProvider>,
+    );
+
+    await waitFor(() => {
+      // The label can no longer be resolved once the entry drops out of the
+      // directory - `settingsHostLabelFor` falls back to the raw hostId.
+      expect(
+        screen.getByTestId("settings-file-edit-snapshots-host-unavailable")
+          .textContent,
+      ).toBe(
+        "remote-host is no longer available - pick a different host above.",
+      );
+    });
+    expect(
+      screen.getByRole<HTMLButtonElement>("button", {
+        name: "Clear file edit snapshots",
+      }).disabled,
+    ).toBe(true);
+    // Must not silently fall back to reading/writing through the active host.
+    expect(hostQueryMocks.capturedQueryArgs?.client).toBeNull();
   });
 
   it("invalidates size and shows a toast after clearing file edit snapshots", () => {

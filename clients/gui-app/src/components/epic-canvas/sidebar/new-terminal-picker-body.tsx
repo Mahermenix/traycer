@@ -61,6 +61,7 @@ export function NewTerminalPickerBody(props: NewTerminalPickerBodyProps) {
         secondaryLabel={(row) => row.runningDir}
         onSelect={setExplicitRow}
         autoFocusSearch
+        emptyMessage="No directories available. Open a workspace in the epic first."
       />
       <div className="flex justify-end border-t border-border/60 bg-muted/20 px-2.5 py-2.5">
         <Button

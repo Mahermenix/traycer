@@ -424,12 +424,12 @@ function HostSettingsPanelInner(props: HostSettingsPanelInnerProps) {
       <MyHostsList />
       <section aria-labelledby="local-host-management-heading">
         <div className="border-b border-border/40 px-5 py-4">
-          <h2
+          <h3
             id="local-host-management-heading"
-            className="text-ui font-semibold text-foreground"
+            className="text-ui font-medium"
           >
             This machine
-          </h2>
+          </h3>
           <p className="mt-1 text-ui-sm text-muted-foreground">
             Install, update, restart, register, deregister, and rename the
             Traycer host service running on this machine.
