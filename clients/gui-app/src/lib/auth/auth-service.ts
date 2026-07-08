@@ -455,6 +455,13 @@ export class AuthService {
         this.applySignedIn(accepted.token, outcome.user, undefined);
         return;
       }
+      if (outcome.kind === "network-error") {
+        appLogger.warn(
+          "[auth] stored session validation hit network error during startup",
+          {},
+        );
+        return;
+      }
       appLogger.warn("[auth] stored session validation failed during startup", {
         outcome: outcome.kind,
       });
