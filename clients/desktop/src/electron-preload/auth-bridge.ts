@@ -7,6 +7,11 @@ import type { AuthTokenValidationResult } from "@traycer-clients/shared/platform
 import type { AuthIdentityValidationResult } from "@traycer-clients/shared/auth/auth-validation-types";
 import type {
   HostListFetchResult,
+  ListUserSessionsFetchResult,
+  RevokeAllSessionsFetchResult,
+  RevokeUserSessionFetchResult,
+  StepUpChallengeFetchResult,
+  StepUpVerifyFetchResult,
   UpdateHostVersionPolicyFetchResult,
   UpdateHostVersionPolicyInput,
 } from "../ipc-contracts/host-types";
@@ -69,6 +74,19 @@ export interface AuthBridgeSurface {
     refreshToken: string,
   ): Promise<AuthTokenRefreshResult>;
   listRegisteredHosts(bearerToken: string): Promise<HostListFetchResult>;
+  listUserSessions(bearerToken: string): Promise<ListUserSessionsFetchResult>;
+  revokeUserSession(
+    bearerToken: string,
+    familyId: string,
+  ): Promise<RevokeUserSessionFetchResult>;
+  revokeAllSessions(bearerToken: string): Promise<RevokeAllSessionsFetchResult>;
+  requestStepUpChallenge(
+    bearerToken: string,
+  ): Promise<StepUpChallengeFetchResult>;
+  verifyStepUpChallenge(
+    bearerToken: string,
+    code: string,
+  ): Promise<StepUpVerifyFetchResult>;
   updateHostVersionPolicy(
     bearerToken: string,
     hostId: string,
@@ -106,6 +124,38 @@ export function buildAuthBridge(): AuthBridgeSurface {
         RunnerHostInvoke.listRegisteredHosts,
         bearerToken,
       ) as Promise<HostListFetchResult>,
+
+    listUserSessions: (bearerToken) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.listUserSessions,
+        bearerToken,
+      ) as Promise<ListUserSessionsFetchResult>,
+
+    revokeUserSession: (bearerToken, familyId) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.revokeUserSession,
+        bearerToken,
+        familyId,
+      ) as Promise<RevokeUserSessionFetchResult>,
+
+    revokeAllSessions: (bearerToken) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.revokeAllSessions,
+        bearerToken,
+      ) as Promise<RevokeAllSessionsFetchResult>,
+
+    requestStepUpChallenge: (bearerToken) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.requestStepUpChallenge,
+        bearerToken,
+      ) as Promise<StepUpChallengeFetchResult>,
+
+    verifyStepUpChallenge: (bearerToken, code) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.verifyStepUpChallenge,
+        bearerToken,
+        code,
+      ) as Promise<StepUpVerifyFetchResult>,
 
     updateHostVersionPolicy: (bearerToken, hostId, input) =>
       ipcRenderer.invoke(

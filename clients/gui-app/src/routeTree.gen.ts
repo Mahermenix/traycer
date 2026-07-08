@@ -23,6 +23,7 @@ import { Route as SettingsKeybindingsRouteImport } from "./routes/settings.keybi
 import { Route as SettingsHostRouteImport } from "./routes/settings.host";
 import { Route as SettingsGeneralRouteImport } from "./routes/settings.general";
 import { Route as SettingsDiagnosticsRouteImport } from "./routes/settings.diagnostics";
+import { Route as SettingsDevicesRouteImport } from "./routes/settings.devices";
 import { Route as SettingsAppearanceRouteImport } from "./routes/settings.appearance";
 import { Route as SettingsAgentsRouteImport } from "./routes/settings.agents";
 import { Route as DraftNewRouteImport } from "./routes/draft.new";
@@ -99,6 +100,11 @@ const SettingsDiagnosticsRoute = SettingsDiagnosticsRouteImport.update({
   path: "/diagnostics",
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsDevicesRoute = SettingsDevicesRouteImport.update({
+  id: "/devices",
+  path: "/devices",
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsAppearanceRoute = SettingsAppearanceRouteImport.update({
   id: "/appearance",
   path: "/appearance",
@@ -134,6 +140,7 @@ export interface FileRoutesByFullPath {
   "/draft/new": typeof DraftNewRoute;
   "/settings/agents": typeof SettingsAgentsRoute;
   "/settings/appearance": typeof SettingsAppearanceRoute;
+  "/settings/devices": typeof SettingsDevicesRoute;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
   "/settings/general": typeof SettingsGeneralRoute;
   "/settings/host": typeof SettingsHostRoute;
@@ -153,6 +160,7 @@ export interface FileRoutesByTo {
   "/draft/new": typeof DraftNewRoute;
   "/settings/agents": typeof SettingsAgentsRoute;
   "/settings/appearance": typeof SettingsAppearanceRoute;
+  "/settings/devices": typeof SettingsDevicesRoute;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
   "/settings/general": typeof SettingsGeneralRoute;
   "/settings/host": typeof SettingsHostRoute;
@@ -175,6 +183,7 @@ export interface FileRoutesById {
   "/draft/new": typeof DraftNewRoute;
   "/settings/agents": typeof SettingsAgentsRoute;
   "/settings/appearance": typeof SettingsAppearanceRoute;
+  "/settings/devices": typeof SettingsDevicesRoute;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
   "/settings/general": typeof SettingsGeneralRoute;
   "/settings/host": typeof SettingsHostRoute;
@@ -198,6 +207,7 @@ export interface FileRouteTypes {
     | "/draft/new"
     | "/settings/agents"
     | "/settings/appearance"
+    | "/settings/devices"
     | "/settings/diagnostics"
     | "/settings/general"
     | "/settings/host"
@@ -217,6 +227,7 @@ export interface FileRouteTypes {
     | "/draft/new"
     | "/settings/agents"
     | "/settings/appearance"
+    | "/settings/devices"
     | "/settings/diagnostics"
     | "/settings/general"
     | "/settings/host"
@@ -238,6 +249,7 @@ export interface FileRouteTypes {
     | "/draft/new"
     | "/settings/agents"
     | "/settings/appearance"
+    | "/settings/devices"
     | "/settings/diagnostics"
     | "/settings/general"
     | "/settings/host"
@@ -360,6 +372,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsDiagnosticsRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    "/settings/devices": {
+      id: "/settings/devices";
+      path: "/devices";
+      fullPath: "/settings/devices";
+      preLoaderRoute: typeof SettingsDevicesRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     "/settings/appearance": {
       id: "/settings/appearance";
       path: "/appearance";
@@ -413,6 +432,7 @@ const EpicsRouteWithChildren = EpicsRoute._addFileChildren(EpicsRouteChildren);
 interface SettingsRouteChildren {
   SettingsAgentsRoute: typeof SettingsAgentsRoute;
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute;
+  SettingsDevicesRoute: typeof SettingsDevicesRoute;
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute;
   SettingsGeneralRoute: typeof SettingsGeneralRoute;
   SettingsHostRoute: typeof SettingsHostRoute;
@@ -427,6 +447,7 @@ interface SettingsRouteChildren {
 const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAgentsRoute: SettingsAgentsRoute,
   SettingsAppearanceRoute: SettingsAppearanceRoute,
+  SettingsDevicesRoute: SettingsDevicesRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsHostRoute: SettingsHostRoute,

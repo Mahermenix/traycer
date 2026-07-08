@@ -1,5 +1,12 @@
 import type { Disposable } from "./uri-callback";
 import type { AuthIdentityValidationResult } from "../auth/auth-validation-types";
+import type {
+  ListUserSessionsFetchResult,
+  RevokeAllSessionsFetchResult,
+  RevokeUserSessionFetchResult,
+  StepUpChallengeFetchResult,
+  StepUpVerifyFetchResult,
+} from "../auth/devices-sessions-fetcher";
 import type { HostListFetchResult } from "../host-client/remote-fetcher";
 import type {
   UpdateHostVersionPolicyFetchResult,
@@ -120,6 +127,47 @@ export interface IRunnerHost {
    * Never throws: transport failures collapse into the discriminated result.
    */
   listRegisteredHosts(bearerToken: string): Promise<HostListFetchResult>;
+
+  /**
+   * Fetches the signed-in user's account sessions from authn-v3. Desktop shells
+   * run this in Electron main for the same CORS reason as host registry reads.
+   * Never throws: transport failures collapse into the discriminated result.
+   */
+  listUserSessions(bearerToken: string): Promise<ListUserSessionsFetchResult>;
+
+  /**
+   * Revokes one session family. The bearer may be either the user's normal
+   * session bearer or a short-TTL step-up credential minted by
+   * `verifyStepUpChallenge`; callers handle `step-up-required` by asking the
+   * user for an email OTP and retrying exactly once.
+   */
+  revokeUserSession(
+    bearerToken: string,
+    familyId: string,
+  ): Promise<RevokeUserSessionFetchResult>;
+
+  /**
+   * Revokes all other sessions and broadcasts host/session invalidation. This
+   * is the panic lever: callers obtain a fresh step-up credential for every
+   * invocation rather than reusing the per-session cleanup batch credential.
+   */
+  revokeAllSessions(bearerToken: string): Promise<RevokeAllSessionsFetchResult>;
+
+  /**
+   * Sends the signed-in user's email OTP step-up challenge.
+   */
+  requestStepUpChallenge(
+    bearerToken: string,
+  ): Promise<StepUpChallengeFetchResult>;
+
+  /**
+   * Verifies a step-up OTP and returns the short-TTL bearer credential used for
+   * session revocation retries.
+   */
+  verifyStepUpChallenge(
+    bearerToken: string,
+    code: string,
+  ): Promise<StepUpVerifyFetchResult>;
 
   /**
    * Applies a version-policy write for one host with the user bearer

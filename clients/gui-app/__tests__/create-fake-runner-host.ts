@@ -20,6 +20,15 @@ export function createFakeRunnerHost(
     refreshAuthToken: () => Promise.resolve({ kind: "network-error" as const }),
     listRegisteredHosts: () =>
       Promise.resolve({ kind: "network-error" as const }),
+    listUserSessions: () => Promise.resolve({ kind: "network-error" as const }),
+    revokeUserSession: () =>
+      Promise.resolve({ kind: "network-error" as const }),
+    revokeAllSessions: () =>
+      Promise.resolve({ kind: "network-error" as const }),
+    requestStepUpChallenge: () =>
+      Promise.resolve({ kind: "network-error" as const }),
+    verifyStepUpChallenge: () =>
+      Promise.resolve({ kind: "network-error" as const }),
     updateHostVersionPolicy: () =>
       Promise.resolve({ kind: "network-error" as const }),
     openExternalLink: () => Promise.resolve(),

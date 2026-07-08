@@ -90,6 +90,13 @@ const DESKTOP_AUTH_REFRESH_TOKEN_KEY = "traycer.refresh-token";
 import type { AuthIdentityValidationResult } from "@traycer-clients/shared/auth/auth-validation-types";
 import type { HostListFetchResult } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type {
+  ListUserSessionsFetchResult,
+  RevokeAllSessionsFetchResult,
+  RevokeUserSessionFetchResult,
+  StepUpChallengeFetchResult,
+  StepUpVerifyFetchResult,
+} from "@traycer-clients/shared/auth/devices-sessions-fetcher";
+import type {
   UpdateHostVersionPolicyFetchResult,
   UpdateHostVersionPolicyInput,
 } from "@traycer-clients/shared/host-client/host-version-policy-fetcher";
@@ -140,6 +147,19 @@ export interface DesktopPreloadBridge {
     refreshToken: string,
   ): Promise<AuthTokenRefreshResult>;
   listRegisteredHosts(bearerToken: string): Promise<HostListFetchResult>;
+  listUserSessions(bearerToken: string): Promise<ListUserSessionsFetchResult>;
+  revokeUserSession(
+    bearerToken: string,
+    familyId: string,
+  ): Promise<RevokeUserSessionFetchResult>;
+  revokeAllSessions(bearerToken: string): Promise<RevokeAllSessionsFetchResult>;
+  requestStepUpChallenge(
+    bearerToken: string,
+  ): Promise<StepUpChallengeFetchResult>;
+  verifyStepUpChallenge(
+    bearerToken: string,
+    code: string,
+  ): Promise<StepUpVerifyFetchResult>;
   updateHostVersionPolicy(
     bearerToken: string,
     hostId: string,
@@ -752,6 +772,36 @@ export class DesktopRunnerHost implements IRunnerHost {
 
   listRegisteredHosts(bearerToken: string): Promise<HostListFetchResult> {
     return this.bridge.listRegisteredHosts(bearerToken);
+  }
+
+  listUserSessions(bearerToken: string): Promise<ListUserSessionsFetchResult> {
+    return this.bridge.listUserSessions(bearerToken);
+  }
+
+  revokeUserSession(
+    bearerToken: string,
+    familyId: string,
+  ): Promise<RevokeUserSessionFetchResult> {
+    return this.bridge.revokeUserSession(bearerToken, familyId);
+  }
+
+  revokeAllSessions(
+    bearerToken: string,
+  ): Promise<RevokeAllSessionsFetchResult> {
+    return this.bridge.revokeAllSessions(bearerToken);
+  }
+
+  requestStepUpChallenge(
+    bearerToken: string,
+  ): Promise<StepUpChallengeFetchResult> {
+    return this.bridge.requestStepUpChallenge(bearerToken);
+  }
+
+  verifyStepUpChallenge(
+    bearerToken: string,
+    code: string,
+  ): Promise<StepUpVerifyFetchResult> {
+    return this.bridge.verifyStepUpChallenge(bearerToken, code);
   }
 
   updateHostVersionPolicy(

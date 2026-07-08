@@ -26,6 +26,18 @@ import type {
   TrayIndicatorState,
 } from "../../platform/runner-host";
 import {
+  listUserSessionsViaHttp,
+  requestStepUpChallengeViaHttp,
+  revokeAllSessionsViaHttp,
+  revokeUserSessionViaHttp,
+  verifyStepUpChallengeViaHttp,
+  type ListUserSessionsFetchResult,
+  type RevokeAllSessionsFetchResult,
+  type RevokeUserSessionFetchResult,
+  type StepUpChallengeFetchResult,
+  type StepUpVerifyFetchResult,
+} from "../../auth/devices-sessions-fetcher";
+import {
   refreshAuthTokenViaHttp,
   validateAuthTokenIdentityViaHttp,
   validateAuthTokenViaHttp,
@@ -198,6 +210,37 @@ export class MockRunnerHost implements IRunnerHost {
     // The in-memory shell has no CORS boundary, so it calls the shared HTTP
     // helper directly (browser/dev parity with the auth validators above).
     return fetchRegisteredHostsViaHttp(this.authnBaseUrl, bearerToken);
+  }
+
+  listUserSessions(bearerToken: string): Promise<ListUserSessionsFetchResult> {
+    // Same no-CORS-boundary parity as `listRegisteredHosts` above.
+    return listUserSessionsViaHttp(this.authnBaseUrl, bearerToken);
+  }
+
+  revokeUserSession(
+    bearerToken: string,
+    familyId: string,
+  ): Promise<RevokeUserSessionFetchResult> {
+    return revokeUserSessionViaHttp(this.authnBaseUrl, bearerToken, familyId);
+  }
+
+  revokeAllSessions(
+    bearerToken: string,
+  ): Promise<RevokeAllSessionsFetchResult> {
+    return revokeAllSessionsViaHttp(this.authnBaseUrl, bearerToken);
+  }
+
+  requestStepUpChallenge(
+    bearerToken: string,
+  ): Promise<StepUpChallengeFetchResult> {
+    return requestStepUpChallengeViaHttp(this.authnBaseUrl, bearerToken);
+  }
+
+  verifyStepUpChallenge(
+    bearerToken: string,
+    code: string,
+  ): Promise<StepUpVerifyFetchResult> {
+    return verifyStepUpChallengeViaHttp(this.authnBaseUrl, bearerToken, code);
   }
 
   updateHostVersionPolicy(
