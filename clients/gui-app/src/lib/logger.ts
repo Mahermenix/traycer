@@ -23,11 +23,27 @@ const MAX_LOG_ARRAY_ITEMS = 20;
 const MAX_LOG_OBJECT_KEYS = 40;
 const SENSITIVE_KEY_PATTERN =
   /(?:token|secret|password|authorization|cookie|credential|verifier|refresh|bearer|api[_-]?key|client[_-]?secret)/i;
+/**
+ * Authorization-style headers. Keep the optional scheme, redact the credential.
+ * The scheme is matched generically (`Basic`, `Bearer`, `Digest`, GitHub's
+ * `token`, …): enumerating schemes meant an unlisted one was consumed as the
+ * credential, leaving the real secret in place. A scheme only counts when
+ * another token follows it, so a scheme-less `Authorization: abc123` still
+ * redacts `abc123`. Stops at whitespace/common field delimiters.
+ */
+const AUTHORIZATION_HEADER_PATTERN =
+  /(\b(?:Proxy-Authorization|Authorization|X-Api-Key|X-Auth-Token)\b\s*[=:]\s*)(?:([A-Za-z][A-Za-z0-9._-]*)\s+)?([^\s,;}|&"']+)/gi;
 const SENSITIVE_QUERY_PARAM_PATTERN =
-  /([?&](?:access_token|refresh_token|id_token|token|code|code_verifier|password|secret|client_secret|api_key|authorization)=)([^&#\s]+)/gi;
+  /([?&](?:access_token|refresh_token|id_token|token|code|code_verifier|password|secret|client_secret|api_key|authorization|key)=)([^&#\s]+)/gi;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
+/**
+ * Sensitive KEY=value / "KEY": "value". Stem may have arbitrary prefixes/
+ * suffixes (OPENAI_API_KEY, GITHUB_TOKEN). Key may be optionally quoted.
+ */
 const SENSITIVE_INLINE_VALUE_PATTERN =
-  /(\b(?:access[_-]?token|refresh[_-]?token|id[_-]?token|token|code[_-]?verifier|password|secret|client[_-]?secret|api[_-]?key|authorization|cookie|credential)\b\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}&]+)/gi;
+  /((?:["']?)[A-Za-z0-9_.-]*(?:API[_-]?KEY|api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|client[_-]?secret|token|secret|password|bearer|credential|cookie|code[_-]?verifier|authorization)[A-Za-z0-9_.-]*(?:["']?)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;}&"']+)/gi;
+/** https://user:pass@host and https://token@host → strip userinfo. */
+const URL_USERINFO_PATTERN = /(https?:\/\/)([^/\s@]+@)/gi;
 const NOT_SCALAR_LOG_VALUE = Symbol("not-scalar-log-value");
 
 // The renderer's threshold, hydrated from the desktop log level over IPC (see
@@ -65,7 +81,15 @@ export const appLogger = {
 
 export function redactLogText(value: string): string {
   const redacted = value
+    .replace(URL_USERINFO_PATTERN, "$1<redacted>@")
     .replace(SENSITIVE_QUERY_PARAM_PATTERN, "$1<redacted>")
+    .replace(
+      AUTHORIZATION_HEADER_PATTERN,
+      (_match, key: string, scheme: string | undefined) =>
+        scheme === undefined
+          ? `${key}<redacted>`
+          : `${key}${scheme} <redacted>`,
+    )
     .replace(BEARER_PATTERN, "Bearer <redacted>")
     .replace(SENSITIVE_INLINE_VALUE_PATTERN, "$1<redacted>");
   return redacted.length > MAX_LOG_STRING_LENGTH

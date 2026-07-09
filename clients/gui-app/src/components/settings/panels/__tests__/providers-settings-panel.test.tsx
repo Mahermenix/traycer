@@ -5,6 +5,8 @@ import type {
   ProviderCliState,
   ProviderSelection,
 } from "@traycer/protocol/host/provider-schemas";
+import { DEFAULT_PROVIDER_NATIVE_CAPABILITIES } from "@traycer/protocol/host/provider-native-schemas";
+import type { ProviderNativeCapabilities } from "@traycer/protocol/host/provider-native-schemas";
 import {
   cleanup,
   fireEvent,
@@ -13,6 +15,12 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useProvidersFocusStore } from "@/stores/settings/providers-focus-store";
+
+// Radix Tabs activates on mouseDown (not click). Helper keeps assertions short.
+function selectTab(name: string): void {
+  fireEvent.mouseDown(screen.getByRole("tab", { name }));
+}
 
 const providerMocks = vi.hoisted(() => ({
   listResult: {
@@ -36,6 +44,76 @@ const providerMocks = vi.hoisted(() => ({
 
 vi.mock("@/hooks/providers/use-providers-list-query", () => ({
   useProvidersList: () => providerMocks.listResult,
+}));
+
+vi.mock("@/hooks/providers/use-providers-plugins-list-query", () => ({
+  useProvidersPluginsList: () => ({
+    data: { plugins: [] },
+    isPending: false,
+    isLoading: false,
+    isError: false,
+    error: null,
+  }),
+}));
+
+vi.mock("@/hooks/providers/use-providers-plugins-mutate-mutation", () => ({
+  useProvidersPluginsMutate: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+}));
+
+vi.mock("@/hooks/providers/use-providers-skills-list-query", () => ({
+  useProvidersSkillsList: () => ({
+    data: { skills: [] },
+    isPending: false,
+    isLoading: false,
+    isError: false,
+    error: null,
+  }),
+}));
+
+vi.mock("@/hooks/providers/use-providers-skills-mutate-mutation", () => ({
+  useProvidersSkillsMutate: () => ({
+    mutate: vi.fn(),
+    isPending: false,
+  }),
+}));
+
+// Sibling ticket 11 owns the MCP tab; mock its hooks so panel tests stay isolated.
+vi.mock("@/hooks/providers/use-providers-mcp-list-query", () => ({
+  useProvidersMcpList: () => ({
+    data: { servers: [] },
+    isPending: false,
+    isLoading: false,
+    isError: false,
+    error: null,
+    refetch: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/providers/use-providers-mcp-mutate-mutation", () => ({
+  useProvidersMcpMutate: () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
+}));
+
+vi.mock("@/hooks/providers/use-providers-mcp-discover-mutation", () => ({
+  useProvidersMcpDiscover: () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
+}));
+
+vi.mock("@/hooks/providers/use-providers-mcp-auth-mutation", () => ({
+  useProvidersMcpAuth: () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
 }));
 
 vi.mock("@/hooks/providers/use-providers-set-selection-mutation", () => ({
@@ -219,6 +297,7 @@ function providerState(input: {
   readonly selected: ProviderSelection;
   readonly candidates: readonly ProviderCliCandidate[];
   readonly envOverrides: ProviderCliState["envOverrides"];
+  readonly nativeCapabilities?: ProviderNativeCapabilities;
 }): ProviderCliState {
   return {
     providerId: input.providerId,
@@ -239,6 +318,8 @@ function providerState(input: {
     envOverrides: [...input.envOverrides],
     loginCapability: null,
     availabilityPending: false,
+    nativeCapabilities:
+      input.nativeCapabilities ?? DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
   };
 }
 
@@ -255,8 +336,76 @@ function providerStateWithAuth(
   return { ...providerState(input), auth, authPending };
 }
 
+const SAMPLE_MCP: NonNullable<ProviderNativeCapabilities["mcp"]> = {
+  transports: ["stdio", "http"],
+  scopes: ["global", "project"],
+  authTypes: ["none", "headers"],
+  authActions: ["login", "logout"],
+  mutationActions: ["add", "update", "remove", "toggleServer", "toggleTool"],
+  addServer: "cli",
+  removeServer: "cli",
+  updateServer: "patch",
+  perToolBacking: "native",
+  statusSource: "probe",
+  toolsSource: "probe",
+  schemasSource: "probe",
+  instructionsSource: "probe",
+  traycerSessionsOnlyEnforcement: false,
+  stdioDegradeNotice: false,
+  oauthDegradesToConfigOnly: true,
+};
+
+const FULL_TABS: ProviderNativeCapabilities = {
+  supportedTabs: ["general", "env", "usage", "mcp", "plugins", "skills"],
+  mcp: SAMPLE_MCP,
+  plugins: {
+    addModes: ["cli-source"],
+    marketplaceBrowse: false,
+    canEnableDisable: true,
+    canRemove: true,
+    traycerSessionToolsNotice: false,
+  },
+  skills: {
+    canList: true,
+    canAdd: true,
+    canImport: false,
+  },
+};
+
+const CURSOR_TABS: ProviderNativeCapabilities = {
+  supportedTabs: ["env", "mcp", "plugins", "skills"],
+  mcp: {
+    ...SAMPLE_MCP,
+    perToolBacking: "degraded-server-level",
+    instructionsSource: "none",
+  },
+  plugins: {
+    addModes: ["read-only"],
+    marketplaceBrowse: false,
+    canEnableDisable: false,
+    canRemove: false,
+    traycerSessionToolsNotice: false,
+  },
+  skills: {
+    canList: true,
+    canAdd: true,
+    canImport: false,
+  },
+};
+
+const ENV_ONLY_TABS: ProviderNativeCapabilities = {
+  supportedTabs: ["env"],
+  mcp: null,
+  plugins: null,
+  skills: null,
+};
+
 describe("<ProvidersSettingsPanel />", () => {
   beforeEach(() => {
+    useProvidersFocusStore.setState({
+      focusHarnessId: null,
+      focusTab: null,
+    });
     providerMocks.listResult.data = {
       providers: [
         providerState({
@@ -264,18 +413,21 @@ describe("<ProvidersSettingsPanel />", () => {
           selected: { kind: "bundled" },
           candidates: OPENCODE_CANDIDATES,
           envOverrides: [],
+          nativeCapabilities: FULL_TABS,
         }),
         providerState({
           providerId: "traycer",
           selected: { kind: "bundled" },
           candidates: [],
           envOverrides: [],
+          nativeCapabilities: FULL_TABS,
         }),
         providerState({
           providerId: "openrouter",
           selected: { kind: "bundled" },
           candidates: [],
           envOverrides: [],
+          nativeCapabilities: FULL_TABS,
         }),
       ],
     };
@@ -287,6 +439,10 @@ describe("<ProvidersSettingsPanel />", () => {
 
   afterEach(() => {
     cleanup();
+    useProvidersFocusStore.setState({
+      focusHarnessId: null,
+      focusTab: null,
+    });
   });
 
   it("lists OpenCode CLI candidates for Traycer and mutates Traycer selection", () => {
@@ -556,12 +712,14 @@ describe("<ProvidersSettingsPanel />", () => {
           selected: { kind: "bundled" },
           candidates: OPENCODE_CANDIDATES,
           envOverrides: [{ key: "OPENAI_API_KEY", value: null }],
+          nativeCapabilities: FULL_TABS,
         }),
         providerState({
           providerId: "traycer",
           selected: { kind: "bundled" },
           candidates: [],
           envOverrides: [],
+          nativeCapabilities: FULL_TABS,
         }),
       ],
     };
@@ -571,6 +729,8 @@ describe("<ProvidersSettingsPanel />", () => {
         <ProvidersSettingsPanel />
       </TooltipProvider>,
     );
+
+    selectTab("Env");
 
     expect(screen.getByText("Environment variables")).toBeDefined();
     expect(screen.getByDisplayValue("OPENAI_API_KEY")).toBeDefined();
@@ -597,6 +757,7 @@ describe("<ProvidersSettingsPanel />", () => {
           selected: { kind: "bundled" },
           candidates: [],
           envOverrides: [],
+          nativeCapabilities: FULL_TABS,
         }),
       ],
     };
@@ -616,5 +777,200 @@ describe("<ProvidersSettingsPanel />", () => {
     fireEvent.click(switchElement);
 
     expect(providerMocks.setEnabledMutate).not.toHaveBeenCalled();
+  });
+
+  it("renders capability-driven tabs and hides unsupported ones", () => {
+    providerMocks.listResult.data = {
+      providers: [
+        providerState({
+          providerId: "opencode",
+          selected: { kind: "bundled" },
+          candidates: OPENCODE_CANDIDATES,
+          envOverrides: [],
+          nativeCapabilities: FULL_TABS,
+        }),
+        providerState({
+          providerId: "cursor",
+          selected: { kind: "bundled" },
+          candidates: [],
+          envOverrides: [],
+          nativeCapabilities: CURSOR_TABS,
+        }),
+      ],
+    };
+
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole("tab", { name: "General" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Env" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Usage limits" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "MCP" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Plugins" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Skills" })).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cursor" }));
+
+    expect(screen.queryByRole("tab", { name: "General" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Usage limits" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Env" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "MCP" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Plugins" })).toBeDefined();
+    expect(screen.getByRole("tab", { name: "Skills" })).toBeDefined();
+  });
+
+  it("keeps the current tab across providers when both support it", () => {
+    providerMocks.listResult.data = {
+      providers: [
+        providerState({
+          providerId: "opencode",
+          selected: { kind: "bundled" },
+          candidates: OPENCODE_CANDIDATES,
+          envOverrides: [{ key: "A", value: "1" }],
+          nativeCapabilities: FULL_TABS,
+        }),
+        providerState({
+          providerId: "cursor",
+          selected: { kind: "bundled" },
+          candidates: [],
+          envOverrides: [{ key: "B", value: "2" }],
+          nativeCapabilities: CURSOR_TABS,
+        }),
+      ],
+    };
+
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    selectTab("Env");
+    expect(screen.getByDisplayValue("A")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cursor" }));
+    expect(screen.getByDisplayValue("B")).toBeDefined();
+    expect(
+      screen.getByRole("tab", { name: "Env" }).getAttribute("data-state"),
+    ).toBe("active");
+  });
+
+  it("falls back to the first supported tab when the current tab is missing", () => {
+    providerMocks.listResult.data = {
+      providers: [
+        providerState({
+          providerId: "opencode",
+          selected: { kind: "bundled" },
+          candidates: OPENCODE_CANDIDATES,
+          envOverrides: [],
+          nativeCapabilities: FULL_TABS,
+        }),
+        providerState({
+          providerId: "amp",
+          selected: { kind: "bundled" },
+          candidates: [],
+          envOverrides: [],
+          nativeCapabilities: ENV_ONLY_TABS,
+        }),
+      ],
+    };
+
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    selectTab("MCP");
+    expect(screen.getByTestId("provider-mcp-tab")).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Amp" }));
+    expect(screen.queryByRole("tab", { name: "MCP" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Env" })).toBeDefined();
+    expect(screen.getByText("Environment variables")).toBeDefined();
+  });
+
+  it("deep-links focusTab once-and-clear alongside focusHarnessId", () => {
+    useProvidersFocusStore.getState().setFocusHarnessId("cursor");
+    useProvidersFocusStore.getState().setFocusTab("mcp");
+
+    providerMocks.listResult.data = {
+      providers: [
+        providerState({
+          providerId: "opencode",
+          selected: { kind: "bundled" },
+          candidates: OPENCODE_CANDIDATES,
+          envOverrides: [],
+          nativeCapabilities: FULL_TABS,
+        }),
+        providerState({
+          providerId: "cursor",
+          selected: { kind: "bundled" },
+          candidates: [],
+          envOverrides: [],
+          nativeCapabilities: CURSOR_TABS,
+        }),
+      ],
+    };
+
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByTestId("provider-mcp-tab")).toBeDefined();
+    expect(
+      screen.getByRole("tab", { name: "MCP" }).getAttribute("data-state"),
+    ).toBe("active");
+    expect(useProvidersFocusStore.getState().focusHarnessId).toBeNull();
+    expect(useProvidersFocusStore.getState().focusTab).toBeNull();
+  });
+
+  it("ignores focusTab when the target provider does not support it", () => {
+    useProvidersFocusStore.getState().setFocusHarnessId("cursor");
+    useProvidersFocusStore.getState().setFocusTab("general");
+
+    providerMocks.listResult.data = {
+      providers: [
+        providerState({
+          providerId: "cursor",
+          selected: { kind: "bundled" },
+          candidates: [],
+          envOverrides: [],
+          nativeCapabilities: CURSOR_TABS,
+        }),
+      ],
+    };
+
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    expect(screen.queryByRole("tab", { name: "General" })).toBeNull();
+    expect(
+      screen.getByRole("tab", { name: "Env" }).getAttribute("data-state"),
+    ).toBe("active");
+  });
+
+  it("shows Plugins tab body and Skills tab body", () => {
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    selectTab("Plugins");
+    expect(screen.getByText("Installed plugins")).toBeDefined();
+
+    selectTab("Skills");
+    expect(
+      screen.getByText(/Invoked by the agent when relevant/),
+    ).toBeDefined();
   });
 });

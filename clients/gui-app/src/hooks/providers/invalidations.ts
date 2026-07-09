@@ -15,3 +15,6 @@ export const PROVIDER_INVALIDATIONS: ReadonlyArray<
   "agent.selectionGuide.getGlobal",
   "agent.selectionGuide.getGlobalOnboardingDraft",
 ];
+
+export const MCP_INVALIDATIONS: ReadonlyArray<keyof HostRpcRegistry & string> =
+  ["providers.mcpList"];

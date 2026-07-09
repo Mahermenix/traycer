@@ -14,6 +14,7 @@ import {
   type ProviderCliState,
   type ProviderSelection,
 } from "@traycer/protocol/host/provider-schemas";
+import type { ProviderSettingsTab } from "@traycer/protocol/host/provider-native-schemas";
 import type {
   HostRpcError,
   ResponseOfMethod,
@@ -32,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { FilePathTooltip } from "@/components/file-path-tooltip";
 import { StartTruncatedText } from "@/components/ui/start-truncated-text";
 import { ProviderList } from "@/components/providers/provider-list";
@@ -66,12 +68,43 @@ import { ProviderAuthBadge, ProviderAuthLine } from "./provider-auth-display";
 import { EnvOverrideEditor } from "./env-override-editor";
 import { TraycerSubscriptionSection } from "./traycer-subscription-section";
 import { ProviderRateLimitForProvider } from "./provider-rate-limit-section";
+import { ProviderMcpTab } from "./provider-mcp-tab";
+import { ProviderPluginsTab } from "./provider-plugins-tab";
+import { ProviderSkillsTab } from "./provider-skills-tab";
+import { isRateLimitCapableProvider } from "@/lib/rate-limit-providers";
 
 type ProviderId = ProviderCliState["providerId"];
 type ProvidersListQuery = UseQueryResult<
   ResponseOfMethod<HostRpcRegistry, "providers.list">,
   HostRpcError
 >;
+
+// Stable display order for the capability-driven tab bar. Unsupported tabs are
+// filtered out per provider via `nativeCapabilities.supportedTabs`.
+const PROVIDER_TAB_ORDER: readonly ProviderSettingsTab[] = [
+  "general",
+  "env",
+  "usage",
+  "mcp",
+  "plugins",
+  "skills",
+];
+
+const PROVIDER_TAB_LABELS: Record<ProviderSettingsTab, string> = {
+  general: "General",
+  env: "Env",
+  usage: "Usage limits",
+  mcp: "MCP",
+  plugins: "Plugins",
+  skills: "Skills",
+};
+
+function supportedTabsFor(
+  state: ProviderCliState,
+): readonly ProviderSettingsTab[] {
+  const advertised = new Set(state.nativeCapabilities.supportedTabs);
+  return PROVIDER_TAB_ORDER.filter((tab) => advertised.has(tab));
+}
 
 // The provider to select on mount: the deep-link focus target (mapped from its
 // GUI harness id) when one was requested and is present,
@@ -87,6 +120,59 @@ function initialActiveProviderId(
     if (match !== undefined) return match.providerId;
   }
   return providers[0].providerId;
+}
+
+// Initial tab for the deep-linked (or first) provider: honor `focusTab` when
+// the target advertises it, else the first supported tab.
+function initialActiveTab(
+  providers: readonly ProviderCliState[],
+  providerId: ProviderId,
+): ProviderSettingsTab {
+  const state =
+    providers.find((p) => p.providerId === providerId) ?? providers[0];
+  const tabs = supportedTabsFor(state);
+  const focusTab = useProvidersFocusStore.getState().focusTab;
+  if (focusTab !== null) {
+    const match = tabs.find((tab) => tab === focusTab);
+    if (match !== undefined) return match;
+  }
+  return tabs[0] ?? "general";
+}
+
+// When switching providers, keep the current tab if the new provider supports
+// it; otherwise fall back to that provider's first tab.
+function resolveTabForProvider(
+  state: ProviderCliState,
+  preferred: ProviderSettingsTab,
+): ProviderSettingsTab {
+  const tabs = supportedTabsFor(state);
+  if (tabs.includes(preferred)) return preferred;
+  return tabs[0] ?? "general";
+}
+
+function tabHasContent(
+  tab: ProviderSettingsTab,
+  state: ProviderCliState,
+): boolean {
+  switch (tab) {
+    case "general":
+      return (
+        state.candidates.length > 0 || state.terminalAgentArgs.trim().length > 0
+      );
+    case "env":
+      return state.envOverrides.length > 0;
+    case "usage":
+      return (
+        isRateLimitCapableProvider(state.providerId) ||
+        state.providerId === "traycer"
+      );
+    case "mcp":
+    case "skills":
+      return false;
+    case "plugins":
+      // Dot when the provider advertises a plugins surface (list may still be empty).
+      return state.nativeCapabilities.plugins !== null;
+  }
 }
 
 // Where a key-authenticated provider's API keys are created. Rendered as a
@@ -382,18 +468,35 @@ function ProvidersRailLayout({
     [providers],
   );
   // A deep-link entry point (e.g. the model picker's "Add API key" CTA) can ask
-  // the panel to open on a specific provider via the focus store. Read it once
-  // for the initial selection, then clear it so a later manual open starts on
-  // the first provider again.
+  // the panel to open on a specific provider (and optional tab) via the focus
+  // store. Read both once for the initial selection, then clear so a later
+  // manual open starts on the first provider / first tab again.
   const [activeId, setActiveId] = useState<ProviderId>(() =>
     initialActiveProviderId(orderedProviders),
   );
+  const [activeTab, setActiveTab] = useState<ProviderSettingsTab>(() =>
+    initialActiveTab(
+      orderedProviders,
+      initialActiveProviderId(orderedProviders),
+    ),
+  );
   useEffect(() => {
-    useProvidersFocusStore.getState().clearFocusHarnessId();
+    const store = useProvidersFocusStore.getState();
+    store.clearFocusHarnessId();
+    store.clearFocusTab();
   }, []);
   const active =
     orderedProviders.find((p) => p.providerId === activeId) ??
     orderedProviders[0];
+  const resolvedTab = resolveTabForProvider(active, activeTab);
+
+  const onSelectProvider = (providerId: ProviderId): void => {
+    setActiveId(providerId);
+    const next =
+      orderedProviders.find((p) => p.providerId === providerId) ??
+      orderedProviders[0];
+    setActiveTab(resolveTabForProvider(next, activeTab));
+  };
 
   return (
     // Fill the panel body (the shell stretches it to the settings scroll
@@ -418,7 +521,7 @@ function ProvidersRailLayout({
             badge: null,
             description: null,
             trailing: null,
-            onSelect: setActiveId,
+            onSelect: onSelectProvider,
           }))}
         />
       </nav>
@@ -427,6 +530,8 @@ function ProvidersRailLayout({
           key={active.providerId}
           state={active}
           providers={orderedProviders}
+          activeTab={resolvedTab}
+          onActiveTabChange={setActiveTab}
         />
       </div>
     </div>
@@ -490,56 +595,21 @@ function hidesCliCandidates(
 function ProviderDetail({
   state,
   providers,
+  activeTab,
+  onActiveTabChange,
 }: {
   readonly state: ProviderCliState;
   readonly providers: readonly ProviderCliState[];
+  readonly activeTab: ProviderSettingsTab;
+  readonly onActiveTabChange: (tab: ProviderSettingsTab) => void;
 }) {
   const providerId = state.providerId;
-  // Traycer/OpenRouter share the OpenCode binary path set: their tables show
-  // the OpenCode candidates (or their own when present) while selection /
-  // custom-path mutations target the focused provider id.
-  const cliConfig = candidateConfigForProvider(state, providers);
-  const showCliCandidates = !hidesCliCandidates(providerId);
-  const radioName = useId();
   const switchId = useId();
-  const [adding, setAdding] = useState(false);
-  const [draftPath, setDraftPath] = useState("");
-  const focusDraftInput = useCallback((node: HTMLInputElement | null): void => {
-    node?.focus();
-  }, []);
-
-  const setSelection = useProvidersSetSelection();
-  const addCustom = useProvidersAddCustomPath();
-  const removeCustom = useProvidersRemoveCustomPath();
   const setEnabled = useProvidersSetEnabled();
   const enabledProviderCount = providers.filter(
     (provider) => provider.enabled,
   ).length;
-  // Debounce so we don't spawn a `<bin> --version` probe on every keystroke.
-  const debouncedPath = useDebouncedValue(draftPath.trim(), 250);
-  const probe = useProvidersDetectVersion({
-    candidatePath: debouncedPath,
-    enabled: adding && debouncedPath.length > 0,
-  });
-
-  const onSelect = (selection: ProviderSelection): void => {
-    if (setSelection.isPending) return;
-    setSelection.mutate({ providerId, selection });
-  };
-
-  const onSaveCustom = (): void => {
-    const trimmed = draftPath.trim();
-    if (trimmed.length === 0 || addCustom.isPending) return;
-    addCustom.mutate(
-      { providerId, path: trimmed },
-      {
-        onSuccess: () => {
-          setAdding(false);
-          setDraftPath("");
-        },
-      },
-    );
-  };
+  const tabs = supportedTabsFor(state);
 
   return (
     <div className="flex flex-col gap-4">
@@ -573,9 +643,6 @@ function ProviderDetail({
         </div>
       </div>
 
-      <TraycerSubscriptionForProvider providerId={providerId} />
-      <ProviderRateLimitForProvider providerId={providerId} />
-
       <div
         className={cn(
           "flex flex-col transition-opacity",
@@ -583,98 +650,248 @@ function ProviderDetail({
         )}
       >
         <ApiKeySection state={state} />
-        {showCliCandidates ? (
-          <>
-            <div className="overflow-hidden rounded-lg border border-border/60">
-              <div
-                className={cn(
-                  TABLE_GRID,
-                  "border-b border-border/40 bg-muted/30 text-ui-xs font-medium text-muted-foreground",
-                )}
-              >
-                <span className="py-2" />
-                <span className="min-w-0 p-2">Path</span>
-                <span className="p-2">Version</span>
-                <span className="py-2" />
-              </div>
-              {cliConfig.candidates.map((candidate) => (
-                <CandidateRow
-                  key={candidateKey(candidate)}
-                  candidate={candidate}
-                  radioName={radioName}
-                  selected={isSelected(cliConfig.selected, candidate)}
-                  busy={setSelection.isPending || removeCustom.isPending}
-                  onSelect={onSelect}
-                  onRemove={(path) => removeCustom.mutate({ providerId, path })}
-                />
-              ))}
-              {adding ? (
-                <div className="flex flex-col gap-2 border-t border-border/40 bg-muted/10 p-3">
-                  <div className="flex items-center gap-2">
-                    <Input
-                      ref={focusDraftInput}
-                      className="w-full font-mono text-ui-sm"
-                      placeholder="/absolute/path/to/binary"
-                      value={draftPath}
-                      onChange={(e) => setDraftPath(e.target.value)}
-                      disabled={addCustom.isPending}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") onSaveCustom();
-                        if (e.key === "Escape") {
-                          setAdding(false);
-                          setDraftPath("");
-                        }
-                      }}
-                    />
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={onSaveCustom}
-                      disabled={
-                        addCustom.isPending || draftPath.trim().length === 0
-                      }
-                    >
-                      {addCustom.isPending ? <MutedAgentSpinner /> : null}
-                      Save
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => {
-                        setAdding(false);
-                        setDraftPath("");
-                      }}
-                      disabled={addCustom.isPending}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                  <ProbeLine
-                    probing={probe.isFetching}
-                    executable={probe.data?.executable ?? null}
-                    version={probe.data?.version ?? null}
-                  />
-                </div>
-              ) : null}
-            </div>
 
-            {adding ? null : (
-              <button
-                type="button"
-                onClick={() => setAdding(true)}
-                className="mt-2 inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-ui-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => {
+            const next = tabs.find((tab) => tab === value);
+            if (next !== undefined) onActiveTabChange(next);
+          }}
+          className="gap-3"
+        >
+          <TabsList className="w-full max-w-full flex-wrap justify-start">
+            {tabs.map((tab) => (
+              <TabsTrigger
+                key={tab}
+                value={tab}
+                className="flex-none px-3 text-ui-xs"
               >
-                <Plus className="size-4" /> Add custom path
-              </button>
-            )}
-          </>
-        ) : null}
-        <TerminalAgentArgsSection key={state.terminalAgentArgs} state={state} />
+                <span>{PROVIDER_TAB_LABELS[tab]}</span>
+                {tabHasContent(tab, state) ? (
+                  <span
+                    aria-hidden
+                    className="size-1.5 rounded-full bg-primary"
+                  />
+                ) : null}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
+          {tabs.map((tab) => (
+            <TabsContent key={tab} value={tab} className="mt-0">
+              <ProviderTabBody tab={tab} state={state} providers={providers} />
+            </TabsContent>
+          ))}
+        </Tabs>
+      </div>
+    </div>
+  );
+}
+
+function ProviderTabBody({
+  tab,
+  state,
+  providers,
+}: {
+  readonly tab: ProviderSettingsTab;
+  readonly state: ProviderCliState;
+  readonly providers: readonly ProviderCliState[];
+}): ReactNode {
+  switch (tab) {
+    case "general":
+      return <ProviderGeneralTab state={state} providers={providers} />;
+    case "env":
+      return (
         <ProviderEnvOverridesSection
-          providerId={providerId}
+          providerId={state.providerId}
           overrides={state.envOverrides}
         />
-      </div>
+      );
+    case "usage":
+      return (
+        <div className="flex flex-col gap-3">
+          <TraycerSubscriptionForProvider providerId={state.providerId} />
+          <ProviderRateLimitForProvider providerId={state.providerId} />
+        </div>
+      );
+    case "mcp": {
+      const mcp = state.nativeCapabilities.mcp;
+      if (mcp === null) {
+        return (
+          <ProviderTabPlaceholder
+            title="MCP servers"
+            description="This provider does not support MCP servers."
+          />
+        );
+      }
+      return (
+        <ProviderMcpTab
+          providerId={state.providerId}
+          capabilities={mcp}
+          providerLabel={PROVIDER_DISPLAY_NAMES[state.providerId]}
+        />
+      );
+    }
+    case "plugins":
+      return <ProviderPluginsTab state={state} />;
+    case "skills":
+      return <ProviderSkillsTab state={state} />;
+  }
+}
+
+function ProviderTabPlaceholder({
+  title,
+  description,
+}: {
+  readonly title: string;
+  readonly description: string;
+}): ReactNode {
+  return (
+    <div className="flex flex-col gap-1 rounded-lg border border-border/60 p-4">
+      <div className="text-ui-sm font-medium text-foreground">{title}</div>
+      <p className="text-ui-xs text-muted-foreground">{description}</p>
+    </div>
+  );
+}
+
+function ProviderGeneralTab({
+  state,
+  providers,
+}: {
+  readonly state: ProviderCliState;
+  readonly providers: readonly ProviderCliState[];
+}): ReactNode {
+  const providerId = state.providerId;
+  // Traycer/OpenRouter share the OpenCode binary path set: their tables show
+  // the OpenCode candidates (or their own when present) while selection /
+  // custom-path mutations target the focused provider id.
+  const cliConfig = candidateConfigForProvider(state, providers);
+  const showCliCandidates = !hidesCliCandidates(providerId);
+  const radioName = useId();
+  const [adding, setAdding] = useState(false);
+  const [draftPath, setDraftPath] = useState("");
+  const focusDraftInput = useCallback((node: HTMLInputElement | null): void => {
+    node?.focus();
+  }, []);
+
+  const setSelection = useProvidersSetSelection();
+  const addCustom = useProvidersAddCustomPath();
+  const removeCustom = useProvidersRemoveCustomPath();
+  // Debounce so we don't spawn a `<bin> --version` probe on every keystroke.
+  const debouncedPath = useDebouncedValue(draftPath.trim(), 250);
+  const probe = useProvidersDetectVersion({
+    candidatePath: debouncedPath,
+    enabled: adding && debouncedPath.length > 0,
+  });
+
+  const onSelect = (selection: ProviderSelection): void => {
+    if (setSelection.isPending) return;
+    setSelection.mutate({ providerId, selection });
+  };
+
+  const onSaveCustom = (): void => {
+    const trimmed = draftPath.trim();
+    if (trimmed.length === 0 || addCustom.isPending) return;
+    addCustom.mutate(
+      { providerId, path: trimmed },
+      {
+        onSuccess: () => {
+          setAdding(false);
+          setDraftPath("");
+        },
+      },
+    );
+  };
+
+  return (
+    <div className="flex flex-col">
+      {showCliCandidates ? (
+        <>
+          <div className="overflow-hidden rounded-lg border border-border/60">
+            <div
+              className={cn(
+                TABLE_GRID,
+                "border-b border-border/40 bg-muted/30 text-ui-xs font-medium text-muted-foreground",
+              )}
+            >
+              <span className="py-2" />
+              <span className="min-w-0 p-2">Path</span>
+              <span className="p-2">Version</span>
+              <span className="py-2" />
+            </div>
+            {cliConfig.candidates.map((candidate) => (
+              <CandidateRow
+                key={candidateKey(candidate)}
+                candidate={candidate}
+                radioName={radioName}
+                selected={isSelected(cliConfig.selected, candidate)}
+                busy={setSelection.isPending || removeCustom.isPending}
+                onSelect={onSelect}
+                onRemove={(path) => removeCustom.mutate({ providerId, path })}
+              />
+            ))}
+            {adding ? (
+              <div className="flex flex-col gap-2 border-t border-border/40 bg-muted/10 p-3">
+                <div className="flex items-center gap-2">
+                  <Input
+                    ref={focusDraftInput}
+                    className="w-full font-mono text-ui-sm"
+                    placeholder="/absolute/path/to/binary"
+                    value={draftPath}
+                    onChange={(e) => setDraftPath(e.target.value)}
+                    disabled={addCustom.isPending}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") onSaveCustom();
+                      if (e.key === "Escape") {
+                        setAdding(false);
+                        setDraftPath("");
+                      }
+                    }}
+                  />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={onSaveCustom}
+                    disabled={
+                      addCustom.isPending || draftPath.trim().length === 0
+                    }
+                  >
+                    {addCustom.isPending ? <MutedAgentSpinner /> : null}
+                    Save
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setAdding(false);
+                      setDraftPath("");
+                    }}
+                    disabled={addCustom.isPending}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+                <ProbeLine
+                  probing={probe.isFetching}
+                  executable={probe.data?.executable ?? null}
+                  version={probe.data?.version ?? null}
+                />
+              </div>
+            ) : null}
+          </div>
+
+          {adding ? null : (
+            <button
+              type="button"
+              onClick={() => setAdding(true)}
+              className="mt-2 inline-flex w-fit items-center gap-1.5 rounded-md px-2 py-1 text-ui-sm text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground"
+            >
+              <Plus className="size-4" /> Add custom path
+            </button>
+          )}
+        </>
+      ) : null}
+      <TerminalAgentArgsSection key={state.terminalAgentArgs} state={state} />
     </div>
   );
 }
@@ -714,7 +931,7 @@ function ProviderEnvOverridesSection({
   };
 
   return (
-    <div className="mt-3 flex flex-col gap-3 rounded-lg border border-border/60 p-3">
+    <div className="flex flex-col gap-3 rounded-lg border border-border/60 p-3">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-ui-sm font-medium text-foreground">

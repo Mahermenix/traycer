@@ -35,11 +35,11 @@ import {
 // asserts the new v2.0/v3.0 lines and their upgrade/downgrade bridges are
 // well-formed.
 import {
-  providersAwaitLoginDowngradeV2ToV1,
+  providersAwaitLoginDowngradeV21ToV10,
   providersListDowngradeV2ToV1,
-  providersListDowngradeV3ToV1,
-  providersListDowngradeV3ToV2,
-  providersSetApiKeyDowngradeV2ToV1,
+  providersListDowngradeV31ToV10,
+  providersListDowngradeV31ToV20,
+  providersSetApiKeyDowngradeV21ToV10,
 } from "@traycer/protocol/host/registry";
 
 function harnessOption(id: string) {
@@ -84,6 +84,13 @@ function providerState(providerId: string, status: string) {
     terminalAgentArgs: "",
     envOverrides: [],
     loginCapability: null,
+    availabilityPending: false,
+    nativeCapabilities: {
+      supportedTabs: ["general", "env", "usage"],
+      mcp: null,
+      plugins: null,
+      skills: null,
+    },
   };
 }
 
@@ -185,7 +192,7 @@ describe("post-v1.0 GUI harness non-breaking v2→v1 downgrade bridges", () => {
     const state = providersListResponseSchema.parse({
       providers: [providerState("cursor", "unavailable")],
     }).providers[0];
-    const setApiKey = providersSetApiKeyDowngradeV2ToV1.downgradeResponse({
+    const setApiKey = providersSetApiKeyDowngradeV21ToV10.downgradeResponse({
       state,
     });
 
@@ -196,7 +203,7 @@ describe("post-v1.0 GUI harness non-breaking v2→v1 downgrade bridges", () => {
       providersSetApiKeyResponseSchemaV10.parse(setApiKey.value),
     ).not.toThrow();
 
-    const awaitLogin = providersAwaitLoginDowngradeV2ToV1.downgradeResponse({
+    const awaitLogin = providersAwaitLoginDowngradeV21ToV10.downgradeResponse({
       state,
     });
     expect(awaitLogin.ok).toBe(true);
@@ -204,7 +211,7 @@ describe("post-v1.0 GUI harness non-breaking v2→v1 downgrade bridges", () => {
     expect(awaitLogin.value.state?.auth.status).toBe("unknown");
 
     expect(
-      providersAwaitLoginDowngradeV2ToV1.downgradeResponse({ state: null }),
+      providersAwaitLoginDowngradeV21ToV10.downgradeResponse({ state: null }),
     ).toEqual({ ok: true, value: { state: null } });
   });
 
@@ -217,7 +224,7 @@ describe("post-v1.0 GUI harness non-breaking v2→v1 downgrade bridges", () => {
     ).toBe(false);
 
     expect(
-      providersSetApiKeyDowngradeV2ToV1.downgradeRequest({
+      providersSetApiKeyDowngradeV21ToV10.downgradeRequest({
         providerId: "grok",
         apiKey: "grok-key",
       }),
@@ -233,7 +240,7 @@ describe("post-v1.0 GUI harness non-breaking v2→v1 downgrade bridges", () => {
     });
 
     expect(
-      providersSetApiKeyDowngradeV2ToV1.downgradeRequest(
+      providersSetApiKeyDowngradeV21ToV10.downgradeRequest(
         requestWithFutureField,
       ),
     ).toMatchObject({
@@ -242,7 +249,7 @@ describe("post-v1.0 GUI harness non-breaking v2→v1 downgrade bridges", () => {
     });
 
     expect(
-      providersSetApiKeyDowngradeV2ToV1.downgradeRequest({
+      providersSetApiKeyDowngradeV21ToV10.downgradeRequest({
         providerId: "cursor",
         apiKey: "cursor-key",
       }),
@@ -351,7 +358,7 @@ describe("post-v2.0 Amp non-breaking v3→v2 / v3→v1 downgrade bridges", () =>
       ],
     });
 
-    const toV2 = providersListDowngradeV3ToV2.downgradeResponse(v3Response);
+    const toV2 = providersListDowngradeV31ToV20.downgradeResponse(v3Response);
     expect(toV2.ok).toBe(true);
     if (!toV2.ok) return;
     expect(toV2.value.providers.map((provider) => provider.providerId)).toEqual([
@@ -361,7 +368,7 @@ describe("post-v2.0 Amp non-breaking v3→v2 / v3→v1 downgrade bridges", () =>
       providersListResponseSchemaV20.parse(toV2.value),
     ).not.toThrow();
 
-    const toV1 = providersListDowngradeV3ToV1.downgradeResponse(v3Response);
+    const toV1 = providersListDowngradeV31ToV10.downgradeResponse(v3Response);
     expect(toV1.ok).toBe(true);
     if (!toV1.ok) return;
     expect(toV1.value.providers.map((provider) => provider.providerId)).toEqual([

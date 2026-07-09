@@ -12,4 +12,9 @@ export const providersMutationKeys = {
   awaitLogin: () => ["providers.awaitLogin"] as const,
   cancelLogin: () => ["providers.cancelLogin"] as const,
   refresh: () => ["providers.refresh"] as const,
+  mcpMutate: () => ["providers.mcpMutate"] as const,
+  mcpDiscover: () => ["providers.mcpDiscover"] as const,
+  mcpAuth: () => ["providers.mcpAuth"] as const,
+  pluginsMutate: () => ["providers.pluginsMutate"] as const,
+  skillsMutate: () => ["providers.skillsMutate"] as const,
 };

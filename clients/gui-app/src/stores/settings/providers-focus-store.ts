@@ -9,10 +9,19 @@ interface ProvidersFocusState {
   readonly focusHarnessId: GuiHarnessId | null;
   setFocusHarnessId: (harnessId: GuiHarnessId) => void;
   clearFocusHarnessId: () => void;
+  // Optional tab within that provider to open (e.g. "env", "mcp"). Consumed
+  // once alongside `focusHarnessId`; ignored when the target provider does not
+  // advertise the tab in `nativeCapabilities.supportedTabs`.
+  readonly focusTab: string | null;
+  setFocusTab: (tab: string) => void;
+  clearFocusTab: () => void;
 }
 
 export const useProvidersFocusStore = create<ProvidersFocusState>((set) => ({
   focusHarnessId: null,
   setFocusHarnessId: (harnessId) => set({ focusHarnessId: harnessId }),
   clearFocusHarnessId: () => set({ focusHarnessId: null }),
+  focusTab: null,
+  setFocusTab: (tab) => set({ focusTab: tab }),
+  clearFocusTab: () => set({ focusTab: null }),
 }));

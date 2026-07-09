@@ -11,63 +11,28 @@
  */
 import { z } from "zod";
 import type { TuiHarnessId } from "@traycer/protocol/host/agent/shared";
+import {
+  providerIdSchema,
+  providerIdSchemaV10,
+  providerIdSchemaV20,
+  type ProviderId,
+  type ProviderIdV10,
+  type ProviderIdV20,
+} from "./provider-ids";
+import {
+  DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
+  providerNativeCapabilitiesSchema,
+  type ProviderNativeCapabilities,
+} from "./provider-native-schemas";
 
-export const providerIdSchema = z.enum([
-  "claude-code",
-  "codex",
-  "opencode",
-  "cursor",
-  "traycer",
-  "grok",
-  "qwen",
-  "kiro",
-  "droid",
-  "kimi",
-  "copilot",
-  "kilocode",
-  "openrouter",
-  "amp",
-]);
-export type ProviderId = z.infer<typeof providerIdSchema>;
-
-/**
- * Frozen provider id set as shipped in protocol v1.0. Used only by the frozen
- * v1.0 `providers.list` response so a v1.0 client never receives the ACP GUI
- * harness providers; the v2.0 line adds them with a v2→v1 downgrade bridge. Do
- * not add new providers here.
- */
-export const providerIdSchemaV10 = z.enum([
-  "claude-code",
-  "codex",
-  "opencode",
-  "cursor",
-  "traycer",
-]);
-export type ProviderIdV10 = z.infer<typeof providerIdSchemaV10>;
-
-/**
- * Frozen provider id set as shipped in protocol v2.0 (before Amp). Used only
- * by the frozen v2.0 `providers.list` response so an already-shipped v2.0
- * client never receives the Amp provider; the v3.0 line adds it with a v3→v2
- * (and v3→v1) downgrade bridge. Do not add new providers here - extend the
- * latest `providerIdSchema` and use the existing v3 bridge instead.
- */
-export const providerIdSchemaV20 = z.enum([
-  "claude-code",
-  "codex",
-  "opencode",
-  "cursor",
-  "traycer",
-  "grok",
-  "qwen",
-  "kiro",
-  "droid",
-  "kimi",
-  "copilot",
-  "kilocode",
-  "openrouter",
-]);
-export type ProviderIdV20 = z.infer<typeof providerIdSchemaV20>;
+export {
+  providerIdSchema,
+  providerIdSchemaV10,
+  providerIdSchemaV20,
+  type ProviderId,
+  type ProviderIdV10,
+  type ProviderIdV20,
+};
 
 /** Human-readable provider names, shared by the host and the GUI. */
 export const PROVIDER_DISPLAY_NAMES: Record<ProviderId, string> = {
@@ -287,10 +252,20 @@ const providerCliStateBaseShapeV10 = {
   loginCapability: providerLoginCapabilitySchema.nullable().catch(null),
 };
 
+/**
+ * Latest provider CLI state (providers.list@3.1 and state-returning
+ * providers.*@2.1). Adds `nativeCapabilities` — per-capability facts the UI
+ * renders MCP/plugins/skills tabs from. `.catch(DEFAULT)` tolerates old host
+ * builds that omit the field when an old-host response is parsed on a new
+ * client.
+ */
 export const providerCliStateSchema = z.object({
   providerId: providerIdSchema,
   ...providerCliStateBaseShape,
   auth: PROVIDER_AUTH_SCHEMA_V20,
+  nativeCapabilities: providerNativeCapabilitiesSchema.catch(
+    DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
+  ),
 });
 export type ProviderCliState = z.infer<typeof providerCliStateSchema>;
 
@@ -304,13 +279,32 @@ export const providersListResponseSchema = z.object({
 });
 export type ProvidersListResponse = z.infer<typeof providersListResponseSchema>;
 
+// ── Frozen protocol-v3.0 provider state + list response (before
+// nativeCapabilities). `providers.list@3.0` shipped with Amp but without the
+// native-settings descriptor; @3.1 adds it with an upgrade bridge.
+export const providerCliStateSchemaV30 = z.object({
+  providerId: providerIdSchema,
+  ...providerCliStateBaseShape,
+  auth: PROVIDER_AUTH_SCHEMA_V20,
+});
+export type ProviderCliStateV30 = z.infer<typeof providerCliStateSchemaV30>;
+export const providersListResponseSchemaV30 = z.object({
+  providers: z.array(providerCliStateSchemaV30),
+});
+export type ProvidersListResponseV30 = z.infer<
+  typeof providersListResponseSchemaV30
+>;
+
 // ── Frozen protocol-v2.0 provider state + list response (before Amp) ───────
 // `providers.list` always returns every provider; v2.0 shipped without Amp, so
 // it is frozen here as actually shipped. The v3.0 line adds Amp and a v3→v2
 // (and v3→v1) downgrade bridge filters it for older callers. Do not add new
-// providers here - use the existing v3 bridge.
-export const providerCliStateSchemaV20 = providerCliStateSchema.extend({
+// providers here - use the existing v3 bridge. Frozen WITHOUT
+// nativeCapabilities (that rides @3.1 / @2.1).
+export const providerCliStateSchemaV20 = z.object({
   providerId: providerIdSchemaV20,
+  ...providerCliStateBaseShape,
+  auth: PROVIDER_AUTH_SCHEMA_V20,
 });
 export type ProviderCliStateV20 = z.infer<typeof providerCliStateSchemaV20>;
 export const providersListResponseSchemaV20 = z.object({
@@ -336,6 +330,11 @@ export type ProvidersListResponseV10 = z.infer<
   typeof providersListResponseSchemaV10
 >;
 
+export {
+  DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
+  type ProviderNativeCapabilities,
+};
+
 export const providersSetSelectionRequestSchema = z.object({
   providerId: providerIdSchema,
   selection: providerSelectionSchema,
@@ -350,6 +349,9 @@ export type ProvidersSetSelectionRequest = z.infer<
 
 export const providersSetSelectionResponseSchema = z.object({
   state: providerCliStateSchema,
+});
+export const providersSetSelectionResponseSchemaV20 = z.object({
+  state: providerCliStateSchemaV20,
 });
 export const providersSetSelectionResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -373,6 +375,9 @@ export type ProvidersAddCustomPathRequest = z.infer<
 export const providersAddCustomPathResponseSchema = z.object({
   state: providerCliStateSchema,
 });
+export const providersAddCustomPathResponseSchemaV20 = z.object({
+  state: providerCliStateSchemaV20,
+});
 export const providersAddCustomPathResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
 });
@@ -394,6 +399,9 @@ export type ProvidersRemoveCustomPathRequest = z.infer<
 
 export const providersRemoveCustomPathResponseSchema = z.object({
   state: providerCliStateSchema,
+});
+export const providersRemoveCustomPathResponseSchemaV20 = z.object({
+  state: providerCliStateSchemaV20,
 });
 export const providersRemoveCustomPathResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -417,6 +425,9 @@ export type ProvidersSetEnabledRequest = z.infer<
 export const providersSetEnabledResponseSchema = z.object({
   state: providerCliStateSchema,
 });
+export const providersSetEnabledResponseSchemaV20 = z.object({
+  state: providerCliStateSchemaV20,
+});
 export const providersSetEnabledResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
 });
@@ -439,6 +450,9 @@ export type ProvidersSetApiKeyRequest = z.infer<
 export const providersSetApiKeyResponseSchema = z.object({
   state: providerCliStateSchema,
 });
+export const providersSetApiKeyResponseSchemaV20 = z.object({
+  state: providerCliStateSchemaV20,
+});
 export const providersSetApiKeyResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
 });
@@ -458,6 +472,9 @@ export type ProvidersClearApiKeyRequest = z.infer<
 
 export const providersClearApiKeyResponseSchema = z.object({
   state: providerCliStateSchema,
+});
+export const providersClearApiKeyResponseSchemaV20 = z.object({
+  state: providerCliStateSchemaV20,
 });
 export const providersClearApiKeyResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -481,6 +498,9 @@ export type ProvidersSetTerminalAgentArgsRequest = z.infer<
 
 export const providersSetTerminalAgentArgsResponseSchema = z.object({
   state: providerCliStateSchema,
+});
+export const providersSetTerminalAgentArgsResponseSchemaV20 = z.object({
+  state: providerCliStateSchemaV20,
 });
 export const providersSetTerminalAgentArgsResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -507,6 +527,9 @@ export type ProvidersSetEnvOverrideRequest = z.infer<
 export const providersSetEnvOverrideResponseSchema = z.object({
   state: providerCliStateSchema,
 });
+export const providersSetEnvOverrideResponseSchemaV20 = z.object({
+  state: providerCliStateSchemaV20,
+});
 export const providersSetEnvOverrideResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
 });
@@ -528,6 +551,9 @@ export type ProvidersDeleteEnvOverrideRequest = z.infer<
 
 export const providersDeleteEnvOverrideResponseSchema = z.object({
   state: providerCliStateSchema,
+});
+export const providersDeleteEnvOverrideResponseSchemaV20 = z.object({
+  state: providerCliStateSchemaV20,
 });
 export const providersDeleteEnvOverrideResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -595,6 +621,9 @@ export const providersAwaitLoginResponseSchema = z.object({
   // Null when no login was in flight for this provider (nothing to await).
   state: providerCliStateSchema.nullable(),
 });
+export const providersAwaitLoginResponseSchemaV20 = z.object({
+  state: providerCliStateSchemaV20.nullable(),
+});
 export const providersAwaitLoginResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10.nullable(),
 });
@@ -633,37 +662,63 @@ export function downgradeProviderAuthV20ToV10(
   }
 }
 
-// Accepts any latest-shaped state (v2.0 or v3.0 alike - both v2→v1 and v3→v1
-// downgrade the same way) and downgrades it to the frozen v1.0 shape. A
-// provider outside v1.0's id set (ACP GUI harnesses, Amp) simply fails the
+// Accepts any latest-shaped state and downgrades it to the frozen v1.0 shape.
+// A provider outside v1.0's id set (ACP GUI harnesses, Amp) simply fails the
 // `providerCliStateSchemaV10` parse below and is filtered by the caller.
 export function downgradeProviderCliStateToV10(
-  state: ProviderCliState,
+  state: ProviderCliState | ProviderCliStateV30 | ProviderCliStateV20,
 ): ProviderCliStateV10 | null {
   // `providerCliStateSchemaV10` is a `z.strictObject`, so it REJECTS any key it
-  // doesn't model. Drop v2.0-only fields (here `availabilityPending`) before the
-  // parse — otherwise every provider fails the parse and silently vanishes from
-  // the downgraded payload for v1.0 clients.
-  const { availabilityPending, ...rest } = state;
+  // doesn't model. Drop post-v1.0 fields before the parse — otherwise every
+  // provider fails the parse and silently vanishes from the downgraded payload
+  // for v1.0 clients.
+  // - `availabilityPending` (v2.0+)
+  // - `nativeCapabilities` (v3.1 / v2.1+) — CRITICAL silent-data-loss trap
+  const { availabilityPending: _availabilityPending, ...rest } = state;
+  const { nativeCapabilities: _nativeCapabilities, ...withoutNative } =
+    rest as typeof rest & {
+      nativeCapabilities?: ProviderNativeCapabilities;
+    };
   const parsed = providerCliStateSchemaV10.safeParse({
-    ...rest,
+    ...withoutNative,
     auth: downgradeProviderAuthV20ToV10(state.auth),
   });
   return parsed.success ? parsed.data : null;
 }
 
-// Downgrades a latest-shaped (v3.0) provider-state list to the frozen v2.0
-// shape, dropping Amp (or any future post-v2.0 provider) so an already-shipped
-// v2.0 client's strict decode never sees it. The auth-status schema is
-// unchanged between v2.0 and latest, so this is a pure filter+reparse - no
-// field remapping needed (unlike the v1.0 downgrade above).
+// Downgrades a latest-shaped provider-state list to the frozen v2.0 shape,
+// dropping Amp (or any future post-v2.0 provider) and stripping
+// `nativeCapabilities` so an already-shipped v2.0 client's decode never sees
+// them. Zod object parse strips unknown keys.
 export function downgradeProviderCliStateListToV20(
-  states: readonly ProviderCliState[],
+  states: readonly (ProviderCliState | ProviderCliStateV30)[],
 ): ProviderCliStateV20[] {
   return states.flatMap((state) => {
     const parsed = providerCliStateSchemaV20.safeParse(state);
     return parsed.success ? [parsed.data] : [];
   });
+}
+
+// Downgrades latest (v3.1) state to frozen v3.0 (no nativeCapabilities).
+export function downgradeProviderCliStateToV30(
+  state: ProviderCliState,
+): ProviderCliStateV30 {
+  const { nativeCapabilities: _nativeCapabilities, ...rest } = state;
+  return providerCliStateSchemaV30.parse(rest);
+}
+
+export function downgradeProviderCliStateListToV30(
+  states: readonly ProviderCliState[],
+): ProviderCliStateV30[] {
+  return states.map(downgradeProviderCliStateToV30);
+}
+
+// Downgrades latest state to frozen v2.0 (drops Amp + nativeCapabilities).
+export function downgradeProviderCliStateToV20(
+  state: ProviderCliState | ProviderCliStateV30,
+): ProviderCliStateV20 | null {
+  const parsed = providerCliStateSchemaV20.safeParse(state);
+  return parsed.success ? parsed.data : null;
 }
 
 export function upgradeProviderCliStateV10ToV20(
@@ -673,4 +728,20 @@ export function upgradeProviderCliStateV10ToV20(
     ...state,
     availabilityPending: false,
   });
+}
+
+/** Upgrade frozen v2.0/v3.0 state to latest by attaching the default descriptor. */
+export function upgradeProviderCliStateToLatest(
+  state: ProviderCliStateV20 | ProviderCliStateV30,
+): ProviderCliState {
+  return providerCliStateSchema.parse({
+    ...state,
+    nativeCapabilities: DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
+  });
+}
+
+export function upgradeProviderCliStateListToLatest(
+  states: readonly (ProviderCliStateV20 | ProviderCliStateV30)[],
+): ProviderCliState[] {
+  return states.map(upgradeProviderCliStateToLatest);
 }
