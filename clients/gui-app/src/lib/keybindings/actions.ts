@@ -61,6 +61,8 @@ export type ActionCategory = "epics" | "tabs" | "groups" | "app";
 
 export type ActionKind = "chord" | "digit";
 
+export type TerminalPolicy = "app" | "shell";
+
 /**
  * An action's default chord. A bare string (or `null` for "unbound") is the
  * same on every platform. A `{ mac, other }` pair declares per-platform
@@ -79,6 +81,9 @@ export interface ActionMeta {
   readonly category: ActionCategory;
   readonly kind: ActionKind;
   readonly defaultChord: ActionDefaultChord;
+  readonly secondaryChord: ActionDefaultChord | undefined;
+  readonly terminalPolicy: TerminalPolicy;
+  readonly secondaryTerminalPolicy: TerminalPolicy | undefined;
 }
 
 /** The platform-effective default chord for an action (`null` when unbound). */
@@ -87,6 +92,17 @@ export function resolveActionDefaultChord(
 ): ChordString | null {
   const def = meta.defaultChord;
   if (def === null || typeof def === "string") return def;
+  return isMac() ? def.mac : def.other;
+}
+
+/** The platform-effective secondary chord for an action, if one exists. */
+export function resolveActionSecondaryChord(
+  meta: ActionMeta,
+): ChordString | null {
+  const def = meta.secondaryChord;
+  if (def === undefined || def === null || typeof def === "string") {
+    return def ?? null;
+  }
   return isMac() ? def.mac : def.other;
 }
 
@@ -99,6 +115,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "epics",
     kind: "digit",
     defaultChord: "alt",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "tab.switch.byDigit": {
     id: "tab.switch.byDigit",
@@ -108,6 +127,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "tabs",
     kind: "digit",
     defaultChord: "mod",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "epic.new": {
     id: "epic.new",
@@ -116,6 +138,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "epics",
     kind: "chord",
     defaultChord: "mod+n",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "epic.duplicate-tab": {
     id: "epic.duplicate-tab",
@@ -124,6 +149,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "epics",
     kind: "chord",
     defaultChord: "mod+shift+k",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "epic.next": {
     id: "epic.next",
@@ -132,6 +160,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "epics",
     kind: "chord",
     defaultChord: "mod+shift+]",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "epic.prev": {
     id: "epic.prev",
@@ -140,6 +171,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "epics",
     kind: "chord",
     defaultChord: "mod+shift+[",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "epic.close": {
     id: "epic.close",
@@ -149,6 +183,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "epics",
     kind: "chord",
     defaultChord: "mod+shift+w",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "tab.new": {
     id: "tab.new",
@@ -158,6 +195,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "tabs",
     kind: "chord",
     defaultChord: "mod+t",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "tab.close": {
     id: "tab.close",
@@ -167,6 +207,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "tabs",
     kind: "chord",
     defaultChord: "mod+w",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "tab.close-others": {
     id: "tab.close-others",
@@ -176,6 +219,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     kind: "chord",
     // ⌘⌥W - matches Safari's "Close Other Tabs".
     defaultChord: "mod+alt+w",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "tab.close-right": {
     id: "tab.close-right",
@@ -186,6 +232,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     kind: "chord",
     // ⌘⇧⌥] - the `]` echoes "Next tab" (⌘⇧]); ⌥ marks the destructive variant.
     defaultChord: "mod+shift+alt+]",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "tab.close-all": {
     id: "tab.close-all",
@@ -196,6 +245,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     kind: "chord",
     // ⌘⇧⌥W - the "close" W family; all three modifiers signal the widest scope.
     defaultChord: "mod+shift+alt+w",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "tab.next": {
     id: "tab.next",
@@ -204,6 +256,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "tabs",
     kind: "chord",
     defaultChord: "mod+]",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "tab.prev": {
     id: "tab.prev",
@@ -212,6 +267,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "tabs",
     kind: "chord",
     defaultChord: "mod+[",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "group.split.horizontal": {
     id: "group.split.horizontal",
@@ -221,6 +279,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "groups",
     kind: "chord",
     defaultChord: "mod+d",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "group.split.vertical": {
     id: "group.split.vertical",
@@ -230,6 +291,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "groups",
     kind: "chord",
     defaultChord: "mod+shift+d",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "group.split-right": {
     id: "group.split-right",
@@ -239,6 +303,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "groups",
     kind: "chord",
     defaultChord: "mod+\\",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "group.focus.up": {
     id: "group.focus.up",
@@ -247,6 +314,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "groups",
     kind: "chord",
     defaultChord: "mod+alt+arrowup",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "group.focus.down": {
     id: "group.focus.down",
@@ -255,6 +325,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "groups",
     kind: "chord",
     defaultChord: "mod+alt+arrowdown",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "group.focus.left": {
     id: "group.focus.left",
@@ -263,6 +336,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "groups",
     kind: "chord",
     defaultChord: "mod+alt+arrowleft",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "group.focus.right": {
     id: "group.focus.right",
@@ -271,6 +347,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "groups",
     kind: "chord",
     defaultChord: "mod+alt+arrowright",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "group.focus-editor": {
     id: "group.focus-editor",
@@ -280,6 +359,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "groups",
     kind: "chord",
     defaultChord: "mod+l",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "tile.find.replace": {
     id: "tile.find.replace",
@@ -289,6 +371,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "chord",
     defaultChord: "mod+alt+f",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "app.sidebar.toggle": {
     id: "app.sidebar.toggle",
@@ -297,6 +382,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "chord",
     defaultChord: "mod+b",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "app.history.open": {
     id: "app.history.open",
@@ -305,6 +393,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "chord",
     defaultChord: "mod+y",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "app.settings.open": {
     id: "app.settings.open",
@@ -313,6 +404,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "chord",
     defaultChord: "mod+,",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "app.settings.section.byDigit": {
     id: "app.settings.section.byDigit",
@@ -322,6 +416,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "digit",
     defaultChord: "alt",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "app.palette.open": {
     id: "app.palette.open",
@@ -331,6 +428,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "chord",
     defaultChord: "mod+k",
+    secondaryChord: { mac: "ctrl+shift+p", other: "mod+shift+p" },
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: "app",
   },
   "app.zoom.in": {
     id: "app.zoom.in",
@@ -339,6 +439,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "chord",
     defaultChord: "mod+=",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "app.zoom.out": {
     id: "app.zoom.out",
@@ -347,6 +450,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "chord",
     defaultChord: "mod+-",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "app.zoom.reset": {
     id: "app.zoom.reset",
@@ -355,6 +461,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "chord",
     defaultChord: "mod+0",
+    secondaryChord: undefined,
+    terminalPolicy: "shell",
+    secondaryTerminalPolicy: undefined,
   },
   "composer.dictation.toggle": {
     id: "composer.dictation.toggle",
@@ -367,6 +476,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     // macOS), avoiding the Command-based conflicts: ⌘Space (Spotlight),
     // ⌘⇧Space (window summon), ⌘⇧V (split group vertically).
     defaultChord: "ctrl+shift+m",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "composer.model-picker.toggle": {
     id: "composer.model-picker.toggle",
@@ -379,6 +491,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     // via the Control-aware encoder), while Alt+Shift+M avoids the Windows/Linux
     // Ctrl+Alt=AltGr conflict and doesn't collide with dictation's ⌃⇧M.
     defaultChord: { mac: "ctrl+alt+m", other: "alt+shift+m" },
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "model.provider.byDigit": {
     id: "model.provider.byDigit",
@@ -388,6 +503,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "digit",
     defaultChord: "mod",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "model.reasoning.byDigit": {
     id: "model.reasoning.byDigit",
@@ -397,6 +515,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "digit",
     defaultChord: "alt",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   "model.profile.byDigit": {
     id: "model.profile.byDigit",
@@ -406,6 +527,9 @@ export const ACTION_META: Readonly<Record<ActionId, ActionMeta>> = {
     category: "app",
     kind: "digit",
     defaultChord: "mod+shift",
+    secondaryChord: undefined,
+    terminalPolicy: "app",
+    secondaryTerminalPolicy: undefined,
   },
   // In-app back/forward (`nav.back` / `nav.forward`) intentionally has NO
   // keyboard chord: `mod`/`alt`+Arrow both collide with native text-editing
