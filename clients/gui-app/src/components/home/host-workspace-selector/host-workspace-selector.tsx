@@ -68,10 +68,12 @@ import {
 } from "@/stores/worktree/worktree-intent-staging-store";
 import { useWorktreeIntentMemoryStore } from "@/stores/worktree/worktree-intent-memory-store";
 import {
+  applySeedIntentOverride,
   defaultFolderIntent,
   rememberedNeedsBranchValidation,
   seedEntryForFolder,
   type SeedFolderContext,
+  type SeedIntentOverride,
 } from "@/lib/worktree/worktree-intent-seeding";
 import { useHostQueries } from "@/hooks/host/use-host-queries";
 import { buildDefaultBranchByPath } from "@/lib/worktree/default-branch-name";
@@ -247,6 +249,7 @@ function HomeSurface(props: HomeSurfaceProps) {
       layout="inline"
       workspaceSeed={null}
       seedIntent={null}
+      seedIntentOverride={null}
       hostScope={{ kind: "active" }}
     />
   );
@@ -272,6 +275,13 @@ type ActiveHostWorkspaceControlsProps = {
    * passes straight into `createChat`.
    */
   readonly seedIntent: WorktreeIntent | null;
+  /**
+   * Per-folder transform applied on top of `seedIntent` when seeding: force
+   * every seeded folder to a new worktree carrying the working tree ("A/B
+   * Fork"). `null` stages the seed verbatim (the Cross Question fork's "same
+   * working copy" semantics).
+   */
+  readonly seedIntentOverride: SeedIntentOverride | null;
   // "inline" (landing composer): folder rows with the host chip pushed to the
   // far right of row 1. "stacked" (fork dialog, terminal-agent launcher): a
   // file-tree-style Host list above a Workspaces section, no trailing chip.
@@ -351,6 +361,7 @@ export function ActiveHostWorkspaceControls(
             activeHostClient={activeHostClient}
             stagingKey={props.stagingKey}
             seedIntent={props.seedIntent}
+            seedIntentOverride={props.seedIntentOverride}
             restingMode="rows"
             hostSlot={null}
           />
@@ -378,6 +389,7 @@ export function ActiveHostWorkspaceControls(
       activeHostClient={activeHostClient}
       stagingKey={props.stagingKey}
       seedIntent={props.seedIntent}
+      seedIntentOverride={props.seedIntentOverride}
       restingMode="summary"
       hostSlot={deviceSelect}
     />
@@ -410,6 +422,9 @@ function HomeWorkspaceRows(props: {
    * per-epic / per-folder memory / default seeding applies instead.
    */
   readonly seedIntent: WorktreeIntent | null;
+  // Per-folder transform on top of `seedIntent` (A/B Fork → new worktree
+  // carrying the working tree; null = verbatim). See `SeedIntentOverride`.
+  readonly seedIntentOverride: SeedIntentOverride | null;
   readonly restingMode: "rows" | "summary";
   readonly hostSlot: ReactNode;
 }) {
@@ -419,6 +434,7 @@ function HomeWorkspaceRows(props: {
     activeHostClient,
     stagingKey,
     seedIntent,
+    seedIntentOverride,
   } = props;
   const folderActions = useWorkspaceFolderActionsForClient(activeHostClient);
   const setFolderIntent = useWorktreeIntentMemoryStore(
@@ -571,11 +587,27 @@ function HomeWorkspaceRows(props: {
           (entry) => entry.workspacePath === summary.workspacePath,
         ) ?? false;
       if (alreadyStaged) return;
-      const seedEntry =
-        seedIntent?.entries.find(
-          (entry) => entry.workspacePath === summary.workspacePath,
-        ) ?? null;
       const currentBranch = branchForSummary(summary);
+      const folder: SeedFolderContext = {
+        workspacePath: summary.workspacePath,
+        repoIdentifier: summary.repoIdentifier,
+        isPrimary: staged === null && index === 0,
+        isGitRepo: summary.isGitRepo,
+        currentBranch,
+        defaultNewBranchName: defaultBranchByPath[summary.workspacePath] ?? "",
+        summary,
+      };
+      // A fork surface may override the seed's per-folder disposition (Cross
+      // Question → local, A/B Fork → new worktree carrying the working tree);
+      // the overridden entry stays top-precedence like the verbatim seed.
+      const seedEntry = applySeedIntentOverride({
+        override: seedIntentOverride,
+        seedEntry:
+          seedIntent?.entries.find(
+            (entry) => entry.workspacePath === summary.workspacePath,
+          ) ?? null,
+        folder,
+      });
       const epicEntry = epicEntryFor(summary.workspacePath);
       const remembered = rememberedFor(summary.workspacePath);
       // A seed (the source conversation's live binding) is authoritative and
@@ -590,15 +622,6 @@ function HomeWorkspaceRows(props: {
       // Wait for the branch list before resolving a branch-dependent memory so a
       // valid remembered choice isn't dropped to the default on a missing list.
       if (needsBranches && branches === null) return;
-      const folder: SeedFolderContext = {
-        workspacePath: summary.workspacePath,
-        repoIdentifier: summary.repoIdentifier,
-        isPrimary: staged === null && index === 0,
-        isGitRepo: summary.isGitRepo,
-        currentBranch,
-        defaultNewBranchName: defaultBranchByPath[summary.workspacePath] ?? "",
-        summary,
-      };
       const entry = seedEntryForFolder({
         seedFolderIntent: seedEntry,
         epicIntentEntry: epicEntry,
@@ -618,6 +641,7 @@ function HomeWorkspaceRows(props: {
     rememberedFor,
     branchesByValidationPath,
     seedIntent,
+    seedIntentOverride,
   ]);
 
   const items = useMemo<ReadonlyArray<WorkspaceRunItem>>(
