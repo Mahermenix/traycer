@@ -113,6 +113,7 @@ export function openerExistingLeaf(
         tabId: ctx.activeTabId,
         groupId: ctx.targetGroupId,
         ref,
+        navigateNestedFocus: ctx.router.navigateNestedFocus,
       }),
   });
   return hostBadge === null ? leaf : { ...leaf, hostBadge };

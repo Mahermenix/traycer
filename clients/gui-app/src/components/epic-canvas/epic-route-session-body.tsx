@@ -13,6 +13,8 @@ export interface EpicRouteSessionBodyProps {
   readonly focusedAt: number | undefined;
   readonly focusArtifactId: string | undefined;
   readonly focusThreadId: string | undefined;
+  readonly focusPaneId: string | undefined;
+  readonly focusTileInstanceId: string | undefined;
 }
 
 export function EpicRouteSessionBody(props: EpicRouteSessionBodyProps) {
@@ -45,6 +47,8 @@ function EpicRouteActiveEffects(props: EpicRouteSessionBodyProps) {
     focusedAt: props.focusedAt,
     focusArtifactId: props.focusArtifactId,
     focusThreadId: props.focusThreadId,
+    focusPaneId: props.focusPaneId,
+    focusTileInstanceId: props.focusTileInstanceId,
   });
   return (
     <>

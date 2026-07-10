@@ -1,6 +1,7 @@
 import { createContext, use, useCallback, useSyncExternalStore } from "react";
 import type { IHostStreamClient } from "@traycer-clients/shared/host-transport/host-stream-client";
 import type { StreamMethodSupport } from "@traycer-clients/shared/host-transport/ws-stream-client";
+import type { SchemaVersion } from "@traycer/protocol/framework/versioned-stream-rpc";
 import type { HostStreamRpcRegistry } from "@traycer/protocol/host/registry";
 
 /**
@@ -24,9 +25,17 @@ export function useWsStreamClient(): IHostStreamClient<HostStreamRpcRegistry> | 
   return value === null ? null : value.wsStreamClient;
 }
 
-export function useStreamMethodSupport(
+// Both method-support readers ride the same `subscribeMethodSupport` store and
+// null-client handling; only the per-snapshot read differs. The readers are
+// module-level constants so `getSnapshot`'s identity stays keyed on
+// `[client, method]` alone.
+function useStreamMethodValue<T>(
   method: keyof HostStreamRpcRegistry & string,
-): StreamMethodSupport | null {
+  read: (
+    client: IHostStreamClient<HostStreamRpcRegistry>,
+    method: keyof HostStreamRpcRegistry & string,
+  ) => T,
+): T | null {
   const value = use(StreamRuntimeContext);
   const client = value?.wsStreamClient ?? null;
   const subscribe = useCallback(
@@ -42,7 +51,29 @@ export function useStreamMethodSupport(
     if (client === null) {
       return null;
     }
-    return client.getMethodSupport(method);
-  }, [client, method]);
+    return read(client, method);
+  }, [client, method, read]);
   return useSyncExternalStore(subscribe, getSnapshot, () => null);
+}
+
+const readMethodSupport = (
+  client: IHostStreamClient<HostStreamRpcRegistry>,
+  method: keyof HostStreamRpcRegistry & string,
+) => client.getMethodSupport(method);
+
+const readMethodSchemaVersion = (
+  client: IHostStreamClient<HostStreamRpcRegistry>,
+  method: keyof HostStreamRpcRegistry & string,
+) => client.getMethodSchemaVersion(method);
+
+export function useStreamMethodSupport(
+  method: keyof HostStreamRpcRegistry & string,
+): StreamMethodSupport | null {
+  return useStreamMethodValue(method, readMethodSupport);
+}
+
+export function useStreamMethodSchemaVersion(
+  method: keyof HostStreamRpcRegistry & string,
+): SchemaVersion | null {
+  return useStreamMethodValue(method, readMethodSchemaVersion);
 }

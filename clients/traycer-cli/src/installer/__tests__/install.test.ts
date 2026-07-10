@@ -187,6 +187,7 @@ describe("atomic install-dir swap", () => {
     );
     await writeHostInstallRecord("production", {
       version: "0.9.0",
+      runtimeVersion: null,
       platform: "darwin",
       arch: "arm64",
       installedAt: "2025-01-01T00:00:00.000Z",

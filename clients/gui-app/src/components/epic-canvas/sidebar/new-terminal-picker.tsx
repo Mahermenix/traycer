@@ -25,6 +25,7 @@ import {
   buildTerminalTileRef,
   type TerminalLaunchTarget,
 } from "@/components/epic-canvas/sidebar/new-terminal-tile-ref";
+import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 
 interface NewTerminalPickerProps {
@@ -34,14 +35,27 @@ interface NewTerminalPickerProps {
 
 export function NewTerminalPicker(props: NewTerminalPickerProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const openTileInTab = useEpicCanvasStore((s) => s.openTileInTab);
+  const navigateNested = useEpicNestedFocusNavigation();
+  const prepareOpenTileInTabFocusTarget = useEpicCanvasStore(
+    (s) => s.prepareOpenTileInTabFocusTarget,
+  );
 
   const handleLaunch = useCallback(
     (target: TerminalLaunchTarget) => {
-      openTileInTab(props.tabId, buildTerminalTileRef(target));
+      navigateNested(props.epicId, props.tabId, () =>
+        prepareOpenTileInTabFocusTarget(
+          props.tabId,
+          buildTerminalTileRef(target),
+        ),
+      );
       setIsOpen(false);
     },
-    [openTileInTab, props.tabId],
+    [
+      navigateNested,
+      prepareOpenTileInTabFocusTarget,
+      props.epicId,
+      props.tabId,
+    ],
   );
 
   return (

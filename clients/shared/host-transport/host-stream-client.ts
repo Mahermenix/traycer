@@ -1,4 +1,7 @@
-import type { VersionedStreamRpcRegistry } from "@traycer/protocol/framework/versioned-stream-rpc";
+import type {
+  SchemaVersion,
+  VersionedStreamRpcRegistry,
+} from "@traycer/protocol/framework/versioned-stream-rpc";
 import type { IStreamClient } from "./i-stream-client";
 import type { StreamMethodSupport } from "./ws-stream-client";
 
@@ -43,4 +46,12 @@ export interface IHostStreamClient<
   ): StreamMethodSupport;
   /** Notified whenever any method's `getMethodSupport` result changes. */
   subscribeMethodSupport(listener: () => void): () => void;
+  /**
+   * Learned wire schema version for the connected host, keyed by stream
+   * method name. `null` until a subscribe attempt resolves - mirrors
+   * `getMethodSupport`'s cacheable pre-check.
+   */
+  getMethodSchemaVersion<Method extends keyof Registry & string>(
+    method: Method,
+  ): SchemaVersion | null;
 }

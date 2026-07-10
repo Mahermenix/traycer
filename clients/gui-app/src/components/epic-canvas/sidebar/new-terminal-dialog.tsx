@@ -28,6 +28,7 @@ import {
   type TerminalLaunchTarget,
 } from "@/components/epic-canvas/sidebar/new-terminal-tile-ref";
 import { openTileIntoTargetGroup } from "@/lib/commands/actions";
+import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { useNewTerminalModalOpenStore } from "@/stores/epics/new-terminal-modal-open-store";
 
 export function NewTerminalDialogHost(props: {
@@ -36,6 +37,7 @@ export function NewTerminalDialogHost(props: {
 }) {
   const request = useNewTerminalModalOpenStore((state) => state.request);
   const close = useNewTerminalModalOpenStore((state) => state.close);
+  const navigateNestedFocus = useEpicNestedFocusNavigation();
   const isOpen =
     request !== null &&
     request.epicId === props.epicId &&
@@ -65,10 +67,11 @@ export function NewTerminalDialogHost(props: {
         tabId: request.tabId,
         groupId: request.groupId,
         ref: buildTerminalTileRef(target),
+        navigateNestedFocus,
       });
       close();
     },
-    [close, request],
+    [close, navigateNestedFocus, request],
   );
 
   return (

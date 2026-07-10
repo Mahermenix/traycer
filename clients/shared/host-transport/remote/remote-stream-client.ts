@@ -1,5 +1,8 @@
 import type { VersionedRpcRegistry } from "@traycer/protocol/framework/index";
-import type { VersionedStreamRpcRegistry } from "@traycer/protocol/framework/versioned-stream-rpc";
+import type {
+  SchemaVersion,
+  VersionedStreamRpcRegistry,
+} from "@traycer/protocol/framework/versioned-stream-rpc";
 import type { IHostStreamClient } from "../host-stream-client";
 import type { IStreamSession } from "../i-stream-session";
 import type { ParamsOf, StreamMethodSupport } from "../ws-stream-client";
@@ -68,5 +71,16 @@ export class RemoteStreamClient<
   /** No-op: {@link getMethodSupport} never changes, so nothing to notify. */
   subscribeMethodSupport(_listener: () => void): () => void {
     return () => {};
+  }
+
+  /**
+   * Always `null` (see {@link IHostStreamClient.getMethodSchemaVersion}): the
+   * mux session has no learned-schema-version cache to report, mirroring
+   * {@link getMethodSupport}'s degrade-quietly treatment for remote hosts.
+   */
+  getMethodSchemaVersion<Method extends keyof StreamRegistry & string>(
+    _method: Method,
+  ): SchemaVersion | null {
+    return null;
   }
 }
