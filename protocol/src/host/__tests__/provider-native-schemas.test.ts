@@ -475,6 +475,7 @@ describe("carrier envelopes (object-preserving, no unions)", () => {
       providerId: "cursor",
       enabled: false,
       native: null,
+      profileAction: null,
     });
     const upgradedResp = providersSetEnabledUpgradeV20ToV21.upgradeResponse({
       state: providerCliStateSchemaMutationV20.parse(baseState("cursor")),
@@ -489,6 +490,7 @@ describe("carrier envelopes (object-preserving, no unions)", () => {
     const result = providersSetEnabledDowngradeV21ToV20.downgradeRequest({
       providerId: "claude-code",
       enabled: null,
+      profileAction: null,
       native: {
         kind: "mcp",
         scope: "global",

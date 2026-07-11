@@ -103,7 +103,10 @@ function completeHandshake(socket: StubStreamWebSocket): void {
   const openParsed = JSON.parse(socket.textSent[0]) as {
     readonly manifest: Record<string, { major: number; minor: number }>;
   };
-  socket.fireText({ kind: "openAck", manifest: openParsed.manifest });
+  socket.fireText({
+    kind: "openAck",
+    manifest: openParsed.manifest,
+  });
 }
 
 function parseText(raw: string): Record<string, unknown> {
@@ -167,6 +170,32 @@ const APP = {
   rssBytes: 2_000,
 };
 
+const HOST_TREE = {
+  sampledAt: 1_000,
+  processCount: 3,
+  cpuPercent: 15,
+  rssBytes: 3_000,
+};
+
+const OTHER = {
+  sampledAt: 1_000,
+  rootPids: [20],
+  processCount: 1,
+  cpuPercent: 4,
+  rssBytes: 500,
+  processes: [
+    {
+      pid: 20,
+      parentPid: null,
+      rootPid: 20,
+      name: "worker",
+      command: "worker",
+      cpuPercent: 4,
+      rssBytes: 500,
+    },
+  ],
+};
+
 describe("ResourcesStreamClient", () => {
   it("subscribes to resources.subscribe with the epicId and dispatches typed frames", () => {
     const { factory, sockets } = makeFactory();
@@ -188,7 +217,7 @@ describe("ResourcesStreamClient", () => {
     expect(parseText(sockets[0].textSent[1])).toEqual({
       kind: "subscribe",
       method: "resources.subscribe",
-      schemaVersion: { major: 1, minor: 1 },
+      schemaVersion: { major: 1, minor: 2 },
       params: {
         epicId: "epic-1",
         scope: { kind: "epic", epicId: "epic-1" },
@@ -203,6 +232,8 @@ describe("ResourcesStreamClient", () => {
       app: APP,
       owners: [OWNER],
       epic: EPIC,
+      hostTree: HOST_TREE,
+      other: OTHER,
     });
     sockets[0].fireText({
       kind: "update",
@@ -212,6 +243,8 @@ describe("ResourcesStreamClient", () => {
       app: { ...APP, sampledAt: 2_000, cpuPercent: 2 },
       owners: [{ ...OWNER, cpuPercent: 55, sampledAt: 2_000 }],
       epic: { ...EPIC, cpuPercent: 55, sampledAt: 2_000 },
+      hostTree: { ...HOST_TREE, sampledAt: 2_000, cpuPercent: 60 },
+      other: { ...OTHER, sampledAt: 2_000, cpuPercent: 5 },
     });
 
     expect(snapshots).toHaveLength(1);
@@ -220,9 +253,12 @@ describe("ResourcesStreamClient", () => {
     expect(snapshots[0].owners[0].processes[0].command).toBe("/bin/bash");
     expect(snapshots[0].epic?.epicId).toBe("epic-1");
     expect(snapshots[0].epics).toEqual([]);
+    expect(snapshots[0].hostTree?.cpuPercent).toBe(15);
+    expect(snapshots[0].other?.processes[0].name).toBe("worker");
     expect(updates).toHaveLength(1);
     expect(updates[0].owners[0].cpuPercent).toBe(55);
     expect(updates[0].sampledAt).toBe(2_000);
+    expect(updates[0].hostTree?.cpuPercent).toBe(60);
 
     client.close();
   });

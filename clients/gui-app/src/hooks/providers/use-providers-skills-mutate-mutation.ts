@@ -57,6 +57,7 @@ export function useProvidersSkillsMutate(): UseMutationResult<
           workspaceRoot: variables.workspaceRoot,
           mutation: variables.mutation,
         },
+        profileAction: null,
       });
       return mapSetEnabledToSkillsMutate({ response });
     },

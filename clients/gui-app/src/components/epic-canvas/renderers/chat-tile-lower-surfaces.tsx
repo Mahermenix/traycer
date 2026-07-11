@@ -8,10 +8,12 @@ import type {
   ChatRunSettings,
 } from "@traycer/protocol/host/agent/gui/subscribe";
 import type { InterviewAnswer } from "@traycer/protocol/persistence/epic/schemas";
+import type { ChatForkMode } from "@/components/chat/chat-message";
 import {
   ChatComposer,
   type ChatComposerSubmitInput,
 } from "@/components/chat/composer/chat-composer";
+import { ChatComposerBannerPortalProvider } from "@/components/chat/composer/chat-composer-banner-portal";
 import { ChatLowerDock } from "@/components/chat/chat-lower-dock";
 import {
   type ChatLowerSurfaceTopSpacing,
@@ -82,6 +84,9 @@ export interface ChatLowerInterviewState {
     answers: ReadonlyArray<InterviewAnswer>,
   ) => string | null;
   readonly onError: (blockId: string, reason: string) => string | null;
+  // Branch the chat at the pending question (see ChatForkMode). null when the
+  // pending interview has no stable fork boundary.
+  readonly onFork: ((mode: ChatForkMode) => void) | null;
 }
 
 export interface ChatLowerApprovalsState {
@@ -278,7 +283,7 @@ export function ChatLowerInteractionSurfaces(
   );
 
   return (
-    <>
+    <ChatComposerBannerPortalProvider>
       <RuntimeGatedApprovalSurface
         model={composerModel}
         layout={approvalLayout}
@@ -329,7 +334,7 @@ export function ChatLowerInteractionSurfaces(
           setStopChildrenOpen(false);
         }}
       />
-    </>
+    </ChatComposerBannerPortalProvider>
   );
 }
 
@@ -423,6 +428,7 @@ function ComposerSurface(props: {
           isActive={model.composer.isActive}
           onSubmit={model.access.canAct ? model.interview.onAnswer : null}
           onSkip={model.access.canAct ? model.interview.onError : null}
+          onFork={model.access.canAct ? model.interview.onFork : null}
         />
       </ComposerSlotShell>
     );

@@ -72,6 +72,7 @@ export function useProvidersMcpMutate(): UseMutationResult<
           workspaceRoot: variables.workspaceRoot,
           mutation: variables.mutation,
         },
+        profileAction: null,
       });
       return mapSetEnabledToMcpMutate({ response });
     },

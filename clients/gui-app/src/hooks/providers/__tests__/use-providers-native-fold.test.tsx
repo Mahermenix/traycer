@@ -99,6 +99,7 @@ function stubProviderState(): ProviderCliState {
       plugins: null,
       skills: null,
     },
+    profiles: [],
   };
 }
 
@@ -207,6 +208,7 @@ describe("native response mappers", () => {
             kind: "authorizationUrl",
             authorizationUrl: "https://auth.example",
           },
+          profileId: null,
         },
       }),
     ).toEqual({

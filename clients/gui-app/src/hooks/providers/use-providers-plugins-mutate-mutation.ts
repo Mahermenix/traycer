@@ -57,6 +57,7 @@ export function useProvidersPluginsMutate(): UseMutationResult<
           workspaceRoot: variables.workspaceRoot,
           mutation: variables.mutation,
         },
+        profileAction: null,
       });
       return mapSetEnabledToPluginsMutate({ response });
     },

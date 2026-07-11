@@ -92,6 +92,8 @@ export function useProvidersMcpAuth(): UseMutationResult<
       const response = await client.request("providers.startLogin", {
         providerId: variables.providerId,
         mcpAuth: toMcpAuthAction(variables),
+        profileId: null,
+        createProfile: null,
       });
       return mapStartLoginToMcpAuth({ response });
     },

@@ -207,6 +207,7 @@ describe("post-v1.0 GUI harness non-breaking v2→v1 downgrade bridges", () => {
     const awaitLogin = providersAwaitLoginDowngradeV21ToV10.downgradeResponse({
       state,
       mcpAuth: null,
+      existingProfileId: null,
     });
     expect(awaitLogin.ok).toBe(true);
     if (!awaitLogin.ok) return;
@@ -216,6 +217,7 @@ describe("post-v1.0 GUI harness non-breaking v2→v1 downgrade bridges", () => {
       providersAwaitLoginDowngradeV21ToV10.downgradeResponse({
         state: null,
         mcpAuth: null,
+        existingProfileId: null,
       }),
     ).toEqual({ ok: true, value: { state: null } });
   });

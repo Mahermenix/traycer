@@ -84,6 +84,7 @@ function providerState(args: {
       plugins: null,
       skills: null,
     },
+    profiles: [],
   };
 }
 
@@ -168,7 +169,7 @@ describe("useVisibleRateLimitProviders", () => {
     const { result } = renderHook(() => useVisibleRateLimitProviders());
 
     expect(result.current).toEqual([
-      { providerId: "codex", lane: "ephemeralProcess" },
+      { providerId: "codex", lane: "ephemeralProcess", profiles: [] },
     ]);
   });
 
@@ -186,7 +187,7 @@ describe("useVisibleRateLimitProviders", () => {
     const { result } = renderHook(() => useVisibleRateLimitProviders());
 
     expect(result.current).toEqual([
-      { providerId: "codex", lane: "ephemeralProcess" },
+      { providerId: "codex", lane: "ephemeralProcess", profiles: [] },
     ]);
   });
 
@@ -205,7 +206,7 @@ describe("useVisibleRateLimitProviders", () => {
     const { result } = renderHook(() => useVisibleRateLimitProviders());
 
     expect(result.current).toEqual([
-      { providerId: "codex", lane: "ephemeralProcess" },
+      { providerId: "codex", lane: "ephemeralProcess", profiles: [] },
     ]);
   });
 
