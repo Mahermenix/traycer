@@ -1439,18 +1439,30 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(
       screen.getByRole("menuitem", { name: "Create new profile" }),
     ).toBeDefined();
-    expect(screen.getByRole("button", { name: "Add profile" })).toBeDefined();
+    const addProfileButton = screen.getByRole("button", {
+      name: "Add profile",
+    });
+    expect(addProfileButton.getAttribute("data-variant")).toBe("outline");
+    expect(addProfileButton.getAttribute("data-size")).toBe("xs");
     expect(screen.getByText("Profiles")).toBeDefined();
-    expect(
-      screen.getByRole("button", { name: "Edit Terminal account profile" }),
-    ).toBeDefined();
+    const manageProfileButton = screen.getByRole("button", {
+      name: "Manage profile",
+    });
+    expect(manageProfileButton.getAttribute("data-variant")).toBe("outline");
+    expect(manageProfileButton.getAttribute("data-size")).toBe("xs");
+    const profileSummaryActions = manageProfileButton.closest(".flex-wrap");
+    if (!(profileSummaryActions instanceof HTMLElement)) {
+      throw new Error("Expected profile summary and actions row");
+    }
+    expect(within(profileSummaryActions).getByText("No plan")).toBeDefined();
+    fireEvent.focus(manageProfileButton);
+    expect((await screen.findByRole("tooltip")).textContent).toBe(
+      "Change the profile name and accent color, sign in again, or remove this profile.",
+    );
     expect(
       screen.queryByRole("button", { name: "Refresh usage limits" }),
     ).toBeNull();
 
-    const addProfileButton = screen.getByRole("button", {
-      name: "Add profile",
-    });
     const refreshButton = screen.getByRole("button", {
       name: "Refresh profile statuses and usage limits",
     });
@@ -1495,9 +1507,7 @@ describe("<ProvidersSettingsPanel />", () => {
       </TooltipProvider>,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Edit Terminal account profile" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.change(screen.getByLabelText("Profile name"), {
       target: { value: "Default" },
     });
@@ -1527,9 +1537,7 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(providerMocks.recolorProfileMutate).toHaveBeenCalledTimes(2);
     act(() => recolorOptions.onSuccess());
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Edit Terminal account profile" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch account" }));
     await waitFor(() => {
       expect(providerMocks.startLoginMutate).toHaveBeenCalled();
@@ -1594,9 +1602,7 @@ describe("<ProvidersSettingsPanel />", () => {
       </TooltipProvider>,
     );
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Edit Terminal account profile" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.change(screen.getByLabelText("Profile name"), {
       target: { value: "Unsaved name" },
     });
@@ -1605,9 +1611,7 @@ describe("<ProvidersSettingsPanel />", () => {
     );
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Edit Terminal account profile" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     const reopenedNameInput = screen.getByLabelText("Profile name");
     if (!(reopenedNameInput instanceof HTMLInputElement)) {
       throw new Error("Expected profile name input");
@@ -1626,7 +1630,7 @@ describe("<ProvidersSettingsPanel />", () => {
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Work" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit Work profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
 
     const nameInput = screen.getByLabelText("Profile name");
     if (!(nameInput instanceof HTMLInputElement)) {
@@ -1688,9 +1692,7 @@ describe("<ProvidersSettingsPanel />", () => {
     );
     const { rerender } = render(renderSection("host-b"));
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Edit Terminal account profile" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.change(screen.getByLabelText("Profile name"), {
       target: { value: "Host B draft" },
     });
@@ -2147,7 +2149,7 @@ describe("<ProvidersSettingsPanel />", () => {
     );
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Work" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit Work profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch account" }));
     await waitFor(() => {
       expect(providerMocks.startLoginMutate).toHaveBeenCalledTimes(1);
@@ -2220,7 +2222,7 @@ describe("<ProvidersSettingsPanel />", () => {
     );
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Work, Signed out" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit Work profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch account" }));
     await waitFor(() => {
       expect(providerMocks.startLoginMutate).toHaveBeenCalledTimes(1);
@@ -2297,7 +2299,7 @@ describe("<ProvidersSettingsPanel />", () => {
 
     // Defaults to the ambient profile - select "Work" (signed out) first.
     fireEvent.click(screen.getByRole("menuitem", { name: "Work, Signed out" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit Work profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch account" }));
 
     await waitFor(() => {
@@ -2445,7 +2447,7 @@ describe("<ProvidersSettingsPanel />", () => {
     );
 
     fireEvent.click(screen.getByRole("menuitem", { name: "Work" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit Work profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.click(screen.getByRole("button", { name: "Switch account" }));
 
     await waitFor(() => {
@@ -2854,7 +2856,7 @@ describe("<ProvidersSettingsPanel />", () => {
     // Defaults to the ambient profile - select "Work" to bring its editable
     // details dialog (name field, actions) into view.
     fireEvent.click(screen.getByRole("menuitem", { name: "Work" }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit Work profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.change(screen.getByLabelText("Profile name"), {
       target: { value: "Personal" },
     });
@@ -2869,7 +2871,7 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(typeof renameOptions.onSuccess).toBe("function");
     act(() => renameOptions.onSuccess());
 
-    fireEvent.click(screen.getByRole("button", { name: "Edit Work profile" }));
+    fireEvent.click(screen.getByRole("button", { name: "Manage profile" }));
     fireEvent.click(screen.getByRole("button", { name: "Remove profile" }));
     expect(
       screen.getByText(
