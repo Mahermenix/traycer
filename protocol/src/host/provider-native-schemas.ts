@@ -1,10 +1,10 @@
 /**
- * Schemas for provider-native MCP / plugins / skills capability descriptors
- * and the batched `providers.mcp*` / `providers.plugins*` / `providers.skills*`
- * RPC surface. The descriptor rides `ProviderCliState.nativeCapabilities`; the
- * verbs are separate unary methods (one gated protocol PR).
+ * Payload schemas for provider-native MCP / plugins / skills settings.
+ * These ride released carriers (`providers.list`, `providers.setEnabled`,
+ * `providers.startLogin` / `awaitLogin` / `cancelLogin`) as additive fields —
+ * this module does NOT define RPC contracts.
  *
- * Content is computed host-side from the contract registry (ticket 04) — no
+ * Content is computed host-side from the contract registry (ticket R04) — no
  * probing at `providers.list` time. Enums encode every verification-gate
  * branch so a later gate outcome does not force another protocol PR.
  */
@@ -33,43 +33,55 @@ export const providerNativeScopeTupleBaseSchema = z.object({
 });
 
 /**
- * Refine any object schema that includes the scope-tuple fields. Applied only
- * to final request schemas (not the base) so `.extend()` composition stays
- * intact.
+ * Shared scope/workspaceRoot invariant used by every nested native context
+ * (list query, mutation, auth action/poll/cancel). Wire rule:
+ * - `scope: "project"` → non-empty `workspaceRoot`
+ * - `scope: "global"` → `workspaceRoot: null`
+ */
+export function refineProviderNativeScope(
+  value: { readonly scope?: unknown; readonly workspaceRoot?: unknown },
+  ctx: z.RefinementCtx,
+): void {
+  if (!("scope" in value) || !("workspaceRoot" in value)) {
+    return;
+  }
+  const scope = value.scope;
+  const workspaceRoot = value.workspaceRoot;
+  if (scope !== "global" && scope !== "project") {
+    return;
+  }
+  if (typeof workspaceRoot !== "string" && workspaceRoot !== null) {
+    return;
+  }
+  if (scope === "project") {
+    if (workspaceRoot === null || workspaceRoot.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["workspaceRoot"],
+        message: 'scope "project" requires a non-empty workspaceRoot',
+      });
+    }
+    return;
+  }
+  if (workspaceRoot !== null) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["workspaceRoot"],
+      message: 'scope "global" requires workspaceRoot: null',
+    });
+  }
+}
+
+/**
+ * Refine any object schema that includes the scope-tuple fields. Applied to
+ * final object schemas (and re-used via {@link refineProviderNativeScope} on
+ * discriminated unions) so every nested native context rejects invalid
+ * scope/workspaceRoot combos at the wire boundary.
  */
 export function withProviderNativeScopeInvariant<Shape extends z.ZodRawShape>(
   schema: z.ZodObject<Shape>,
 ) {
-  return schema.superRefine((value, ctx) => {
-    if (!("scope" in value) || !("workspaceRoot" in value)) {
-      return;
-    }
-    const scope = value.scope;
-    const workspaceRoot = value.workspaceRoot;
-    if (scope !== "global" && scope !== "project") {
-      return;
-    }
-    if (typeof workspaceRoot !== "string" && workspaceRoot !== null) {
-      return;
-    }
-    if (scope === "project") {
-      if (workspaceRoot === null || workspaceRoot.length === 0) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["workspaceRoot"],
-          message: 'scope "project" requires a non-empty workspaceRoot',
-        });
-      }
-      return;
-    }
-    if (workspaceRoot !== null) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["workspaceRoot"],
-        message: 'scope "global" requires workspaceRoot: null',
-      });
-    }
-  });
+  return schema.superRefine(refineProviderNativeScope);
 }
 
 export const providerNativeScopeTupleSchema = withProviderNativeScopeInvariant(
@@ -79,7 +91,31 @@ export type ProviderNativeScopeTuple = z.infer<
   typeof providerNativeScopeTupleSchema
 >;
 
-// ── Capability descriptor (rides ProviderCliState) ─────────────────────────
+// ── Native error contract (rides inside additive native result fields) ─────
+
+export const providerNativeErrorCodeSchema = z.enum([
+  "duplicate_name",
+  "unsupported_scope",
+  "unsupported_action",
+  "no_change_detected",
+  "external_drift",
+  "store_version_unsupported",
+  "rollback_failed",
+]);
+export type ProviderNativeErrorCode = z.infer<
+  typeof providerNativeErrorCodeSchema
+>;
+
+export const providerNativeErrorResultSchema = z.object({
+  ok: z.literal(false),
+  code: providerNativeErrorCodeSchema,
+  detail: z.string().nullable(),
+});
+export type ProviderNativeErrorResult = z.infer<
+  typeof providerNativeErrorResultSchema
+>;
+
+// ── Capability descriptor (action → scope table) ───────────────────────────
 
 export const providerSettingsTabSchema = z.enum([
   "general",
@@ -94,11 +130,7 @@ export type ProviderSettingsTab = z.infer<typeof providerSettingsTabSchema>;
 export const providerMcpTransportSchema = z.enum(["stdio", "http", "sse"]);
 export type ProviderMcpTransport = z.infer<typeof providerMcpTransportSchema>;
 
-export const providerMcpAuthTypeSchema = z.enum([
-  "none",
-  "headers",
-  "oauth",
-]);
+export const providerMcpAuthTypeSchema = z.enum(["none", "header", "env", "oauth"]);
 export type ProviderMcpAuthType = z.infer<typeof providerMcpAuthTypeSchema>;
 
 /**
@@ -168,15 +200,67 @@ export type ProviderMcpDataSource = z.infer<typeof providerMcpDataSourceSchema>;
 export const providerMcpWritePathSchema = z.enum(["cli", "patch", "none"]);
 export type ProviderMcpWritePath = z.infer<typeof providerMcpWritePathSchema>;
 
+/**
+ * MCP surface actions that may be advertised with a per-action scope list.
+ * Missing/empty scopes means the action is unsupported for that provider.
+ */
+export const providerMcpCapabilityActionSchema = z.enum([
+  "list",
+  "add",
+  "update",
+  "remove",
+  "toggleServer",
+  "toggleTool",
+  "discover",
+  "auth",
+]);
+export type ProviderMcpCapabilityAction = z.infer<
+  typeof providerMcpCapabilityActionSchema
+>;
+
+/**
+ * OAuth fields to capture on Add when `authTypes` includes `"oauth"`.
+ * Declarative per-provider metadata — the renderer shows exactly these
+ * fields and no more, replacing a renderer-side provider allowlist.
+ */
+export const providerMcpOauthFieldSchema = z.enum(["clientId", "resource"]);
+export type ProviderMcpOauthField = z.infer<typeof providerMcpOauthFieldSchema>;
+
 export const providerMcpCapabilitiesSchema = z.object({
   transports: z.array(providerMcpTransportSchema),
-  scopes: z.array(providerNativeScopeSchema),
   authTypes: z.array(providerMcpAuthTypeSchema),
   authActions: z.array(providerMcpAuthActionSchema),
-  mutationActions: z.array(providerMcpMutationActionSchema),
+  /**
+   * Action → supported scopes table. Empty array means the action is not
+   * offered for any scope (UI hides it; host rejects it).
+   */
+  actionScopes: z.object({
+    list: z.array(providerNativeScopeSchema),
+    add: z.array(providerNativeScopeSchema),
+    update: z.array(providerNativeScopeSchema),
+    remove: z.array(providerNativeScopeSchema),
+    toggleServer: z.array(providerNativeScopeSchema),
+    toggleTool: z.array(providerNativeScopeSchema),
+    discover: z.array(providerNativeScopeSchema),
+    auth: z.array(providerNativeScopeSchema),
+  }),
   addServer: providerMcpWritePathSchema,
   removeServer: providerMcpWritePathSchema,
   updateServer: providerMcpWritePathSchema,
+  /**
+   * True when the provider's write path genuinely serializes more than one
+   * header row (installed-CLI-confirmed repeatable flag, or a config-file
+   * headers map). False (default) — the renderer shows exactly one header
+   * row with no "Add header" affordance, so no captured row is ever
+   * silently dropped by the host.
+   */
+  supportsMultipleHeaders: z.boolean().default(false).optional(),
+  /**
+   * OAuth fields to render on Add when `authTypes` includes `"oauth"`.
+   * Empty (default) — the provider has no Add-time OAuth field capture
+   * (e.g. OAuth completes entirely via a separate login action).
+   */
+  oauthFields: z.array(providerMcpOauthFieldSchema).default([]).optional(),
   perToolBacking: providerMcpPerToolBackingSchema,
   /**
    * Status dot source. UI labels probe results as connectivity checks, never
@@ -232,6 +316,16 @@ export type ProviderPluginsAddMode = z.infer<
   typeof providerPluginsAddModeSchema
 >;
 
+export const providerPluginsCapabilityActionSchema = z.enum([
+  "list",
+  "add",
+  "remove",
+  "setEnabled",
+]);
+export type ProviderPluginsCapabilityAction = z.infer<
+  typeof providerPluginsCapabilityActionSchema
+>;
+
 export const providerPluginsCapabilitiesSchema = z.object({
   addModes: z.array(providerPluginsAddModeSchema),
   /**
@@ -239,8 +333,16 @@ export const providerPluginsCapabilitiesSchema = z.object({
    * (text-only) — UI offers add-by-source instead of browse.
    */
   marketplaceBrowse: z.boolean(),
-  canEnableDisable: z.boolean(),
-  canRemove: z.boolean(),
+  /**
+   * Action → supported scopes table. Empty array means the action is not
+   * offered for any scope.
+   */
+  actionScopes: z.object({
+    list: z.array(providerNativeScopeSchema),
+    add: z.array(providerNativeScopeSchema),
+    remove: z.array(providerNativeScopeSchema),
+    setEnabled: z.array(providerNativeScopeSchema),
+  }),
   /**
    * V4 amp: plugins load for CLI `tools list` / `plugins list`, but plugin
    * tools are absent from Traycer `execute()` stream. UI warns when true.
@@ -251,10 +353,29 @@ export type ProviderPluginsCapabilities = z.infer<
   typeof providerPluginsCapabilitiesSchema
 >;
 
+export const providerSkillsCapabilityActionSchema = z.enum([
+  "list",
+  "add",
+  "create",
+  "import",
+  "remove",
+]);
+export type ProviderSkillsCapabilityAction = z.infer<
+  typeof providerSkillsCapabilityActionSchema
+>;
+
 export const providerSkillsCapabilitiesSchema = z.object({
-  canList: z.boolean(),
-  canAdd: z.boolean(),
-  canImport: z.boolean(),
+  /**
+   * Action → supported scopes table. Empty array means the action is not
+   * offered for any scope.
+   */
+  actionScopes: z.object({
+    list: z.array(providerNativeScopeSchema),
+    add: z.array(providerNativeScopeSchema),
+    create: z.array(providerNativeScopeSchema),
+    import: z.array(providerNativeScopeSchema),
+    remove: z.array(providerNativeScopeSchema),
+  }),
 });
 export type ProviderSkillsCapabilities = z.infer<
   typeof providerSkillsCapabilitiesSchema
@@ -286,6 +407,130 @@ export const DEFAULT_PROVIDER_NATIVE_CAPABILITIES: ProviderNativeCapabilities = 
   skills: null,
 };
 
+// ── Transport + auth (write vs masked read) ────────────────────────────────
+
+/** Write-side secret: raw value is accepted on the wire once, never echoed. */
+export const providerMcpSecretWriteSchema = z.object({
+  name: z.string().min(1),
+  value: z.string(),
+});
+export type ProviderMcpSecretWrite = z.infer<typeof providerMcpSecretWriteSchema>;
+
+/** Read-side secret mask: name + presence only. */
+export const providerMcpSecretMaskSchema = z.object({
+  name: z.string().min(1),
+  hasValue: z.boolean(),
+});
+export type ProviderMcpSecretMask = z.infer<typeof providerMcpSecretMaskSchema>;
+
+export const providerMcpAuthWriteSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("header"),
+    name: z.string().min(1),
+    value: z.string(),
+    /**
+     * Extra repeatable header rows beyond `name`/`value` (the first row).
+     * Additive: providers that only serialize one header (most CLIs) ignore
+     * it; providers with repeatable `--header` support (Qwen) consume it.
+     * Defaults to `[]` so older payloads/providers parse unchanged.
+     */
+    additionalHeaders: z.array(providerMcpSecretWriteSchema).default([]).optional(),
+  }),
+  z.object({
+    type: z.literal("env"),
+    name: z.string().min(1),
+    value: z.string(),
+  }),
+  z.object({
+    type: z.literal("oauth"),
+    /**
+     * Provider-specific OAuth client identity (Codex `--oauth-client-id`).
+     * Additive/optional: null when the provider has no client-id concept or
+     * the user left it blank.
+     */
+    oauthClientId: z.string().nullable().default(null).optional(),
+    /**
+     * Provider-specific OAuth resource indicator (Codex `--oauth-resource`).
+     */
+    oauthResource: z.string().nullable().default(null).optional(),
+  }),
+]);
+export type ProviderMcpAuthWrite = z.infer<typeof providerMcpAuthWriteSchema>;
+
+export const providerMcpAuthReadSchema = z.discriminatedUnion("type", [
+  z.object({
+    type: z.literal("header"),
+    name: z.string().min(1),
+    hasValue: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("env"),
+    name: z.string().min(1),
+    hasValue: z.boolean(),
+  }),
+  z.object({
+    type: z.literal("oauth"),
+  }),
+]);
+export type ProviderMcpAuthRead = z.infer<typeof providerMcpAuthReadSchema>;
+
+/**
+ * Write-side transport (mutate add/update). Secrets may be present; host never
+ * echoes them on list responses.
+ */
+export const providerMcpServerTransportWriteSchema = z.discriminatedUnion(
+  "type",
+  [
+    z.object({
+      type: z.literal("stdio"),
+      command: z.string().min(1),
+      args: z.array(z.string()),
+      env: z.array(providerMcpSecretWriteSchema).nullable(),
+    }),
+    z.object({
+      type: z.literal("http"),
+      url: z.string().min(1),
+      auth: providerMcpAuthWriteSchema.nullable(),
+    }),
+    z.object({
+      type: z.literal("sse"),
+      url: z.string().min(1),
+      auth: providerMcpAuthWriteSchema.nullable(),
+    }),
+  ],
+);
+export type ProviderMcpServerTransportWrite = z.infer<
+  typeof providerMcpServerTransportWriteSchema
+>;
+
+/**
+ * Read-side transport (list/discover). Least-privilege: no raw env/headers/
+ * argv on the wire — command/url identity only, secrets masked.
+ */
+export const providerMcpServerTransportReadSchema = z.discriminatedUnion(
+  "type",
+  [
+    z.object({
+      type: z.literal("stdio"),
+      command: z.string(),
+      env: z.array(providerMcpSecretMaskSchema).nullable(),
+    }),
+    z.object({
+      type: z.literal("http"),
+      url: z.string(),
+      auth: providerMcpAuthReadSchema.nullable(),
+    }),
+    z.object({
+      type: z.literal("sse"),
+      url: z.string(),
+      auth: providerMcpAuthReadSchema.nullable(),
+    }),
+  ],
+);
+export type ProviderMcpServerTransportRead = z.infer<
+  typeof providerMcpServerTransportReadSchema
+>;
+
 // ── MCP list / server row ──────────────────────────────────────────────────
 
 export const providerMcpServerStatusSchema = z.enum([
@@ -301,26 +546,21 @@ export type ProviderMcpServerStatus = z.infer<
   typeof providerMcpServerStatusSchema
 >;
 
-export const providerMcpServerTransportSchema = z.discriminatedUnion("type", [
-  z.object({
-    type: z.literal("stdio"),
-    command: z.string(),
-    args: z.array(z.string()),
-    env: z.record(z.string(), z.string()).nullable(),
-  }),
-  z.object({
-    type: z.literal("http"),
-    url: z.string(),
-    headers: z.record(z.string(), z.string()).nullable(),
-  }),
-  z.object({
-    type: z.literal("sse"),
-    url: z.string(),
-    headers: z.record(z.string(), z.string()).nullable(),
-  }),
+/**
+ * Claude (and future multi-file) deny provenance for a tool row.
+ * - `user` — ~/.claude/settings.json
+ * - `shared` — <workspace>/.claude/settings.json
+ * - `local` — <workspace>/.claude/settings.local.json
+ * Empty when the tool is not denied. Inherited (user/shared) denies lock the
+ * row so the UI does not present a no-op local enable toggle.
+ */
+export const providerMcpToolDenySourceSchema = z.enum([
+  "user",
+  "shared",
+  "local",
 ]);
-export type ProviderMcpServerTransport = z.infer<
-  typeof providerMcpServerTransportSchema
+export type ProviderMcpToolDenySource = z.infer<
+  typeof providerMcpToolDenySourceSchema
 >;
 
 export const providerMcpToolSchema = z.object({
@@ -334,16 +574,28 @@ export const providerMcpToolSchema = z.object({
   enabled: z.boolean(),
   /**
    * True when the tool row is display-only (degraded-server-level backing or
-   * OAuth-degraded probe).
+   * OAuth-degraded probe), or when a deny is inherited from a non-local source
+   * that a local toggle cannot clear.
    */
   readOnly: z.boolean(),
+  /**
+   * Sources that currently deny this tool (union). Omitted or empty when the
+   * provider has no multi-source deny provenance (Claude is the first consumer).
+   * Wire parse defaults missing values to [] via Zod `.default`.
+   */
+  denySources: z.array(providerMcpToolDenySourceSchema).default([]).optional(),
 });
+/**
+ * Inferred type keeps `denySources` optional so host constructors that do not
+ * set Claude provenance need not pass an empty array. Wire parse still
+ * materializes `[]` when the field is absent.
+ */
 export type ProviderMcpTool = z.infer<typeof providerMcpToolSchema>;
 
 export const providerMcpServerSchema = z.object({
   name: z.string(),
   enabled: z.boolean(),
-  transport: providerMcpServerTransportSchema,
+  transport: providerMcpServerTransportReadSchema,
   status: providerMcpServerStatusSchema,
   /**
    * Which plane produced `status` — UI labels probe vs native differently.
@@ -352,7 +604,7 @@ export const providerMcpServerSchema = z.object({
   statusDetail: z.string().nullable(),
   tools: z.array(providerMcpToolSchema),
   /**
-   * True while discovery is in-flight; client re-fetches / polls mcpList.
+   * True while discovery is in-flight; client re-fetches / polls list.
    */
   discoveryPending: z.boolean(),
   /**
@@ -372,32 +624,57 @@ export const providerMcpServerSchema = z.object({
 });
 export type ProviderMcpServer = z.infer<typeof providerMcpServerSchema>;
 
-export const providersMcpListRequestSchema = withProviderNativeScopeInvariant(
-  providerNativeScopeTupleBaseSchema,
-);
-export type ProvidersMcpListRequest = z.infer<
-  typeof providersMcpListRequestSchema
->;
+// ── Plugins / skills rows ──────────────────────────────────────────────────
 
-export const providersMcpListResponseSchema = z.object({
-  servers: z.array(providerMcpServerSchema),
+export const providerPluginSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  version: z.string().nullable(),
+  enabled: z.boolean(),
+  source: z.string().nullable(),
+  /**
+   * True when the plugin is listed but cannot be toggled/removed in v1
+   * (read-only tab).
+   */
+  readOnly: z.boolean(),
+  /**
+   * Plugin description, when the provider's listing exposes one. Additive:
+   * defaults to null for providers that don't populate it yet.
+   */
+  description: z.string().nullable().default(null).optional(),
 });
-export type ProvidersMcpListResponse = z.infer<
-  typeof providersMcpListResponseSchema
+export type ProviderPlugin = z.infer<typeof providerPluginSchema>;
+
+export const providerSkillSourceBadgeSchema = z.enum([
+  "shared",
+  "provider",
+  "plugin",
+  "managed",
+]);
+export type ProviderSkillSourceBadge = z.infer<
+  typeof providerSkillSourceBadgeSchema
 >;
 
-// ── MCP mutate ─────────────────────────────────────────────────────────────
+export const providerSkillSchema = z.object({
+  name: z.string(),
+  description: z.string().nullable(),
+  path: z.string(),
+  source: providerSkillSourceBadgeSchema,
+});
+export type ProviderSkill = z.infer<typeof providerSkillSchema>;
+
+// ── Mutation action payloads ───────────────────────────────────────────────
 
 export const providersMcpMutateActionSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("add"),
     name: z.string().min(1),
-    transport: providerMcpServerTransportSchema,
+    transport: providerMcpServerTransportWriteSchema,
   }),
   z.object({
     action: z.literal("update"),
     name: z.string().min(1),
-    transport: providerMcpServerTransportSchema,
+    transport: providerMcpServerTransportWriteSchema,
   }),
   z.object({
     action: z.literal("remove"),
@@ -417,154 +694,6 @@ export const providersMcpMutateActionSchema = z.discriminatedUnion("action", [
 ]);
 export type ProvidersMcpMutateAction = z.infer<
   typeof providersMcpMutateActionSchema
->;
-
-export const providersMcpMutateRequestSchema = withProviderNativeScopeInvariant(
-  providerNativeScopeTupleBaseSchema.extend({
-    mutation: providersMcpMutateActionSchema,
-  }),
-);
-export type ProvidersMcpMutateRequest = z.infer<
-  typeof providersMcpMutateRequestSchema
->;
-
-export const providersMcpMutateResponseSchema = z.object({
-  servers: z.array(providerMcpServerSchema),
-});
-export type ProvidersMcpMutateResponse = z.infer<
-  typeof providersMcpMutateResponseSchema
->;
-
-// ── MCP discover (one server: tools / schemas / instructions) ──────────────
-
-export const providersMcpDiscoverRequestSchema =
-  withProviderNativeScopeInvariant(
-    providerNativeScopeTupleBaseSchema.extend({
-      serverName: z.string().min(1),
-      /**
-       * When true, bypass the discovery cache and re-probe / re-query native.
-       */
-      forceRefresh: z.boolean(),
-    }),
-  );
-export type ProvidersMcpDiscoverRequest = z.infer<
-  typeof providersMcpDiscoverRequestSchema
->;
-
-export const providersMcpDiscoverResponseSchema = z.object({
-  server: providerMcpServerSchema,
-});
-export type ProvidersMcpDiscoverResponse = z.infer<
-  typeof providersMcpDiscoverResponseSchema
->;
-
-// ── MCP auth ───────────────────────────────────────────────────────────────
-
-/**
- * Auth action union covering the full per-provider variety:
- * - droid: authenticate → submitCode → clearAuth
- * - copilot: login + forceReauth (no clean logout)
- * - kimi: probe/log-tail URL delivery
- * - config-only providers: unsupported
- */
-export const providersMcpAuthActionSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("login"),
-    serverName: z.string().min(1),
-  }),
-  z.object({
-    action: z.literal("submitCode"),
-    serverName: z.string().min(1),
-    code: z.string().min(1),
-  }),
-  z.object({
-    action: z.literal("logout"),
-    serverName: z.string().min(1),
-  }),
-  z.object({
-    action: z.literal("clearAuth"),
-    serverName: z.string().min(1),
-  }),
-  z.object({
-    action: z.literal("forceReauth"),
-    serverName: z.string().min(1),
-  }),
-]);
-export type ProvidersMcpAuthAction = z.infer<
-  typeof providersMcpAuthActionSchema
->;
-
-export const providersMcpAuthRequestSchema = withProviderNativeScopeInvariant(
-  providerNativeScopeTupleBaseSchema.extend({
-    auth: providersMcpAuthActionSchema,
-  }),
-);
-export type ProvidersMcpAuthRequest = z.infer<
-  typeof providersMcpAuthRequestSchema
->;
-
-/**
- * Login (and forceReauth) result union:
- * - `authorizationUrl` — open in browser, then poll mcpList
- * - `pendingInstruction` — show user-facing text (e.g. kimi log-tail path)
- * - `done` — completed synchronously (or logout/clear/submitCode success)
- * - `unsupported` — provider/server cannot perform this action
- */
-export const providersMcpAuthResultSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("authorizationUrl"),
-    authorizationUrl: z.string(),
-  }),
-  z.object({
-    kind: z.literal("pendingInstruction"),
-    instruction: z.string(),
-  }),
-  z.object({
-    kind: z.literal("done"),
-  }),
-  z.object({
-    kind: z.literal("unsupported"),
-    reason: z.string().nullable(),
-  }),
-]);
-export type ProvidersMcpAuthResult = z.infer<
-  typeof providersMcpAuthResultSchema
->;
-
-export const providersMcpAuthResponseSchema = z.object({
-  result: providersMcpAuthResultSchema,
-});
-export type ProvidersMcpAuthResponse = z.infer<
-  typeof providersMcpAuthResponseSchema
->;
-
-// ── Plugins list / mutate ──────────────────────────────────────────────────
-
-export const providerPluginSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  version: z.string().nullable(),
-  enabled: z.boolean(),
-  source: z.string().nullable(),
-  /**
-   * True when the plugin is listed but cannot be toggled/removed in v1
-   * (read-only tab).
-   */
-  readOnly: z.boolean(),
-});
-export type ProviderPlugin = z.infer<typeof providerPluginSchema>;
-
-export const providersPluginsListRequestSchema =
-  withProviderNativeScopeInvariant(providerNativeScopeTupleBaseSchema);
-export type ProvidersPluginsListRequest = z.infer<
-  typeof providersPluginsListRequestSchema
->;
-
-export const providersPluginsListResponseSchema = z.object({
-  plugins: z.array(providerPluginSchema),
-});
-export type ProvidersPluginsListResponse = z.infer<
-  typeof providersPluginsListResponseSchema
 >;
 
 export const providersPluginsMutateActionSchema = z.discriminatedUnion(
@@ -591,57 +720,6 @@ export const providersPluginsMutateActionSchema = z.discriminatedUnion(
 );
 export type ProvidersPluginsMutateAction = z.infer<
   typeof providersPluginsMutateActionSchema
->;
-
-export const providersPluginsMutateRequestSchema =
-  withProviderNativeScopeInvariant(
-    providerNativeScopeTupleBaseSchema.extend({
-      mutation: providersPluginsMutateActionSchema,
-    }),
-  );
-export type ProvidersPluginsMutateRequest = z.infer<
-  typeof providersPluginsMutateRequestSchema
->;
-
-export const providersPluginsMutateResponseSchema = z.object({
-  plugins: z.array(providerPluginSchema),
-});
-export type ProvidersPluginsMutateResponse = z.infer<
-  typeof providersPluginsMutateResponseSchema
->;
-
-// ── Skills list / mutate ───────────────────────────────────────────────────
-
-export const providerSkillSourceBadgeSchema = z.enum([
-  "shared",
-  "provider",
-  "plugin",
-  "managed",
-]);
-export type ProviderSkillSourceBadge = z.infer<
-  typeof providerSkillSourceBadgeSchema
->;
-
-export const providerSkillSchema = z.object({
-  name: z.string(),
-  description: z.string().nullable(),
-  path: z.string(),
-  source: providerSkillSourceBadgeSchema,
-});
-export type ProviderSkill = z.infer<typeof providerSkillSchema>;
-
-export const providersSkillsListRequestSchema = withProviderNativeScopeInvariant(
-  providerNativeScopeTupleBaseSchema,
-);
-export type ProvidersSkillsListRequest = z.infer<
-  typeof providersSkillsListRequestSchema
->;
-
-export const providersSkillsListResponseSchema = z.object({
-  skills: z.array(providerSkillSchema),
-});
-export type ProvidersSkillsListResponse = z.infer<
-  typeof providersSkillsListResponseSchema
 >;
 
 export const providersSkillsMutateActionSchema = z.discriminatedUnion(
@@ -697,19 +775,236 @@ export type ProvidersSkillsMutateAction = z.infer<
   typeof providersSkillsMutateActionSchema
 >;
 
-export const providersSkillsMutateRequestSchema =
-  withProviderNativeScopeInvariant(
-    providerNativeScopeTupleBaseSchema.extend({
+// ── Carrier payloads: list (providers.list@3.1) ────────────────────────────
+
+/**
+ * Native list query folded onto `providers.list@3.1` as `native`.
+ * Nested discriminant is fine; the top-level request stays an object.
+ * Scope/workspaceRoot invariant applied via shared refinement (union arms
+ * cannot individually be ZodEffects under discriminatedUnion).
+ */
+export const nativeListQuerySchema = z
+  .discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("mcp"),
+      providerId: providerIdSchema,
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+    }),
+    z.object({
+      kind: z.literal("plugins"),
+      providerId: providerIdSchema,
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+    }),
+    z.object({
+      kind: z.literal("skills"),
+      providerId: providerIdSchema,
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+    }),
+    z.object({
+      kind: z.literal("mcpDiscover"),
+      providerId: providerIdSchema,
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+      serverName: z.string().min(1),
+      /**
+       * When true, bypass the discovery cache and re-probe / re-query native.
+       */
+      forceRefresh: z.boolean(),
+    }),
+  ])
+  .superRefine(refineProviderNativeScope);
+export type NativeListQuery = z.infer<typeof nativeListQuerySchema>;
+
+const nativeListSuccessResultSchema = z.discriminatedUnion("kind", [
+  z.object({
+    ok: z.literal(true),
+    kind: z.literal("mcp"),
+    servers: z.array(providerMcpServerSchema),
+  }),
+  z.object({
+    ok: z.literal(true),
+    kind: z.literal("plugins"),
+    plugins: z.array(providerPluginSchema),
+  }),
+  z.object({
+    ok: z.literal(true),
+    kind: z.literal("skills"),
+    skills: z.array(providerSkillSchema),
+  }),
+  z.object({
+    ok: z.literal(true),
+    kind: z.literal("mcpDiscover"),
+    server: providerMcpServerSchema,
+  }),
+]);
+
+export const nativeListResultSchema = z.union([
+  nativeListSuccessResultSchema,
+  providerNativeErrorResultSchema,
+]);
+export type NativeListResult = z.infer<typeof nativeListResultSchema>;
+
+// ── Carrier payloads: mutate (providers.setEnabled@2.1) ────────────────────
+
+/**
+ * Native mutation folded onto `providers.setEnabled@2.1` as `native`.
+ * Runtime XOR with classic `enabled` is enforced on the request envelope.
+ * Scope/workspaceRoot invariant via shared refinement.
+ */
+export const nativeMutationSchema = z
+  .discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("mcp"),
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+      mutation: providersMcpMutateActionSchema,
+    }),
+    z.object({
+      kind: z.literal("plugins"),
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+      mutation: providersPluginsMutateActionSchema,
+    }),
+    z.object({
+      kind: z.literal("skills"),
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
       mutation: providersSkillsMutateActionSchema,
     }),
-  );
-export type ProvidersSkillsMutateRequest = z.infer<
-  typeof providersSkillsMutateRequestSchema
+  ])
+  .superRefine(refineProviderNativeScope);
+export type NativeMutation = z.infer<typeof nativeMutationSchema>;
+
+const nativeMutationSuccessResultSchema = z.discriminatedUnion("kind", [
+  z.object({
+    ok: z.literal(true),
+    kind: z.literal("mcp"),
+    servers: z.array(providerMcpServerSchema),
+  }),
+  z.object({
+    ok: z.literal(true),
+    kind: z.literal("plugins"),
+    plugins: z.array(providerPluginSchema),
+  }),
+  z.object({
+    ok: z.literal(true),
+    kind: z.literal("skills"),
+    skills: z.array(providerSkillSchema),
+  }),
+]);
+
+export const nativeMutationResultSchema = z.union([
+  nativeMutationSuccessResultSchema,
+  providerNativeErrorResultSchema,
+]);
+export type NativeMutationResult = z.infer<typeof nativeMutationResultSchema>;
+
+// ── Carrier payloads: MCP auth (startLogin / awaitLogin / cancelLogin) ─────
+
+/**
+ * Full MCP auth action set. Rides `providers.startLogin@1.1` as `mcpAuth`.
+ * Server context uses `workspaceRoot` (same scope-tuple field as list/mutate).
+ * Scope/workspaceRoot invariant via shared refinement.
+ */
+export const nativeAuthActionSchema = z
+  .discriminatedUnion("action", [
+    z.object({
+      action: z.literal("login"),
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+      serverName: z.string().min(1),
+    }),
+    z.object({
+      action: z.literal("submitCode"),
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+      serverName: z.string().min(1),
+      code: z.string().min(1),
+    }),
+    z.object({
+      action: z.literal("logout"),
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+      serverName: z.string().min(1),
+    }),
+    z.object({
+      action: z.literal("clearAuth"),
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+      serverName: z.string().min(1),
+    }),
+    z.object({
+      action: z.literal("forceReauth"),
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+      serverName: z.string().min(1),
+    }),
+  ])
+  .superRefine(refineProviderNativeScope);
+export type NativeAuthAction = z.infer<typeof nativeAuthActionSchema>;
+
+/**
+ * Bounded status-poll context for `providers.awaitLogin@2.1` with mcpAuth.
+ * Never a long poll — host pending-auth registry (R02) owns concurrency;
+ * this schema only supports repeated bounded polls returning a status.
+ */
+export const nativeAuthPollContextSchema = withProviderNativeScopeInvariant(
+  z.object({
+    scope: providerNativeScopeSchema,
+    workspaceRoot: z.string().nullable(),
+    serverName: z.string().min(1),
+  }),
+);
+export type NativeAuthPollContext = z.infer<typeof nativeAuthPollContextSchema>;
+
+/**
+ * Cancel context for `providers.cancelLogin@1.1` with mcpAuth.
+ */
+export const nativeAuthCancelContextSchema = withProviderNativeScopeInvariant(
+  z.object({
+    scope: providerNativeScopeSchema,
+    workspaceRoot: z.string().nullable(),
+    serverName: z.string().min(1),
+  }),
+);
+export type NativeAuthCancelContext = z.infer<
+  typeof nativeAuthCancelContextSchema
 >;
 
-export const providersSkillsMutateResponseSchema = z.object({
-  skills: z.array(providerSkillSchema),
-});
-export type ProvidersSkillsMutateResponse = z.infer<
-  typeof providersSkillsMutateResponseSchema
->;
+/**
+ * Login (and forceReauth) result variants:
+ * - `authorizationUrl` — open in browser, then poll awaitLogin
+ * - `pendingInstruction` — show user-facing text (e.g. kimi log-tail path)
+ * - `pending` — auth still in flight (bounded poll status)
+ * - `done` — completed synchronously (or logout/clear/submitCode success)
+ * - `unsupported` — provider/server cannot perform this action
+ */
+export const nativeAuthResultSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("authorizationUrl"),
+    authorizationUrl: z.string(),
+  }),
+  z.object({
+    kind: z.literal("pendingInstruction"),
+    instruction: z.string(),
+  }),
+  z.object({
+    kind: z.literal("pending"),
+  }),
+  z.object({
+    kind: z.literal("done"),
+  }),
+  z.object({
+    kind: z.literal("unsupported"),
+    reason: z.string().nullable(),
+  }),
+  z.object({
+    kind: z.literal("error"),
+    code: providerNativeErrorCodeSchema,
+    detail: z.string().nullable(),
+  }),
+]);
+export type NativeAuthResult = z.infer<typeof nativeAuthResultSchema>;

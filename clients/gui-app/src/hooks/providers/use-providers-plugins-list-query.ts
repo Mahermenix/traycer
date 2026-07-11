@@ -1,32 +1,37 @@
 import type { UseQueryResult } from "@tanstack/react-query";
-import type {
-  HostRpcError,
-  ResponseOfMethod,
-} from "@traycer-clients/shared/host-transport/host-messenger";
+import type { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { ProviderNativeScope } from "@traycer/protocol/host/provider-native-schemas";
 import type { ProviderId } from "@traycer/protocol/host/provider-schemas";
 import { useHostClient, type HostRpcRegistry } from "@/lib/host";
-import { useHostQuery } from "@/hooks/host/use-host-query";
+import { useHostQueryWithResponseMap } from "@/hooks/host/use-host-query";
+import {
+  mapProvidersListToPlugins,
+  type PluginsListData,
+} from "@/hooks/providers/native-response-map";
+import { nativePluginsListParams } from "@/lib/query-keys/providers-native-query-keys";
 
 export function useProvidersPluginsList(args: {
   readonly providerId: ProviderId;
   readonly scope: ProviderNativeScope;
   readonly workspaceRoot: string | null;
   readonly enabled: boolean;
-}): UseQueryResult<
-  ResponseOfMethod<HostRpcRegistry, "providers.pluginsList">,
-  HostRpcError
-> {
+}): UseQueryResult<PluginsListData, HostRpcError> {
   const client = useHostClient();
-  return useHostQuery<HostRpcRegistry, "providers.pluginsList">({
-    cacheKeyIdentity: undefined,
+  const listParams = {
+    providerId: args.providerId,
+    scope: args.scope,
+    workspaceRoot: args.workspaceRoot,
+  };
+  return useHostQueryWithResponseMap<
+    HostRpcRegistry,
+    "providers.list",
+    PluginsListData
+  >({
+    cacheKeyIdentity: ["providers", "native", "plugins"],
     client,
-    method: "providers.pluginsList",
-    params: {
-      providerId: args.providerId,
-      scope: args.scope,
-      workspaceRoot: args.workspaceRoot,
-    },
+    method: "providers.list",
+    params: nativePluginsListParams(listParams),
+    mapResponse: ({ response }) => mapProvidersListToPlugins({ response }),
     options: {
       enabled: args.enabled,
       staleTime: 30_000,

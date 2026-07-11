@@ -21,7 +21,23 @@ import {
 } from "./provider-ids";
 import {
   DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
+  nativeAuthActionSchema,
+  nativeAuthCancelContextSchema,
+  nativeAuthPollContextSchema,
+  nativeAuthResultSchema,
+  nativeListQuerySchema,
+  nativeListResultSchema,
+  nativeMutationResultSchema,
+  nativeMutationSchema,
   providerNativeCapabilitiesSchema,
+  type NativeAuthAction,
+  type NativeAuthCancelContext,
+  type NativeAuthPollContext,
+  type NativeAuthResult,
+  type NativeListQuery,
+  type NativeListResult,
+  type NativeMutation,
+  type NativeMutationResult,
   type ProviderNativeCapabilities,
 } from "./provider-native-schemas";
 
@@ -269,19 +285,40 @@ export const providerCliStateSchema = z.object({
 });
 export type ProviderCliState = z.infer<typeof providerCliStateSchema>;
 
+/**
+ * `providers.list@3.1` request. Optional `native` list/discover query folds
+ * the unreleased mcp/plugins/skills list verbs onto this carrier. Classic
+ * callers omit it (upgrade defaults to null).
+ */
 export const providersListRequestSchema = z.object({
   forceAuthRefresh: z.boolean().optional(),
+  native: nativeListQuerySchema.nullable().default(null),
 });
 export type ProvidersListRequest = z.infer<typeof providersListRequestSchema>;
 
+/** Frozen `providers.list@3.0` request (no native field). */
+export const providersListRequestSchemaV30 = z.object({
+  forceAuthRefresh: z.boolean().optional(),
+});
+export type ProvidersListRequestV30 = z.infer<
+  typeof providersListRequestSchemaV30
+>;
+
+/**
+ * `providers.list@3.1` response. Always returns the classic provider catalog;
+ * when the request carried a `native` query, `native` holds the list/discover
+ * result (or a typed native error). Classic callers receive `native: null`.
+ */
 export const providersListResponseSchema = z.object({
   providers: z.array(providerCliStateSchema),
+  native: nativeListResultSchema.nullable().default(null),
 });
 export type ProvidersListResponse = z.infer<typeof providersListResponseSchema>;
 
 // ── Frozen protocol-v3.0 provider state + list response (before
-// nativeCapabilities). `providers.list@3.0` shipped with Amp but without the
-// native-settings descriptor; @3.1 adds it with an upgrade bridge.
+// nativeCapabilities / native list carrier). `providers.list@3.0` shipped with
+// Amp but without the native-settings descriptor; @3.1 adds both with an
+// upgrade bridge.
 export const providerCliStateSchemaV30 = z.object({
   providerId: providerIdSchema,
   ...providerCliStateBaseShape,
@@ -300,7 +337,9 @@ export type ProvidersListResponseV30 = z.infer<
 // it is frozen here as actually shipped. The v3.0 line adds Amp and a v3→v2
 // (and v3→v1) downgrade bridge filters it for older callers. Do not add new
 // providers here - use the existing v3 bridge. Frozen WITHOUT
-// nativeCapabilities (that rides @3.1 / @2.1).
+// nativeCapabilities (that rides @3.1 / @2.1). `providerIdSchemaV20` is ONLY
+// for this list@2.0 response shape — mutation @2.0 responses are amp-inclusive
+// (tag-exact host-v1.1.5); see providerCliStateSchemaMutationV20 below.
 export const providerCliStateSchemaV20 = z.object({
   providerId: providerIdSchemaV20,
   ...providerCliStateBaseShape,
@@ -312,6 +351,22 @@ export const providersListResponseSchemaV20 = z.object({
 });
 export type ProvidersListResponseV20 = z.infer<
   typeof providersListResponseSchemaV20
+>;
+
+/**
+ * Tag-exact host-v1.1.5 shape for state-returning mutation @2.0 responses.
+ * Amp-inclusive (the released @2.0 mutation surface accepted amp); no
+ * `nativeCapabilities` (@2.1-only). Distinct from list@2.0's pre-amp freeze.
+ * Oracle: `git show host-v1.1.5:protocol/src/host/provider-schemas.ts` —
+ * mutation responses reused the then-latest amp-inclusive state schema.
+ */
+export const providerCliStateSchemaMutationV20 = z.object({
+  providerId: providerIdSchema,
+  ...providerCliStateBaseShape,
+  auth: PROVIDER_AUTH_SCHEMA_V20,
+});
+export type ProviderCliStateMutationV20 = z.infer<
+  typeof providerCliStateSchemaMutationV20
 >;
 
 // Frozen protocol-v1.0 provider state + list response. The v2.0 line of
@@ -351,7 +406,7 @@ export const providersSetSelectionResponseSchema = z.object({
   state: providerCliStateSchema,
 });
 export const providersSetSelectionResponseSchemaV20 = z.object({
-  state: providerCliStateSchemaV20,
+  state: providerCliStateSchemaMutationV20,
 });
 export const providersSetSelectionResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -376,7 +431,7 @@ export const providersAddCustomPathResponseSchema = z.object({
   state: providerCliStateSchema,
 });
 export const providersAddCustomPathResponseSchemaV20 = z.object({
-  state: providerCliStateSchemaV20,
+  state: providerCliStateSchemaMutationV20,
 });
 export const providersAddCustomPathResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -401,7 +456,7 @@ export const providersRemoveCustomPathResponseSchema = z.object({
   state: providerCliStateSchema,
 });
 export const providersRemoveCustomPathResponseSchemaV20 = z.object({
-  state: providerCliStateSchemaV20,
+  state: providerCliStateSchemaMutationV20,
 });
 export const providersRemoveCustomPathResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -410,10 +465,48 @@ export type ProvidersRemoveCustomPathResponse = z.infer<
   typeof providersRemoveCustomPathResponseSchema
 >;
 
-export const providersSetEnabledRequestSchema = z.object({
+/**
+ * Frozen `providers.setEnabled@2.0` request (classic enable/disable only).
+ */
+export const providersSetEnabledRequestSchemaV20 = z.object({
   providerId: providerIdSchema,
   enabled: z.boolean(),
 });
+export type ProvidersSetEnabledRequestV20 = z.infer<
+  typeof providersSetEnabledRequestSchemaV20
+>;
+
+/**
+ * `providers.setEnabled@2.1` request. Object-preserving envelope: classic
+ * callers set `enabled` with `native: null`; native mutations set `native`
+ * with `enabled: null`. Exactly one of the two must be non-null (runtime XOR).
+ */
+export const providersSetEnabledRequestSchema = z
+  .object({
+    providerId: providerIdSchema,
+    /**
+     * Classic enable/disable arm. Null when `native` is set. Defaults to null
+     * when omitted so native-only callers can send just `{providerId, native}`.
+     */
+    enabled: z.boolean().nullable().default(null),
+    /**
+     * Native mutation arm. Null for classic enable/disable. Defaults to null
+     * when omitted so classic callers can send just `{providerId, enabled}`.
+     */
+    native: nativeMutationSchema.nullable().default(null),
+  })
+  .superRefine((value, ctx) => {
+    const hasEnabled = value.enabled !== null;
+    const hasNative = value.native !== null;
+    if (hasEnabled === hasNative) {
+      ctx.addIssue({
+        code: "custom",
+        path: hasEnabled ? ["native"] : ["enabled"],
+        message:
+          'providers.setEnabled@2.1 requires exactly one of "enabled" or "native"',
+      });
+    }
+  });
 export const providersSetEnabledRequestSchemaV10 = z.strictObject({
   providerId: providerIdSchemaV10,
   enabled: z.boolean(),
@@ -422,11 +515,17 @@ export type ProvidersSetEnabledRequest = z.infer<
   typeof providersSetEnabledRequestSchema
 >;
 
+/**
+ * `providers.setEnabled@2.1` response. Always returns classic `state`; native
+ * mutations also populate `native` (ok payload or typed error). Classic
+ * enable/disable returns `native: null`.
+ */
 export const providersSetEnabledResponseSchema = z.object({
   state: providerCliStateSchema,
+  native: nativeMutationResultSchema.nullable().default(null),
 });
 export const providersSetEnabledResponseSchemaV20 = z.object({
-  state: providerCliStateSchemaV20,
+  state: providerCliStateSchemaMutationV20,
 });
 export const providersSetEnabledResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -451,7 +550,7 @@ export const providersSetApiKeyResponseSchema = z.object({
   state: providerCliStateSchema,
 });
 export const providersSetApiKeyResponseSchemaV20 = z.object({
-  state: providerCliStateSchemaV20,
+  state: providerCliStateSchemaMutationV20,
 });
 export const providersSetApiKeyResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -474,7 +573,7 @@ export const providersClearApiKeyResponseSchema = z.object({
   state: providerCliStateSchema,
 });
 export const providersClearApiKeyResponseSchemaV20 = z.object({
-  state: providerCliStateSchemaV20,
+  state: providerCliStateSchemaMutationV20,
 });
 export const providersClearApiKeyResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -500,7 +599,7 @@ export const providersSetTerminalAgentArgsResponseSchema = z.object({
   state: providerCliStateSchema,
 });
 export const providersSetTerminalAgentArgsResponseSchemaV20 = z.object({
-  state: providerCliStateSchemaV20,
+  state: providerCliStateSchemaMutationV20,
 });
 export const providersSetTerminalAgentArgsResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -528,7 +627,7 @@ export const providersSetEnvOverrideResponseSchema = z.object({
   state: providerCliStateSchema,
 });
 export const providersSetEnvOverrideResponseSchemaV20 = z.object({
-  state: providerCliStateSchemaV20,
+  state: providerCliStateSchemaMutationV20,
 });
 export const providersSetEnvOverrideResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -553,7 +652,7 @@ export const providersDeleteEnvOverrideResponseSchema = z.object({
   state: providerCliStateSchema,
 });
 export const providersDeleteEnvOverrideResponseSchemaV20 = z.object({
-  state: providerCliStateSchemaV20,
+  state: providerCliStateSchemaMutationV20,
 });
 export const providersDeleteEnvOverrideResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10,
@@ -578,36 +677,66 @@ export type ProvidersDetectVersionResponse = z.infer<
 >;
 
 /**
- * Spawn the provider CLI's browser-OAuth login flow (e.g. `claude auth login`).
- * The CLI opens the browser itself and self-completes via a localhost loopback,
- * so the host only spawns it and reports back. `url` is any sign-in URL
- * scraped from the CLI's stdout/stderr (a manual fallback if the auto-open
- * fails), `started` is whether the child process actually spawned. Completion
- * is observed by the client polling `providers.list` for `auth.status`.
+ * Frozen `providers.startLogin@1.0` request/response (classic provider OAuth).
+ */
+export const providersStartLoginRequestSchemaV10 = z.object({
+  providerId: providerIdSchema,
+});
+export type ProvidersStartLoginRequestV10 = z.infer<
+  typeof providersStartLoginRequestSchemaV10
+>;
+
+export const providersStartLoginResponseSchemaV10 = z.object({
+  url: z.string().nullable(),
+  started: z.boolean(),
+});
+export type ProvidersStartLoginResponseV10 = z.infer<
+  typeof providersStartLoginResponseSchemaV10
+>;
+
+/**
+ * `providers.startLogin@1.1` request. Classic callers set `mcpAuth: null`;
+ * MCP auth folds the full NativeAuthAction set onto this carrier.
  */
 export const providersStartLoginRequestSchema = z.object({
   providerId: providerIdSchema,
+  mcpAuth: nativeAuthActionSchema.nullable().default(null),
 });
 export type ProvidersStartLoginRequest = z.infer<
   typeof providersStartLoginRequestSchema
 >;
 
+/**
+ * `providers.startLogin@1.1` response. Classic arm returns url/started with
+ * `mcpAuth: null`; MCP auth populates `mcpAuth` with the action result.
+ */
 export const providersStartLoginResponseSchema = z.object({
   url: z.string().nullable(),
   started: z.boolean(),
+  mcpAuth: nativeAuthResultSchema.nullable().default(null),
 });
 export type ProvidersStartLoginResponse = z.infer<
   typeof providersStartLoginResponseSchema
 >;
 
 /**
- * Block until an in-flight `providers.startLogin` child finishes (the browser
- * loopback completes or the CLI exits), then return the freshly re-probed state.
- * This is the honest "did the reconnect work?" signal - the host owns the
- * login child's exit, so the GUI awaits this instead of polling auth status.
+ * Frozen `providers.awaitLogin@2.0` request (classic provider-child await).
+ */
+export const providersAwaitLoginRequestSchemaV20 = z.object({
+  providerId: providerIdSchema,
+});
+export type ProvidersAwaitLoginRequestV20 = z.infer<
+  typeof providersAwaitLoginRequestSchemaV20
+>;
+
+/**
+ * `providers.awaitLogin@2.1` request. With `mcpAuth` set this is a **bounded
+ * status poll** (well under the 30s unary frame deadline), never the classic
+ * provider-child long poll. Host pending-auth registry (R02) owns concurrency.
  */
 export const providersAwaitLoginRequestSchema = z.object({
   providerId: providerIdSchema,
+  mcpAuth: nativeAuthPollContextSchema.nullable().default(null),
 });
 export const providersAwaitLoginRequestSchemaV10 = z.strictObject({
   providerId: providerIdSchemaV10,
@@ -616,13 +745,18 @@ export type ProvidersAwaitLoginRequest = z.infer<
   typeof providersAwaitLoginRequestSchema
 >;
 
+/**
+ * `providers.awaitLogin@2.1` response. Classic arm returns re-probed `state`
+ * with `mcpAuth: null`; MCP poll returns status in `mcpAuth`.
+ */
 export const providersAwaitLoginResponseSchema = z.object({
   // The provider's state after the login child closed and auth was re-probed.
   // Null when no login was in flight for this provider (nothing to await).
   state: providerCliStateSchema.nullable(),
+  mcpAuth: nativeAuthResultSchema.nullable().default(null),
 });
 export const providersAwaitLoginResponseSchemaV20 = z.object({
-  state: providerCliStateSchemaV20.nullable(),
+  state: providerCliStateSchemaMutationV20.nullable(),
 });
 export const providersAwaitLoginResponseSchemaV10 = z.object({
   state: providerCliStateSchemaV10.nullable(),
@@ -631,20 +765,57 @@ export type ProvidersAwaitLoginResponse = z.infer<
   typeof providersAwaitLoginResponseSchema
 >;
 
-/** Kill an in-flight `providers.startLogin` child for this provider. */
+/**
+ * Frozen `providers.cancelLogin@1.0` request/response.
+ */
+export const providersCancelLoginRequestSchemaV10 = z.object({
+  providerId: providerIdSchema,
+});
+export type ProvidersCancelLoginRequestV10 = z.infer<
+  typeof providersCancelLoginRequestSchemaV10
+>;
+
+export const providersCancelLoginResponseSchemaV10 = z.object({
+  cancelled: z.boolean(),
+});
+export type ProvidersCancelLoginResponseV10 = z.infer<
+  typeof providersCancelLoginResponseSchemaV10
+>;
+
+/**
+ * `providers.cancelLogin@1.1` request. MCP cancel folds server context onto
+ * this carrier; classic callers set `mcpAuth: null`.
+ */
 export const providersCancelLoginRequestSchema = z.object({
   providerId: providerIdSchema,
+  mcpAuth: nativeAuthCancelContextSchema.nullable().default(null),
 });
 export type ProvidersCancelLoginRequest = z.infer<
   typeof providersCancelLoginRequestSchema
 >;
 
+/**
+ * `providers.cancelLogin@1.1` response. Classic arm returns cancelled with
+ * `mcpAuth: null`; MCP cancel may return a typed auth result (e.g. done).
+ */
 export const providersCancelLoginResponseSchema = z.object({
   cancelled: z.boolean(),
+  mcpAuth: nativeAuthResultSchema.nullable().default(null),
 });
 export type ProvidersCancelLoginResponse = z.infer<
   typeof providersCancelLoginResponseSchema
 >;
+
+export type {
+  NativeAuthAction,
+  NativeAuthCancelContext,
+  NativeAuthPollContext,
+  NativeAuthResult,
+  NativeListQuery,
+  NativeListResult,
+  NativeMutation,
+  NativeMutationResult,
+};
 
 export function downgradeProviderAuthV20ToV10(
   auth: ProviderAuthV20,
@@ -666,7 +837,11 @@ export function downgradeProviderAuthV20ToV10(
 // A provider outside v1.0's id set (ACP GUI harnesses, Amp) simply fails the
 // `providerCliStateSchemaV10` parse below and is filtered by the caller.
 export function downgradeProviderCliStateToV10(
-  state: ProviderCliState | ProviderCliStateV30 | ProviderCliStateV20,
+  state:
+    | ProviderCliState
+    | ProviderCliStateV30
+    | ProviderCliStateV20
+    | ProviderCliStateMutationV20,
 ): ProviderCliStateV10 | null {
   // `providerCliStateSchemaV10` is a `z.strictObject`, so it REJECTS any key it
   // doesn't model. Drop post-v1.0 fields before the parse — otherwise every
@@ -686,10 +861,11 @@ export function downgradeProviderCliStateToV10(
   return parsed.success ? parsed.data : null;
 }
 
-// Downgrades a latest-shaped provider-state list to the frozen v2.0 shape,
+// Downgrades a latest-shaped provider-state list to the frozen list@2.0 shape,
 // dropping Amp (or any future post-v2.0 provider) and stripping
 // `nativeCapabilities` so an already-shipped v2.0 client's decode never sees
-// them. Zod object parse strips unknown keys.
+// them. Zod object parse strips unknown keys. LIST only — mutations use
+// {@link downgradeProviderCliStateToMutationV20}.
 export function downgradeProviderCliStateListToV20(
   states: readonly (ProviderCliState | ProviderCliStateV30)[],
 ): ProviderCliStateV20[] {
@@ -713,12 +889,24 @@ export function downgradeProviderCliStateListToV30(
   return states.map(downgradeProviderCliStateToV30);
 }
 
-// Downgrades latest state to frozen v2.0 (drops Amp + nativeCapabilities).
+// Downgrades latest state to frozen list@2.0 (drops Amp + nativeCapabilities).
 export function downgradeProviderCliStateToV20(
   state: ProviderCliState | ProviderCliStateV30,
 ): ProviderCliStateV20 | null {
   const parsed = providerCliStateSchemaV20.safeParse(state);
   return parsed.success ? parsed.data : null;
+}
+
+/**
+ * Downgrades latest state to tag-exact mutation@2.0 (amp-inclusive, no
+ * nativeCapabilities). Used by state-returning mutation 2.1→2.0 bridges.
+ */
+export function downgradeProviderCliStateToMutationV20(
+  state: ProviderCliState | ProviderCliStateV30,
+): ProviderCliStateMutationV20 {
+  const { nativeCapabilities: _nativeCapabilities, ...rest } =
+    state as ProviderCliState;
+  return providerCliStateSchemaMutationV20.parse(rest);
 }
 
 export function upgradeProviderCliStateV10ToV20(
@@ -730,9 +918,22 @@ export function upgradeProviderCliStateV10ToV20(
   });
 }
 
-/** Upgrade frozen v2.0/v3.0 state to latest by attaching the default descriptor. */
+/**
+ * Upgrade a tag-exact mutation@2.0 state (amp-inclusive) to latest by attaching
+ * the default descriptor.
+ */
+export function upgradeProviderCliStateMutationV20ToLatest(
+  state: ProviderCliStateMutationV20,
+): ProviderCliState {
+  return providerCliStateSchema.parse({
+    ...state,
+    nativeCapabilities: DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
+  });
+}
+
+/** Upgrade frozen list@2.0 / v3.0 state to latest by attaching the default descriptor. */
 export function upgradeProviderCliStateToLatest(
-  state: ProviderCliStateV20 | ProviderCliStateV30,
+  state: ProviderCliStateV20 | ProviderCliStateV30 | ProviderCliStateMutationV20,
 ): ProviderCliState {
   return providerCliStateSchema.parse({
     ...state,
@@ -741,7 +942,11 @@ export function upgradeProviderCliStateToLatest(
 }
 
 export function upgradeProviderCliStateListToLatest(
-  states: readonly (ProviderCliStateV20 | ProviderCliStateV30)[],
+  states: readonly (
+    | ProviderCliStateV20
+    | ProviderCliStateV30
+    | ProviderCliStateMutationV20
+  )[],
 ): ProviderCliState[] {
   return states.map(upgradeProviderCliStateToLatest);
 }

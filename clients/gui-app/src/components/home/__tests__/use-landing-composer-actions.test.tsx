@@ -228,6 +228,7 @@ describe("useLandingComposerActions", () => {
           path: WORKSPACE_PATH,
           name: "traycer",
           repoIdentifier: { owner: "traycerai", repo: "traycer" },
+          hostId: null,
         },
       },
     });
@@ -266,6 +267,7 @@ describe("useLandingComposerActions", () => {
           path: WORKSPACE_PATH,
           name: "traycer",
           repoIdentifier: { owner: "traycerai", repo: "traycer" },
+          hostId: null,
         },
       },
     });
@@ -525,6 +527,7 @@ describe("useLandingComposerActions", () => {
           path: WORKSPACE_PATH,
           name: "traycer",
           repoIdentifier: { owner: "traycerai", repo: "traycer" },
+          hostId: null,
         },
       },
     });
@@ -580,6 +583,7 @@ describe("useLandingComposerActions", () => {
           path: WORKSPACE_PATH,
           name: "traycer",
           repoIdentifier: { owner: "traycerai", repo: "traycer" },
+          hostId: null,
         },
       },
     });
@@ -633,6 +637,7 @@ describe("useLandingComposerActions", () => {
           path: DRAFT_WORKSPACE_PATH,
           name: "draft-workspace",
           repoIdentifier: { owner: "traycerai", repo: "draft-workspace" },
+          hostId: null,
         },
       },
     });
@@ -644,6 +649,7 @@ describe("useLandingComposerActions", () => {
           path: GLOBAL_WORKSPACE_PATH,
           name: "global-workspace",
           repoIdentifier: { owner: "traycerai", repo: "global-workspace" },
+          hostId: null,
         },
       },
     });
@@ -806,6 +812,7 @@ function setSingleWorkspace(): void {
         path: WORKSPACE_PATH,
         name: "traycer",
         repoIdentifier: { owner: "traycerai", repo: "traycer" },
+        hostId: null,
       },
     },
   });

@@ -1,23 +1,80 @@
 import type { UseMutationResult } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import type {
-  HostRpcError,
-  RequestOfMethod,
-  ResponseOfMethod,
-} from "@traycer-clients/shared/host-transport/host-messenger";
-import type { HostRpcRegistry } from "@/lib/host";
-import { useHostScopedMutation } from "@/hooks/host/use-host-scoped-mutation";
+  ProvidersPluginsMutateAction,
+  ProviderNativeScope,
+} from "@traycer/protocol/host/provider-native-schemas";
+import type { ProviderId } from "@traycer/protocol/host/provider-schemas";
+import { useHostClient } from "@/lib/host";
+import {
+  mapSetEnabledToPluginsMutate,
+  type PluginsListData,
+  type PluginsMutateData,
+} from "@/hooks/providers/native-response-map";
 import { providersMutationKeys } from "@/lib/query-keys";
+import { providersNativeQueryKeys } from "@/lib/query-keys/providers-native-query-keys";
+import { toastFromHostError } from "@/lib/host-error-toast";
+
+export type PluginsMutateVariables = {
+  readonly providerId: ProviderId;
+  readonly scope: ProviderNativeScope;
+  readonly workspaceRoot: string | null;
+  readonly mutation: ProvidersPluginsMutateAction;
+};
+
+interface PluginsMutateContext {
+  readonly hostId: string | null;
+  readonly listParams: {
+    readonly providerId: ProviderId;
+    readonly scope: ProviderNativeScope;
+    readonly workspaceRoot: string | null;
+  };
+}
 
 export function useProvidersPluginsMutate(): UseMutationResult<
-  ResponseOfMethod<HostRpcRegistry, "providers.pluginsMutate">,
+  PluginsMutateData,
   HostRpcError,
-  RequestOfMethod<HostRpcRegistry, "providers.pluginsMutate">,
-  { readonly hostId: string | null }
+  PluginsMutateVariables,
+  PluginsMutateContext
 > {
-  return useHostScopedMutation({
-    method: "providers.pluginsMutate",
+  const client = useHostClient();
+  const queryClient = useQueryClient();
+  return useMutation<
+    PluginsMutateData,
+    HostRpcError,
+    PluginsMutateVariables,
+    PluginsMutateContext
+  >({
     mutationKey: providersMutationKeys.pluginsMutate(),
-    errorMessage: "Couldn't update plugins.",
-    invalidateMethods: ["providers.pluginsList"],
+    mutationFn: async (variables) => {
+      const response = await client.request("providers.setEnabled", {
+        providerId: variables.providerId,
+        enabled: null,
+        native: {
+          kind: "plugins",
+          scope: variables.scope,
+          workspaceRoot: variables.workspaceRoot,
+          mutation: variables.mutation,
+        },
+      });
+      return mapSetEnabledToPluginsMutate({ response });
+    },
+    onMutate: (variables) => ({
+      hostId: client.getActiveHostId(),
+      listParams: {
+        providerId: variables.providerId,
+        scope: variables.scope,
+        workspaceRoot: variables.workspaceRoot,
+      },
+    }),
+    onSuccess: (data, _variables, ctx) => {
+      if (ctx.hostId === null) return;
+      queryClient.setQueryData<PluginsListData>(
+        providersNativeQueryKeys.pluginsList(ctx.hostId, ctx.listParams),
+        data,
+      );
+    },
+    onError: (error) => toastFromHostError(error, "Couldn't update plugins."),
   });
 }

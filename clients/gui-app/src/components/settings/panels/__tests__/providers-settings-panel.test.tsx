@@ -191,7 +191,12 @@ vi.mock("@/hooks/providers/use-providers-detect-version-query", () => ({
 
 vi.mock("@/hooks/harnesses/use-gui-harness-catalog", () => ({
   useGuiHarnessesQuery: () => ({
-    data: { harnesses: [] },
+    data: {
+      harnesses: [
+        { id: "claude", modes: ["gui", "tui"] },
+        { id: "codex", modes: ["gui", "tui"] },
+      ],
+    },
   }),
 }));
 
@@ -203,6 +208,35 @@ vi.mock("@/providers/use-runner-host", () => ({
   useRunnerHost: () => ({
     openExternalLink: providerMocks.openExternalLink,
   }),
+}));
+
+vi.mock("@/hooks/runner/use-open-external-link-mutation", () => ({
+  useRunnerOpenExternalLink: () => ({
+    mutate: providerMocks.openExternalLink,
+  }),
+}));
+
+// MCP Project scope resolves workspaces via host query; this harness has no
+// QueryClient, so stub a stable empty host-resolved set.
+vi.mock("@/hooks/workspace/use-resolved-workspace-folders-query", () => ({
+  useResolvedWorkspaceFolders: () => ({
+    folders: [],
+    isLoading: false,
+    isFetching: false,
+  }),
+}));
+
+vi.mock("@/lib/host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/host")>();
+  return {
+    ...actual,
+    useHostBinding: () => null,
+    useHostClient: () => null,
+  };
+});
+
+vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
+  useReactiveActiveHostId: () => "host-1",
 }));
 
 // The Traycer provider mounts the subscription card; stub its credits query so
@@ -336,12 +370,22 @@ function providerStateWithAuth(
   return { ...providerState(input), auth, authPending };
 }
 
+const BOTH_SCOPES = ["global", "project"] as const;
+
 const SAMPLE_MCP: NonNullable<ProviderNativeCapabilities["mcp"]> = {
   transports: ["stdio", "http"],
-  scopes: ["global", "project"],
-  authTypes: ["none", "headers"],
+  authTypes: ["none", "header"],
   authActions: ["login", "logout"],
-  mutationActions: ["add", "update", "remove", "toggleServer", "toggleTool"],
+  actionScopes: {
+    list: [...BOTH_SCOPES],
+    add: [...BOTH_SCOPES],
+    update: [...BOTH_SCOPES],
+    remove: [...BOTH_SCOPES],
+    toggleServer: [...BOTH_SCOPES],
+    toggleTool: [...BOTH_SCOPES],
+    discover: [...BOTH_SCOPES],
+    auth: [...BOTH_SCOPES],
+  },
   addServer: "cli",
   removeServer: "cli",
   updateServer: "patch",
@@ -361,14 +405,22 @@ const FULL_TABS: ProviderNativeCapabilities = {
   plugins: {
     addModes: ["cli-source"],
     marketplaceBrowse: false,
-    canEnableDisable: true,
-    canRemove: true,
+    actionScopes: {
+      list: ["global"],
+      add: ["global"],
+      remove: ["global"],
+      setEnabled: ["global"],
+    },
     traycerSessionToolsNotice: false,
   },
   skills: {
-    canList: true,
-    canAdd: true,
-    canImport: false,
+    actionScopes: {
+      list: ["global"],
+      add: ["global"],
+      create: ["global"],
+      import: [],
+      remove: ["global"],
+    },
   },
 };
 
@@ -382,14 +434,22 @@ const CURSOR_TABS: ProviderNativeCapabilities = {
   plugins: {
     addModes: ["read-only"],
     marketplaceBrowse: false,
-    canEnableDisable: false,
-    canRemove: false,
+    actionScopes: {
+      list: ["global"],
+      add: [],
+      remove: [],
+      setEnabled: [],
+    },
     traycerSessionToolsNotice: false,
   },
   skills: {
-    canList: true,
-    canAdd: true,
-    canImport: false,
+    actionScopes: {
+      list: ["global"],
+      add: ["global"],
+      create: ["global"],
+      import: [],
+      remove: ["global"],
+    },
   },
 };
 
@@ -972,5 +1032,32 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(
       screen.getByText(/Invoked by the agent when relevant/),
     ).toBeDefined();
+  });
+
+  it("does not flush terminal-agent args on keystroke alone", () => {
+    providerMocks.listResult.data = {
+      providers: [
+        providerState({
+          providerId: "claude-code",
+          selected: { kind: "bundled" },
+          candidates: [],
+          envOverrides: [],
+          nativeCapabilities: FULL_TABS,
+        }),
+      ],
+    };
+    providerMocks.setTerminalAgentArgsMutate.mockClear();
+
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    selectTab("General");
+    const input = screen.getByPlaceholderText("--dangerously-skip-permissions");
+    fireEvent.change(input, { target: { value: "--foo" } });
+
+    expect(providerMocks.setTerminalAgentArgsMutate).not.toHaveBeenCalled();
   });
 });

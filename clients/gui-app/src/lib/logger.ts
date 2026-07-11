@@ -33,6 +33,37 @@ const SENSITIVE_KEY_PATTERN =
  */
 const AUTHORIZATION_HEADER_PATTERN =
   /(\b(?:Proxy-Authorization|Authorization|X-Api-Key|X-Auth-Token)\b\s*[=:]\s*)(?:([A-Za-z][A-Za-z0-9._-]*)\s+)?([^\s,;}|&"']+)/gi;
+/**
+ * Quoted-JSON Authorization-style keys: `"Authorization": "Bearer x"` /
+ * `"Authorization":"token ghs_…"`. Same generic-scheme rule as the header
+ * pattern; the unquoted pattern stops at quotes around the key/value.
+ */
+const QUOTED_JSON_AUTHORIZATION_PATTERN =
+  /((?:["'])(?:Proxy-Authorization|Authorization|X-Api-Key|X-Auth-Token)(?:["'])\s*:\s*)(["'])(?:([A-Za-z][A-Za-z0-9._+-]*)\s+)?([^"']*)\2/gi;
+/**
+ * Cookie / Set-Cookie header values. Redacts the full header value through
+ * the rest of the field (stops at newline or multi-field `|` separators).
+ * Does not stop at `,`/`;` — multi-pair cookies, Expires= commas, and
+ * naively comma-joined Set-Cookie instances all need the whole value redacted.
+ */
+const COOKIE_HEADER_PATTERN =
+  /(\b(?:Set-Cookie|Cookie)\b\s*[=:]\s*)([^\r\n|]+)/gi;
+/**
+ * Quoted-JSON Cookie / Set-Cookie: `"Cookie": "session=…"` (unquoted header
+ * pattern never sees the quotes). Host needs this explicitly; GUI also has a
+ * broader sensitive-key assign pattern that covers it.
+ */
+const QUOTED_JSON_COOKIE_PATTERN =
+  /((?:["'])(?:Set-Cookie|Cookie)(?:["'])\s*:\s*)(["'])([^"']*)\2/gi;
+/**
+ * Digest auth `response=` field (multipart Authorization leaves this tail).
+ */
+const DIGEST_RESPONSE_PATTERN =
+  /(\bresponse\s*=\s*)("[^"]*"|'[^']*'|[^\s,;}&"']+)/gi;
+/**
+ * AWS4-HMAC-SHA256 `Signature=` tail (multipart Authorization leaves this).
+ */
+const AWS4_SIGNATURE_PATTERN = /(\bSignature\s*=\s*)([^\s,;}&"']+)/gi;
 const SENSITIVE_QUERY_PARAM_PATTERN =
   /([?&](?:access_token|refresh_token|id_token|token|code|code_verifier|password|secret|client_secret|api_key|authorization|key)=)([^&#\s]+)/gi;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
@@ -83,6 +114,17 @@ export function redactLogText(value: string): string {
   const redacted = value
     .replace(URL_USERINFO_PATTERN, "$1<redacted>@")
     .replace(SENSITIVE_QUERY_PARAM_PATTERN, "$1<redacted>")
+    .replace(COOKIE_HEADER_PATTERN, "$1<redacted>")
+    .replace(QUOTED_JSON_COOKIE_PATTERN, "$1$2<redacted>$2")
+    .replace(
+      QUOTED_JSON_AUTHORIZATION_PATTERN,
+      (...args: [string, string, string, string | undefined, string]) => {
+        const [, key, quote, scheme, rest] = args;
+        return scheme !== undefined && rest.length > 0
+          ? `${key}${quote}${scheme} <redacted>${quote}`
+          : `${key}${quote}<redacted>${quote}`;
+      },
+    )
     .replace(
       AUTHORIZATION_HEADER_PATTERN,
       (_match, key: string, scheme: string | undefined) =>
@@ -90,6 +132,8 @@ export function redactLogText(value: string): string {
           ? `${key}<redacted>`
           : `${key}${scheme} <redacted>`,
     )
+    .replace(DIGEST_RESPONSE_PATTERN, "$1<redacted>")
+    .replace(AWS4_SIGNATURE_PATTERN, "$1<redacted>")
     .replace(BEARER_PATTERN, "Bearer <redacted>")
     .replace(SENSITIVE_INLINE_VALUE_PATTERN, "$1<redacted>");
   return redacted.length > MAX_LOG_STRING_LENGTH

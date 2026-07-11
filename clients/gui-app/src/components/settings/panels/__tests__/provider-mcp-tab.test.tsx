@@ -12,6 +12,8 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderMcpTab } from "@/components/settings/panels/provider-mcp-tab";
+import { useMcpPendingAuthStore } from "@/stores/settings/mcp-pending-auth-store";
+import { useProvidersWorkspaceSelectionStore } from "@/stores/settings/providers-workspace-selection-store";
 import { useWorkspaceFoldersStore } from "@/stores/workspace/workspace-folders-store";
 
 const mcpMocks = vi.hoisted(() => ({
@@ -30,6 +32,7 @@ const mcpMocks = vi.hoisted(() => ({
     isFetching: false,
   },
   mutate: vi.fn(),
+  mutateAsync: vi.fn(),
   mutateIsPending: false,
   discoverMutate: vi.fn(),
   authMutate: vi.fn(),
@@ -43,6 +46,45 @@ const mcpMocks = vi.hoisted(() => ({
   }>,
 }));
 
+const resolvedWorkspaceMocks = vi.hoisted(() => ({
+  folders: [] as Array<{
+    kind: "resolved" | "local-only" | "unresolved";
+    path: string;
+    name: string;
+  }>,
+  isLoading: false,
+  isFetching: false,
+}));
+
+vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
+  useReactiveActiveHostId: () => "host-1",
+}));
+
+vi.mock("@/lib/host", () => ({
+  useHostClient: () => ({
+    getActiveHostId: () => "host-1",
+  }),
+  useHostBinding: () => ({
+    hostClient: {
+      getActiveHostId: () => "host-1",
+    },
+  }),
+}));
+
+vi.mock("@/hooks/workspace/use-resolved-workspace-folders-query", () => ({
+  useResolvedWorkspaceFolders: () => ({
+    folders: resolvedWorkspaceMocks.folders,
+    isLoading: resolvedWorkspaceMocks.isLoading,
+    isFetching: resolvedWorkspaceMocks.isFetching,
+  }),
+}));
+
+vi.mock("@/hooks/runner/use-open-external-link-mutation", () => ({
+  useRunnerOpenExternalLink: () => ({
+    mutate: mcpMocks.openExternalLink,
+  }),
+}));
+
 vi.mock("@/hooks/providers/use-providers-mcp-list-query", () => ({
   useProvidersMcpList: (args: {
     providerId: string;
@@ -52,18 +94,6 @@ vi.mock("@/hooks/providers/use-providers-mcp-list-query", () => ({
     pollWhilePending: boolean;
   }) => {
     mcpMocks.listCalls.push(args);
-    // Shadow read: project scope while Global is the active primary list.
-    const hasActiveGlobal = mcpMocks.listCalls.some(
-      (c) => c.scope === "global" && c.enabled,
-    );
-    if (
-      args.scope === "project" &&
-      args.enabled &&
-      !args.pollWhilePending &&
-      hasActiveGlobal
-    ) {
-      return mcpMocks.projectListResult;
-    }
     if (!args.enabled) {
       return {
         data: undefined,
@@ -73,6 +103,10 @@ vi.mock("@/hooks/providers/use-providers-mcp-list-query", () => ({
         isFetching: false,
       };
     }
+    // Primary or shadow project-scope reads share projectListResult.
+    if (args.scope === "project") {
+      return mcpMocks.projectListResult;
+    }
     return mcpMocks.listResult;
   },
 }));
@@ -80,6 +114,7 @@ vi.mock("@/hooks/providers/use-providers-mcp-list-query", () => ({
 vi.mock("@/hooks/providers/use-providers-mcp-mutate-mutation", () => ({
   useProvidersMcpMutate: () => ({
     mutate: mcpMocks.mutate,
+    mutateAsync: mcpMocks.mutateAsync,
     isPending: mcpMocks.mutateIsPending,
   }),
 }));
@@ -98,18 +133,23 @@ vi.mock("@/hooks/providers/use-providers-mcp-auth-mutation", () => ({
   }),
 }));
 
-vi.mock("@/providers/use-runner-host", () => ({
-  useRunnerHost: () => ({
-    openExternalLink: mcpMocks.openExternalLink,
-  }),
-}));
+const BOTH_SCOPES = ["global", "project"] as const;
+const GLOBAL_ONLY = ["global"] as const;
 
 const FULL_CAPS: ProviderMcpCapabilities = {
   transports: ["stdio", "http"],
-  scopes: ["global", "project"],
-  authTypes: ["none", "headers", "oauth"],
+  authTypes: ["none", "header", "oauth"],
   authActions: ["login", "logout"],
-  mutationActions: ["add", "update", "remove", "toggleServer", "toggleTool"],
+  actionScopes: {
+    list: [...BOTH_SCOPES],
+    add: [...BOTH_SCOPES],
+    update: [...BOTH_SCOPES],
+    remove: [...BOTH_SCOPES],
+    toggleServer: [...BOTH_SCOPES],
+    toggleTool: [...BOTH_SCOPES],
+    discover: [...BOTH_SCOPES],
+    auth: [...BOTH_SCOPES],
+  },
   addServer: "cli",
   removeServer: "cli",
   updateServer: "patch",
@@ -126,14 +166,26 @@ const FULL_CAPS: ProviderMcpCapabilities = {
 const CURSOR_CAPS: ProviderMcpCapabilities = {
   ...FULL_CAPS,
   perToolBacking: "degraded-server-level",
-  mutationActions: ["add", "update", "remove", "toggleServer"],
+  actionScopes: {
+    ...FULL_CAPS.actionScopes,
+    toggleTool: [],
+  },
   authActions: ["login"],
   instructionsSource: "none",
 };
 
 const KIMI_CAPS: ProviderMcpCapabilities = {
   ...FULL_CAPS,
-  scopes: ["global"],
+  actionScopes: {
+    list: [...GLOBAL_ONLY],
+    add: [...GLOBAL_ONLY],
+    update: [...GLOBAL_ONLY],
+    remove: [...GLOBAL_ONLY],
+    toggleServer: [...GLOBAL_ONLY],
+    toggleTool: [...GLOBAL_ONLY],
+    discover: [...GLOBAL_ONLY],
+    auth: [...GLOBAL_ONLY],
+  },
 };
 
 function connectedServer(
@@ -145,7 +197,7 @@ function connectedServer(
     transport: {
       type: "http",
       url: "https://mcp.context7.com",
-      headers: null,
+      auth: null,
     },
     status: "connected",
     statusSource: "probe",
@@ -210,6 +262,7 @@ describe("<ProviderMcpTab />", () => {
       isFetching: false,
     };
     mcpMocks.mutate.mockReset();
+    mcpMocks.mutateAsync.mockReset();
     mcpMocks.discoverMutate.mockReset();
     mcpMocks.authMutate.mockReset();
     mcpMocks.openExternalLink.mockReset();
@@ -222,9 +275,19 @@ describe("<ProviderMcpTab />", () => {
           path: "/Users/dev/app",
           name: "app",
           repoIdentifier: null,
+          hostId: "host-1",
         },
       },
     });
+    resolvedWorkspaceMocks.folders = [
+      { kind: "local-only", path: "/Users/dev/app", name: "app" },
+    ];
+    resolvedWorkspaceMocks.isLoading = false;
+    resolvedWorkspaceMocks.isFetching = false;
+    useProvidersWorkspaceSelectionStore.setState({
+      selectedByHostId: {},
+    });
+    useMcpPendingAuthStore.setState({ entries: {} });
   });
 
   afterEach(() => {
@@ -260,23 +323,299 @@ describe("<ProviderMcpTab />", () => {
     expect(screen.getByText("app")).toBeDefined();
   });
 
-  it("shows empty state for Project with no workspace", () => {
+  it("shows multi-workspace picker and selects second folder", () => {
+    useWorkspaceFoldersStore.setState({
+      folders: ["/Users/dev/app", "/Users/dev/other"],
+      folderInfoByPath: {
+        "/Users/dev/app": {
+          path: "/Users/dev/app",
+          name: "app",
+          repoIdentifier: null,
+          hostId: "host-1",
+        },
+        "/Users/dev/other": {
+          path: "/Users/dev/other",
+          name: "other",
+          repoIdentifier: null,
+          hostId: "host-1",
+        },
+      },
+    });
+    resolvedWorkspaceMocks.folders = [
+      { kind: "local-only", path: "/Users/dev/app", name: "app" },
+      { kind: "local-only", path: "/Users/dev/other", name: "other" },
+    ];
+    useProvidersWorkspaceSelectionStore.setState({
+      selectedByHostId: { "host-1": "/Users/dev/app" },
+    });
+    renderTab(FULL_CAPS, "codex");
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+
+    const picker = screen.getByRole("combobox", { name: "Project workspace" });
+    expect(picker).toBeDefined();
+    fireEvent.click(picker);
+    fireEvent.click(screen.getByRole("option", { name: "other" }));
+
+    const projectCall = mcpMocks.listCalls.find(
+      (c) =>
+        c.scope === "project" &&
+        c.enabled &&
+        c.workspaceRoot === "/Users/dev/other",
+    );
+    expect(projectCall).toBeDefined();
+  });
+
+  it("disables Project chip when zero workspaces on this host", () => {
     useWorkspaceFoldersStore.setState({
       folders: [],
       folderInfoByPath: {},
+    });
+    resolvedWorkspaceMocks.folders = [];
+    renderTab(FULL_CAPS, "codex");
+
+    const projectChip = screen.getByRole("button", { name: "Project" });
+    expect(projectChip).toHaveProperty("disabled", true);
+    expect(projectChip.getAttribute("title")).toBe("Open a workspace first");
+  });
+
+  it("shows multi-workspace picker on first use with no prior selection", () => {
+    useWorkspaceFoldersStore.setState({
+      folders: ["/Users/dev/app", "/Users/dev/other"],
+      folderInfoByPath: {
+        "/Users/dev/app": {
+          path: "/Users/dev/app",
+          name: "app",
+          repoIdentifier: null,
+          hostId: "host-1",
+        },
+        "/Users/dev/other": {
+          path: "/Users/dev/other",
+          name: "other",
+          repoIdentifier: null,
+          hostId: "host-1",
+        },
+      },
+    });
+    resolvedWorkspaceMocks.folders = [
+      { kind: "local-only", path: "/Users/dev/app", name: "app" },
+      { kind: "local-only", path: "/Users/dev/other", name: "other" },
+    ];
+    useProvidersWorkspaceSelectionStore.setState({
+      selectedByHostId: {},
     });
     renderTab(FULL_CAPS, "codex");
 
     fireEvent.click(screen.getByRole("button", { name: "Project" }));
     expect(
-      screen.getByText(/Open a workspace to manage project-scoped MCP servers/),
+      screen.getByRole("combobox", { name: "Project workspace" }),
     ).toBeDefined();
+    expect(screen.getByText(/Select a workspace/)).toBeDefined();
+    expect(
+      screen.queryByText(
+        /Open a workspace to manage project-scoped MCP servers/,
+      ),
+    ).toBeNull();
+  });
+
+  it("excludes non-git local-only folders stamped for another host", () => {
+    // Host A scratch path must never appear as Host B's Project workspaceRoot.
+    resolvedWorkspaceMocks.folders = [
+      {
+        kind: "unresolved",
+        path: "/Users/a/scratch",
+        name: "scratch",
+      },
+    ];
+    useWorkspaceFoldersStore.setState({
+      folders: ["/Users/a/scratch"],
+      folderInfoByPath: {
+        "/Users/a/scratch": {
+          path: "/Users/a/scratch",
+          name: "scratch",
+          repoIdentifier: null,
+          hostId: "host-A",
+        },
+      },
+    });
+    useProvidersWorkspaceSelectionStore.setState({
+      selectedByHostId: { "host-1": "/Users/a/scratch" },
+    });
+    renderTab(FULL_CAPS, "codex");
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+
+    // Zero host-local workspaces → Project disabled / open-a-workspace empty.
+    expect(
+      screen.queryByRole("combobox", { name: "Project workspace" }),
+    ).toBeNull();
+    expect(
+      mcpMocks.listCalls.some((c) => c.workspaceRoot === "/Users/a/scratch"),
+    ).toBe(false);
+  });
+
+  it("excludes unresolved paths belonging to another host", () => {
+    useWorkspaceFoldersStore.setState({
+      folders: ["/Users/dev/app", "/Users/dev/other-host"],
+      folderInfoByPath: {
+        "/Users/dev/app": {
+          path: "/Users/dev/app",
+          name: "app",
+          repoIdentifier: null,
+          hostId: "host-1",
+        },
+        "/Users/dev/other-host": {
+          path: "/Users/dev/other-host",
+          name: "other-host",
+          repoIdentifier: {
+            owner: "acme",
+            repo: "other",
+          },
+          hostId: "host-B",
+        },
+      },
+    });
+    // Only /Users/dev/app resolves on the bound host; other-host is unresolved.
+    resolvedWorkspaceMocks.folders = [
+      { kind: "local-only", path: "/Users/dev/app", name: "app" },
+      {
+        kind: "unresolved",
+        path: "/Users/dev/other-host",
+        name: "other-host",
+      },
+    ];
+    useProvidersWorkspaceSelectionStore.setState({
+      selectedByHostId: { "host-1": "/Users/dev/other-host" },
+    });
+    renderTab(FULL_CAPS, "codex");
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+
+    // Single host-resolved workspace auto-selects; foreign path is ignored.
+    expect(
+      screen.queryByRole("combobox", { name: "Project workspace" }),
+    ).toBeNull();
+    expect(screen.getByText("app")).toBeDefined();
+    const projectCall = mcpMocks.listCalls.find(
+      (c) =>
+        c.scope === "project" &&
+        c.enabled &&
+        c.workspaceRoot === "/Users/dev/app",
+    );
+    expect(projectCall).toBeDefined();
+    expect(
+      mcpMocks.listCalls.some(
+        (c) => c.workspaceRoot === "/Users/dev/other-host",
+      ),
+    ).toBe(false);
   });
 
   it("locks kimi to Global (no scope switch)", () => {
     renderTab(KIMI_CAPS, "kimi");
     expect(screen.queryByRole("button", { name: "Project" })).toBeNull();
     expect(screen.getByText("Global scope only")).toBeDefined();
+  });
+
+  it("hides Edit when actionScopes.update is empty", () => {
+    const noUpdateCaps: ProviderMcpCapabilities = {
+      ...FULL_CAPS,
+      actionScopes: {
+        ...FULL_CAPS.actionScopes,
+        update: [],
+      },
+    };
+    mcpMocks.listResult.data = { servers: [connectedServer({})] };
+    renderTab(noUpdateCaps, "codex");
+    expect(screen.queryByRole("button", { name: /Edit context7/ })).toBeNull();
+  });
+
+  it("shows Edit when actionScopes.update includes current scope", () => {
+    mcpMocks.listResult.data = { servers: [connectedServer({})] };
+    renderTab(FULL_CAPS, "codex");
+    expect(screen.getByRole("button", { name: /Edit context7/ })).toBeDefined();
+  });
+
+  it("hides Add/Delete/auth/discover on Project when actionScopes only allow them for Global", () => {
+    // Codex/Droid/Copilot-style: list both scopes, but CRUD/auth/discover
+    // only global. Populate project list so Project scope has a real row
+    // (including needs_auth) — empty project list would make row-level
+    // assertions pass vacuously.
+    const codexCaps: ProviderMcpCapabilities = {
+      ...FULL_CAPS,
+      actionScopes: {
+        list: [...BOTH_SCOPES],
+        add: [...GLOBAL_ONLY],
+        update: [...GLOBAL_ONLY],
+        remove: [...GLOBAL_ONLY],
+        toggleServer: [...BOTH_SCOPES],
+        toggleTool: [...BOTH_SCOPES],
+        discover: [...GLOBAL_ONLY],
+        auth: [...GLOBAL_ONLY],
+      },
+    };
+    const needsAuthServer = connectedServer({
+      name: "project-oauth",
+      status: "needs_auth",
+      tools: [],
+    });
+    const errorServer = connectedServer({
+      name: "project-err",
+      status: "error",
+      statusDetail: "probe failed",
+      tools: [],
+    });
+    mcpMocks.listResult.data = {
+      servers: [
+        connectedServer({
+          status: "needs_auth",
+          tools: [],
+        }),
+      ],
+    };
+    mcpMocks.projectListResult.data = {
+      servers: [needsAuthServer, errorServer],
+    };
+    renderTab(codexCaps, "codex");
+
+    // Global: Add + Delete + Refresh + Sign in available.
+    expect(
+      screen.getByRole("button", { name: /Add MCP server/ }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: /Delete context7/ }),
+    ).toBeDefined();
+    expect(
+      screen.getByRole("button", { name: /Refresh context7/ }),
+    ).toBeDefined();
+    expect(screen.getByRole("button", { name: /Sign in/ })).toBeDefined();
+
+    fireEvent.click(screen.getByRole("button", { name: "Project" }));
+
+    // Project list is now the primary list (mock returns projectListResult
+    // for project-scope reads). Header Add still scope-gated off.
+    expect(screen.queryByRole("button", { name: /Add MCP server/ })).toBeNull();
+    // Row-level controls on real project servers must be absent.
+    expect(
+      screen.queryByRole("button", { name: /Delete project-oauth/ }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Refresh project-oauth/ }),
+    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /Sign in/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Delete project-err/ }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Refresh project-err/ }),
+    ).toBeNull();
+
+    // Expanded-row fallback (ToolsUnavailableState) must also honor gates.
+    fireEvent.click(
+      screen.getByRole("button", { name: /Expand project-oauth/ }),
+    );
+    expect(screen.queryByRole("button", { name: /^Sign in$/ })).toBeNull();
+    fireEvent.click(
+      screen.getByRole("button", { name: /Collapse project-oauth/ }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Expand project-err/ }));
+    expect(screen.queryByRole("button", { name: /^Retry$/ })).toBeNull();
   });
 
   it("shows shadowed by project badge on global rows", () => {
@@ -309,7 +648,9 @@ describe("<ProviderMcpTab />", () => {
           toolName: "search_docs",
           enabled: false,
         },
+        suppressToast: true,
       }),
+      expect.anything(),
     );
   });
 
@@ -352,7 +693,7 @@ describe("<ProviderMcpTab />", () => {
     fireEvent.change(urlInput, {
       target: { value: "https://example.com" },
     });
-    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /Add server/ }));
 
     expect(
       screen.getByText(/A server named “context7” already exists/),
@@ -371,12 +712,12 @@ describe("<ProviderMcpTab />", () => {
       within(dialog).getByPlaceholderText("https://mcp.example.com"),
       { target: { value: "not-a-url" } },
     );
-    fireEvent.click(within(dialog).getByRole("button", { name: "Add" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: /Add server/ }));
     expect(screen.getByText(/valid http\(s\) URL/)).toBeDefined();
     expect(mcpMocks.mutate).not.toHaveBeenCalled();
   });
 
-  it("starts auth login and opens authorizationUrl", () => {
+  it("starts auth login and opens authorizationUrl via runner mutation", () => {
     mcpMocks.listResult.data = {
       servers: [
         connectedServer({
@@ -409,13 +750,50 @@ describe("<ProviderMcpTab />", () => {
     fireEvent.click(screen.getByRole("button", { name: "Sign in" }));
     expect(mcpMocks.authMutate).toHaveBeenCalledWith(
       expect.objectContaining({
-        auth: { action: "login", serverName: "context7" },
+        auth: { action: "login", serverName: "context7", code: undefined },
       }),
       expect.anything(),
     );
     expect(mcpMocks.openExternalLink).toHaveBeenCalledWith(
       "https://auth.example.com/oauth",
     );
+    const entry = useMcpPendingAuthStore.getState().get({
+      providerId: "codex",
+      scope: "global",
+      workspaceRoot: null,
+      serverName: "context7",
+    });
+    expect(entry).not.toBeNull();
+    expect(entry?.authorizationUrl).toBe("https://auth.example.com/oauth");
+  });
+
+  it("resumes pending auth polling from store on remount", () => {
+    useMcpPendingAuthStore.getState().upsert({
+      key: {
+        providerId: "codex",
+        scope: "global",
+        workspaceRoot: null,
+        serverName: "context7",
+      },
+      hostId: "host-1",
+      startedAt: Date.now(),
+      authorizationUrl: "https://auth.example.com/oauth",
+      instruction: null,
+    });
+    mcpMocks.listResult.data = {
+      servers: [
+        connectedServer({
+          status: "needs_auth",
+          tools: [],
+        }),
+      ],
+    };
+    renderTab(FULL_CAPS, "codex");
+
+    const pollingCall = mcpMocks.listCalls.find(
+      (c) => c.scope === "global" && c.enabled && c.pollWhilePending,
+    );
+    expect(pollingCall).toBeDefined();
   });
 
   it("redacts secrets in pendingInstruction auth text", () => {

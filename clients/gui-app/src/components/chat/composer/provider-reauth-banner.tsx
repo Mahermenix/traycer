@@ -277,14 +277,14 @@ function OAuthReauthForm({
   const { mutate: awaitLoginMutate } = awaitLogin;
 
   const onCancel = (): void => {
-    cancelLoginMutate({ providerId });
+    cancelLoginMutate({ providerId, mcpAuth: null });
     setAwaiting(false);
   };
 
   const onAuthenticate = (): void => {
     if (startLogin.isPending || awaiting) return;
     startLogin.mutate(
-      { providerId },
+      { providerId, mcpAuth: null },
       {
         onSuccess: (data) => {
           setLoginUrl(data.url);
@@ -293,7 +293,7 @@ function OAuthReauthForm({
           // drops the spinner whether it resolved authenticated (gate unmounts
           // us) or still signed-out (back to the Authenticate button).
           awaitLoginMutate(
-            { providerId },
+            { providerId, mcpAuth: null },
             { onSettled: () => setAwaiting(false) },
           );
         },
@@ -409,7 +409,7 @@ function TokenReauthForm({
           hostQueryKeys.method<HostRpcRegistry, "providers.list">(
             tabHostId,
             "providers.list",
-            {},
+            { native: null },
           ),
         );
         const providerState = data?.providers.find(

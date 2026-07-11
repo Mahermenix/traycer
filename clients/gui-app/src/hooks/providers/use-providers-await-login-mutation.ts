@@ -57,7 +57,7 @@ export function useProvidersAwaitLogin(): UseMutationResult<
           hostQueryKeys.method<HostRpcRegistry, "providers.list">(
             tabHostId,
             "providers.list",
-            {},
+            { native: null },
           ),
           (prev) => {
             if (prev === undefined) return prev;
@@ -65,6 +65,7 @@ export function useProvidersAwaitLogin(): UseMutationResult<
               providers: prev.providers.map((p) =>
                 p.providerId === next.providerId ? next : p,
               ),
+              native: prev.native,
             };
           },
         );

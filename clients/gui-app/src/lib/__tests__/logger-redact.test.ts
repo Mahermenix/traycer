@@ -18,10 +18,50 @@ describe("redactLogText", () => {
     ["https://tok@example.com/r.git", "tok@"],
     ["https://u:p@h/x", "u:p@"],
     ["https://h/x?token=abc", "token=abc"],
+    // Cookie / Set-Cookie headers (previously bypassed).
+    ["Cookie: session=COOKIESECRET", "COOKIESECRET"],
+    ["Set-Cookie: session=COOKIESECRET; Path=/", "COOKIESECRET"],
+    // Quoted-JSON Cookie / Set-Cookie (JSON diagnostic payloads).
+    ['{"Cookie":"session=COOKIESECRET","status":401}', "COOKIESECRET"],
+    [
+      '{"Set-Cookie":"session=COOKIESECRET; Path=/","status":401}',
+      "COOKIESECRET",
+    ],
+    ['"Cookie": "session=COOKIESECRET"', "COOKIESECRET"],
+    // Quoted-JSON Authorization (key+value quoted; unquoted pattern stops).
+    ['"Authorization": "Bearer QUOTEDJSONSECRET"', "QUOTEDJSONSECRET"],
+    ['"Authorization": "token ghs_QUOTED"', "ghs_QUOTED"],
+    ['{"Authorization": "abc123secret"}', "abc123secret"],
+    // Digest multipart leaves response= after scheme redaction.
+    [
+      'Authorization: Digest username="u", response="DIGESTSECRET"',
+      "DIGESTSECRET",
+    ],
+    // AWS4 multipart leaves Signature= after scheme redaction.
+    [
+      "Authorization: AWS4-HMAC-SHA256 Credential=AKIA/x, Signature=SIGSECRET",
+      "SIGSECRET",
+    ],
   ] as const)("redacts secret material in %s", (input, secretFragment) => {
     const out = redactLogText(input);
     expect(out).not.toContain(secretFragment);
     expect(out).toContain("<redacted>");
+  });
+
+  it("redacts multi-pair and comma-joined Cookie/Set-Cookie values entirely", () => {
+    const multi = redactLogText("Cookie: a=SECRET1; b=SECRET2; c=SECRET3");
+    expect(multi).not.toContain("SECRET1");
+    expect(multi).not.toContain("SECRET2");
+    expect(multi).not.toContain("SECRET3");
+    expect(multi).toBe("Cookie: <redacted>");
+
+    // Naive multi-Set-Cookie joining (and Expires= commas) — never stop at `,`.
+    const multiSet = redactLogText(
+      "Set-Cookie: a=SECRET1; Path=/, b=SECRET2; HttpOnly",
+    );
+    expect(multiSet).not.toContain("SECRET1");
+    expect(multiSet).not.toContain("SECRET2");
+    expect(multiSet).toBe("Set-Cookie: <redacted>");
   });
 
   it("still redacts every field on a multi-secret line", () => {

@@ -4,68 +4,190 @@ import {
   DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
   downgradeProviderCliStateToV10,
   providerCliStateSchema,
+  providerCliStateSchemaMutationV20,
   providerCliStateSchemaV10,
+  providerCliStateSchemaV20,
+  providersAddCustomPathRequestSchema,
+  providersAddCustomPathResponseSchemaV20,
+  providersAwaitLoginRequestSchema,
+  providersAwaitLoginRequestSchemaV20,
+  providersAwaitLoginResponseSchema,
+  providersAwaitLoginResponseSchemaV20,
+  providersClearApiKeyRequestSchema,
+  providersClearApiKeyResponseSchemaV20,
+  providersDeleteEnvOverrideRequestSchema,
+  providersDeleteEnvOverrideResponseSchemaV20,
+  providersListRequestSchema,
   providersListResponseSchema,
   providersListResponseSchemaV10,
   providersListResponseSchemaV20,
   providersListResponseSchemaV30,
+  providersRemoveCustomPathRequestSchema,
+  providersRemoveCustomPathResponseSchemaV20,
+  providersSetApiKeyRequestSchema,
   providersSetApiKeyResponseSchemaV20,
+  providersSetEnabledRequestSchema,
+  providersSetEnabledRequestSchemaV20,
+  providersSetEnabledResponseSchema,
+  providersSetEnabledResponseSchemaV20,
+  providersSetEnvOverrideRequestSchema,
+  providersSetEnvOverrideResponseSchemaV20,
+  providersSetSelectionRequestSchema,
+  providersSetSelectionResponseSchemaV20,
+  providersSetTerminalAgentArgsRequestSchema,
+  providersSetTerminalAgentArgsResponseSchemaV20,
+  providersStartLoginRequestSchema,
+  providersStartLoginResponseSchema,
+  providersCancelLoginRequestSchema,
+  providersCancelLoginResponseSchema,
 } from "@traycer/protocol/host/provider-schemas";
 import {
+  hostRpcRegistry,
   providersListDowngradeV31ToV10,
   providersListDowngradeV31ToV20,
   providersListDowngradeV31ToV30,
   providersListUpgradeV30ToV31,
+  providersSetEnabledDowngradeV21ToV20,
+  providersSetEnabledUpgradeV20ToV21,
+  providersStartLoginUpgradeV10ToV11,
+  providersCancelLoginUpgradeV10ToV11,
+  providersAwaitLoginUpgradeV20ToV21,
 } from "@traycer/protocol/host/registry";
 import {
-  providersMcpAuthV10,
-  providersMcpDiscoverV10,
-  providersMcpListV10,
-  providersMcpMutateV10,
-  providersPluginsListV10,
-  providersPluginsMutateV10,
-  providersSkillsListV10,
-  providersSkillsMutateV10,
-} from "@traycer/protocol/host/provider-native-contracts";
-import {
+  nativeAuthActionSchema,
+  nativeAuthCancelContextSchema,
+  nativeAuthPollContextSchema,
+  nativeAuthResultSchema,
+  nativeListQuerySchema,
+  nativeMutationSchema,
   providerMcpToolSchema,
   providerNativeCapabilitiesSchema,
+  providerNativeErrorCodeSchema,
   providerNativeScopeSchema,
-  providersMcpAuthRequestSchema,
-  providersMcpAuthResponseSchema,
-  providersMcpListRequestSchema,
-  providersMcpMutateRequestSchema,
 } from "@traycer/protocol/host/provider-native-schemas";
+import { providerIdSchema, providerIdSchemaV20 } from "@traycer/protocol/host/provider-ids";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  assertParseAgainstTagSchema,
+  buildHostV115MutationV20Fixtures,
+  gitShow,
+  HOST_V115_MUTATION_V20_SCHEMAS_PATH,
+  HOST_V115_MUTATION_V20_TAG,
+  importTaggedProviderSchemas,
+} from "../../../scripts/snapshot-host-v1.1.5-mutation-v20-fixtures";
+import { releasedMethodNames } from "./__fixtures__/released-method-names";
+import { hostV115MutationV20Fixtures } from "./__fixtures__/host-v1.1.5-mutation-v20";
 
+type MutationV20StatePayload = {
+  readonly state: unknown;
+};
+
+type MutationV20Schema = {
+  parse: (value: unknown) => MutationV20StatePayload;
+  safeParse: (value: unknown) => { success: boolean };
+};
+
+/**
+ * Live schema map for the ten host-v1.1.5 mutation@2.0 surfaces. Method names
+ * and fixture values come from the tag-derived fixture; this map only binds
+ * those names to the current protocol schemas under test.
+ */
+const MUTATION_V20_RESPONSE_SCHEMA_BY_METHOD: Record<
+  string,
+  { schema: MutationV20Schema; nullableState: boolean }
+> = {
+  "providers.setSelection": {
+    schema: providersSetSelectionResponseSchemaV20,
+    nullableState: false,
+  },
+  "providers.addCustomPath": {
+    schema: providersAddCustomPathResponseSchemaV20,
+    nullableState: false,
+  },
+  "providers.removeCustomPath": {
+    schema: providersRemoveCustomPathResponseSchemaV20,
+    nullableState: false,
+  },
+  "providers.setEnabled": {
+    schema: providersSetEnabledResponseSchemaV20,
+    nullableState: false,
+  },
+  "providers.setApiKey": {
+    schema: providersSetApiKeyResponseSchemaV20,
+    nullableState: false,
+  },
+  "providers.clearApiKey": {
+    schema: providersClearApiKeyResponseSchemaV20,
+    nullableState: false,
+  },
+  "providers.setTerminalAgentArgs": {
+    schema: providersSetTerminalAgentArgsResponseSchemaV20,
+    nullableState: false,
+  },
+  "providers.setEnvOverride": {
+    schema: providersSetEnvOverrideResponseSchemaV20,
+    nullableState: false,
+  },
+  "providers.deleteEnvOverride": {
+    schema: providersDeleteEnvOverrideResponseSchemaV20,
+    nullableState: false,
+  },
+  "providers.awaitLogin": {
+    schema: providersAwaitLoginResponseSchemaV20,
+    nullableState: true,
+  },
+};
+
+const MUTATION_V20_REQUEST_PARSER_BY_METHOD: Record<
+  string,
+  { parse: (value: unknown) => unknown }
+> = {
+  "providers.setSelection": providersSetSelectionRequestSchema,
+  "providers.addCustomPath": providersAddCustomPathRequestSchema,
+  "providers.removeCustomPath": providersRemoveCustomPathRequestSchema,
+  "providers.setEnabled": providersSetEnabledRequestSchemaV20,
+  "providers.setApiKey": providersSetApiKeyRequestSchema,
+  "providers.clearApiKey": providersClearApiKeyRequestSchema,
+  "providers.setTerminalAgentArgs": providersSetTerminalAgentArgsRequestSchema,
+  "providers.setEnvOverride": providersSetEnvOverrideRequestSchema,
+  "providers.deleteEnvOverride": providersDeleteEnvOverrideRequestSchema,
+  "providers.awaitLogin": providersAwaitLoginRequestSchemaV20,
+};
+
+/**
+ * Tag-derived minimal state for a provider id. Values come from
+ * `__fixtures__/host-v1.1.5-mutation-v20.ts` (generated from
+ * `git show host-v1.1.5:protocol/src/host/provider-schemas.ts`).
+ */
 function baseState(providerId: string) {
-  return {
-    providerId,
-    enabled: true,
-    disabledBy: null,
-    selected: { kind: "bundled" as const },
-    candidates: [],
-    auth: {
-      status: "unknown" as const,
-      badgeText: null,
-      label: null,
-      detail: null,
-    },
-    authPending: false,
-    checkedAt: null,
-    apiKey: { supported: false, configured: false, source: null },
-    terminalAgentArgs: "",
-    envOverrides: [],
-    loginCapability: null,
-    availabilityPending: false,
-  };
+  const fromTag =
+    hostV115MutationV20Fixtures.minimalStatesByProviderId[
+      providerId as keyof typeof hostV115MutationV20Fixtures.minimalStatesByProviderId
+    ];
+  if (fromTag === undefined) {
+    throw new Error(
+      `No tag-derived state for providerId=${providerId}; regenerate host-v1.1.5-mutation-v20 fixtures`,
+    );
+  }
+  // Materialize a mutable plain object for test spreads (fixture is `as const`).
+  return structuredClone(fromTag);
 }
 
 const sampleMcpCapabilities = {
   transports: ["stdio", "http"] as const,
-  scopes: ["global", "project"] as const,
   authTypes: ["none", "oauth"] as const,
   authActions: ["login", "logout"] as const,
-  mutationActions: ["add", "update", "remove", "toggleServer", "toggleTool"] as const,
+  actionScopes: {
+    list: ["global", "project"] as const,
+    add: ["global"] as const,
+    update: ["global"] as const,
+    remove: ["global"] as const,
+    toggleServer: ["global", "project"] as const,
+    toggleTool: ["global", "project"] as const,
+    discover: ["global"] as const,
+    auth: ["global"] as const,
+  },
   addServer: "cli" as const,
   removeServer: "cli" as const,
   updateServer: "patch" as const,
@@ -80,20 +202,29 @@ const sampleMcpCapabilities = {
 };
 
 describe("nativeCapabilities on ProviderCliState", () => {
-  it("parses latest state with nativeCapabilities", () => {
+  it("parses latest state with nativeCapabilities action→scope table", () => {
     const state = providerCliStateSchema.parse({
       ...baseState("codex"),
       nativeCapabilities: {
         supportedTabs: ["general", "env", "usage", "mcp"],
         mcp: sampleMcpCapabilities,
         plugins: null,
-        skills: { canList: true, canAdd: true, canImport: false },
+        skills: {
+          actionScopes: {
+            list: ["global"],
+            add: ["global"],
+            create: [],
+            import: [],
+            remove: [],
+          },
+        },
       },
     });
     expect(state.nativeCapabilities.mcp?.perToolBacking).toBe("store");
-    expect(state.nativeCapabilities.mcp?.traycerSessionsOnlyEnforcement).toBe(
-      true,
-    );
+    expect(state.nativeCapabilities.mcp?.actionScopes.toggleTool).toEqual([
+      "global",
+      "project",
+    ]);
   });
 
   it("defaults nativeCapabilities via .catch for old-host wire shapes", () => {
@@ -120,7 +251,7 @@ describe("nativeCapabilities on ProviderCliState", () => {
 });
 
 describe("providers.list@3.1 upgrade/downgrade bridges", () => {
-  it("upgrades v3.0 responses with the default descriptor", () => {
+  it("upgrades v3.0 responses with the default descriptor and native:null", () => {
     const v30 = providersListResponseSchemaV30.parse({
       providers: [baseState("amp")],
     });
@@ -128,10 +259,16 @@ describe("providers.list@3.1 upgrade/downgrade bridges", () => {
     expect(upgraded.providers[0]?.nativeCapabilities).toEqual(
       DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
     );
+    expect(upgraded.native).toBeNull();
     expect(() => providersListResponseSchema.parse(upgraded)).not.toThrow();
   });
 
-  it("downgrades v3.1 → v3.0 by stripping nativeCapabilities", () => {
+  it("upgrades v3.0 requests with native:null", () => {
+    const upgraded = providersListUpgradeV30ToV31.upgradeRequest({});
+    expect(upgraded.native).toBeNull();
+  });
+
+  it("downgrades v3.1 → v3.0 by stripping nativeCapabilities and native", () => {
     const v31 = providersListResponseSchema.parse({
       providers: [
         {
@@ -142,19 +279,25 @@ describe("providers.list@3.1 upgrade/downgrade bridges", () => {
             plugins: {
               addModes: ["file-drop"],
               marketplaceBrowse: false,
-              canEnableDisable: false,
-              canRemove: true,
+              actionScopes: {
+                list: ["global"],
+                add: ["global"],
+                remove: ["global"],
+                setEnabled: [],
+              },
               traycerSessionToolsNotice: true,
             },
             skills: null,
           },
         },
       ],
+      native: null,
     });
     const result = providersListDowngradeV31ToV30.downgradeResponse(v31);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.providers[0]).not.toHaveProperty("nativeCapabilities");
+    expect(result.value).not.toHaveProperty("native");
     expect(() =>
       providersListResponseSchemaV30.parse(result.value),
     ).not.toThrow();
@@ -172,6 +315,7 @@ describe("providers.list@3.1 upgrade/downgrade bridges", () => {
           nativeCapabilities: DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
         },
       ],
+      native: null,
     });
     const result = providersListDowngradeV31ToV20.downgradeResponse(v31);
     expect(result.ok).toBe(true);
@@ -202,8 +346,10 @@ describe("providers.list@3.1 upgrade/downgrade bridges", () => {
     expect(downgraded).not.toHaveProperty("availabilityPending");
     expect(() => providerCliStateSchemaV10.parse(downgraded)).not.toThrow();
 
-    // Round-trip via list bridge
-    const list = providersListResponseSchema.parse({ providers: [latest] });
+    const list = providersListResponseSchema.parse({
+      providers: [latest],
+      native: null,
+    });
     const listResult = providersListDowngradeV31ToV10.downgradeResponse(list);
     expect(listResult.ok).toBe(true);
     if (!listResult.ok) return;
@@ -216,9 +362,6 @@ describe("providers.list@3.1 upgrade/downgrade bridges", () => {
   });
 
   it("dispatcher path: frozen list@3.0 / mutation@2.0 schemas strip nativeCapabilities", () => {
-    // Same-major-minor runtime path: a latest-shaped payload is re-parsed
-    // through the frozen older-minor response schema (framework additive
-    // strip). Proves the dispatcher path is safe, not just the helper.
     const latestList = providersListResponseSchema.parse({
       providers: [
         {
@@ -231,12 +374,21 @@ describe("providers.list@3.1 upgrade/downgrade bridges", () => {
           },
         },
       ],
+      native: {
+        ok: true,
+        kind: "mcp",
+        servers: [],
+      },
     });
     expect(latestList.providers[0]).toHaveProperty("nativeCapabilities");
+    expect(latestList.native).not.toBeNull();
 
-    const asV30 = providersListResponseSchemaV30.parse(latestList);
+    const asV30 = providersListResponseSchemaV30.parse({
+      providers: latestList.providers,
+    });
     expect(asV30.providers[0]).not.toHaveProperty("nativeCapabilities");
     expect(asV30.providers[0]?.providerId).toBe("cursor");
+    expect(asV30).not.toHaveProperty("native");
 
     const latestMutation = {
       state: providerCliStateSchema.parse({
@@ -256,16 +408,215 @@ describe("providers.list@3.1 upgrade/downgrade bridges", () => {
   });
 });
 
-describe("batched provider-native RPC contracts", () => {
-  it("registers the eight unary methods at v1.0", () => {
-    expect(providersMcpListV10.method).toBe("providers.mcpList");
-    expect(providersMcpMutateV10.method).toBe("providers.mcpMutate");
-    expect(providersMcpDiscoverV10.method).toBe("providers.mcpDiscover");
-    expect(providersMcpAuthV10.method).toBe("providers.mcpAuth");
-    expect(providersPluginsListV10.method).toBe("providers.pluginsList");
-    expect(providersPluginsMutateV10.method).toBe("providers.pluginsMutate");
-    expect(providersSkillsListV10.method).toBe("providers.skillsList");
-    expect(providersSkillsMutateV10.method).toBe("providers.skillsMutate");
+describe("carrier envelopes (object-preserving, no unions)", () => {
+  it("accepts native list query on providers.list@3.1", () => {
+    const query = nativeListQuerySchema.parse({
+      kind: "mcp",
+      providerId: "claude-code",
+      scope: "global",
+      workspaceRoot: null,
+    });
+    expect(query.kind).toBe("mcp");
+    expect(
+      providersListRequestSchema.parse({
+        native: query,
+      }).native?.kind,
+    ).toBe("mcp");
+  });
+
+  it("XOR-validates setEnabled@2.1 enabled vs native", () => {
+    expect(
+      providersSetEnabledRequestSchema.safeParse({
+        providerId: "claude-code",
+        enabled: true,
+        native: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      providersSetEnabledRequestSchema.safeParse({
+        providerId: "claude-code",
+        enabled: null,
+        native: {
+          kind: "mcp",
+          scope: "global",
+          workspaceRoot: null,
+          mutation: { action: "remove", name: "playwright" },
+        },
+      }).success,
+    ).toBe(true);
+    expect(
+      providersSetEnabledRequestSchema.safeParse({
+        providerId: "claude-code",
+        enabled: true,
+        native: {
+          kind: "mcp",
+          scope: "global",
+          workspaceRoot: null,
+          mutation: { action: "remove", name: "playwright" },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      providersSetEnabledRequestSchema.safeParse({
+        providerId: "claude-code",
+        enabled: null,
+        native: null,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("upgrades setEnabled 2.0→2.1 with native:null", () => {
+    const classic = providersSetEnabledRequestSchemaV20.parse({
+      providerId: "cursor",
+      enabled: false,
+    });
+    const upgraded = providersSetEnabledUpgradeV20ToV21.upgradeRequest(classic);
+    expect(upgraded).toEqual({
+      providerId: "cursor",
+      enabled: false,
+      native: null,
+    });
+    const upgradedResp = providersSetEnabledUpgradeV20ToV21.upgradeResponse({
+      state: providerCliStateSchemaMutationV20.parse(baseState("cursor")),
+    });
+    expect(upgradedResp.native).toBeNull();
+    expect(upgradedResp.state.nativeCapabilities).toEqual(
+      DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
+    );
+  });
+
+  it("refuses native setEnabled downgrade to 2.0", () => {
+    const result = providersSetEnabledDowngradeV21ToV20.downgradeRequest({
+      providerId: "claude-code",
+      enabled: null,
+      native: {
+        kind: "mcp",
+        scope: "global",
+        workspaceRoot: null,
+        mutation: { action: "remove", name: "x" },
+      },
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("models full NativeAuthAction set and result variants", () => {
+    expect(
+      nativeAuthActionSchema.parse({
+        action: "submitCode",
+        scope: "global",
+        workspaceRoot: null,
+        serverName: "linear",
+        code: "123456",
+      }).action,
+    ).toBe("submitCode");
+    expect(
+      nativeAuthActionSchema.parse({
+        action: "forceReauth",
+        scope: "project",
+        workspaceRoot: "/repo",
+        serverName: "github",
+      }).action,
+    ).toBe("forceReauth");
+    for (const kind of [
+      "authorizationUrl",
+      "pendingInstruction",
+      "pending",
+      "done",
+      "unsupported",
+      "error",
+    ] as const) {
+      const payload =
+        kind === "authorizationUrl"
+          ? { kind, authorizationUrl: "https://example.com" }
+          : kind === "pendingInstruction"
+            ? { kind, instruction: "check log" }
+            : kind === "unsupported"
+              ? { kind, reason: null }
+              : kind === "error"
+                ? { kind, code: "unsupported_action", detail: null }
+                : { kind };
+      expect(nativeAuthResultSchema.parse(payload).kind).toBe(kind);
+    }
+  });
+
+  it("startLogin/cancelLogin/awaitLogin upgrade defaults mcpAuth to null", () => {
+    expect(
+      providersStartLoginUpgradeV10ToV11.upgradeRequest({
+        providerId: "claude-code",
+      }).mcpAuth,
+    ).toBeNull();
+    expect(
+      providersStartLoginUpgradeV10ToV11.upgradeResponse({
+        url: null,
+        started: true,
+      }).mcpAuth,
+    ).toBeNull();
+    expect(
+      providersCancelLoginUpgradeV10ToV11.upgradeRequest({
+        providerId: "claude-code",
+      }).mcpAuth,
+    ).toBeNull();
+    expect(
+      providersAwaitLoginUpgradeV20ToV21.upgradeRequest({
+        providerId: "claude-code",
+      }).mcpAuth,
+    ).toBeNull();
+  });
+
+  it("accepts mcpAuth on login family carriers", () => {
+    expect(
+      providersStartLoginRequestSchema.parse({
+        providerId: "droid",
+        mcpAuth: {
+          action: "login",
+          scope: "global",
+          workspaceRoot: null,
+          serverName: "linear",
+        },
+      }).mcpAuth?.action,
+    ).toBe("login");
+    expect(
+      providersStartLoginResponseSchema.parse({
+        url: null,
+        started: false,
+        mcpAuth: {
+          kind: "authorizationUrl",
+          authorizationUrl: "https://example.com/oauth",
+        },
+      }).mcpAuth?.kind,
+    ).toBe("authorizationUrl");
+    expect(
+      providersAwaitLoginRequestSchema.parse({
+        providerId: "droid",
+        mcpAuth: {
+          scope: "global",
+          workspaceRoot: null,
+          serverName: "linear",
+        },
+      }).mcpAuth?.serverName,
+    ).toBe("linear");
+    expect(
+      providersAwaitLoginResponseSchema.parse({
+        state: null,
+        mcpAuth: { kind: "pending" },
+      }).mcpAuth?.kind,
+    ).toBe("pending");
+    expect(
+      providersCancelLoginRequestSchema.parse({
+        providerId: "droid",
+        mcpAuth: {
+          scope: "global",
+          workspaceRoot: null,
+          serverName: "linear",
+        },
+      }).mcpAuth?.serverName,
+    ).toBe("linear");
+    expect(
+      providersCancelLoginResponseSchema.parse({
+        cancelled: true,
+        mcpAuth: { kind: "done" },
+      }).mcpAuth?.kind,
+    ).toBe("done");
   });
 
   it("wire scope is global|project only", () => {
@@ -274,68 +625,102 @@ describe("batched provider-native RPC contracts", () => {
     expect(providerNativeScopeSchema.safeParse("cwd").success).toBe(false);
   });
 
-  it("enforces scope/workspaceRoot invariant on request schemas", () => {
-    expect(
-      providersMcpListRequestSchema.safeParse({
-        providerId: "claude-code",
-        scope: "project",
-        workspaceRoot: null,
-      }).success,
-    ).toBe(false);
-    expect(
-      providersMcpListRequestSchema.safeParse({
-        providerId: "claude-code",
-        scope: "project",
-        workspaceRoot: "",
-      }).success,
-    ).toBe(false);
-    expect(
-      providersMcpListRequestSchema.safeParse({
-        providerId: "claude-code",
-        scope: "global",
-        workspaceRoot: "/repo",
-      }).success,
-    ).toBe(false);
-    expect(
-      providersMcpListRequestSchema.safeParse({
-        providerId: "claude-code",
-        scope: "global",
-        workspaceRoot: null,
-      }).success,
-    ).toBe(true);
-    expect(
-      providersMcpListRequestSchema.safeParse({
-        providerId: "claude-code",
-        scope: "project",
-        workspaceRoot: "/repo",
-      }).success,
-    ).toBe(true);
+  it("rejects invalid scope/workspaceRoot on every nested native context", () => {
+    const invalidCombos = [
+      { scope: "project" as const, workspaceRoot: null },
+      { scope: "project" as const, workspaceRoot: "" },
+      { scope: "global" as const, workspaceRoot: "/repo" },
+    ];
+    const validGlobal = { scope: "global" as const, workspaceRoot: null };
+    const validProject = {
+      scope: "project" as const,
+      workspaceRoot: "/repo",
+    };
 
-    // Invariant also applied to extended request shapes (mutate/auth/etc.)
+    for (const combo of invalidCombos) {
+      expect(
+        nativeListQuerySchema.safeParse({
+          kind: "mcp",
+          providerId: "claude-code",
+          ...combo,
+        }).success,
+      ).toBe(false);
+      expect(
+        nativeMutationSchema.safeParse({
+          kind: "mcp",
+          ...combo,
+          mutation: { action: "remove", name: "x" },
+        }).success,
+      ).toBe(false);
+      expect(
+        nativeAuthActionSchema.safeParse({
+          action: "login",
+          ...combo,
+          serverName: "linear",
+        }).success,
+      ).toBe(false);
+      expect(
+        nativeAuthPollContextSchema.safeParse({
+          ...combo,
+          serverName: "linear",
+        }).success,
+      ).toBe(false);
+      expect(
+        nativeAuthCancelContextSchema.safeParse({
+          ...combo,
+          serverName: "linear",
+        }).success,
+      ).toBe(false);
+    }
+
     expect(
-      providersMcpMutateRequestSchema.safeParse({
-        providerId: "amp",
-        scope: "project",
-        workspaceRoot: null,
-        mutation: {
-          action: "remove",
-          name: "playwright",
-        },
+      nativeListQuerySchema.safeParse({
+        kind: "mcp",
+        providerId: "claude-code",
+        ...validGlobal,
       }).success,
-    ).toBe(false);
+    ).toBe(true);
     expect(
-      providersMcpAuthRequestSchema.safeParse({
-        providerId: "droid",
-        scope: "global",
-        workspaceRoot: "/repo",
-        auth: { action: "login", serverName: "linear" },
+      nativeListQuerySchema.safeParse({
+        kind: "mcpDiscover",
+        providerId: "claude-code",
+        ...validProject,
+        serverName: "s",
+        forceRefresh: false,
       }).success,
-    ).toBe(false);
+    ).toBe(true);
+    expect(
+      nativeMutationSchema.safeParse({
+        kind: "plugins",
+        ...validProject,
+        mutation: { action: "remove", id: "p" },
+      }).success,
+    ).toBe(true);
+    expect(
+      nativeAuthActionSchema.safeParse({
+        action: "submitCode",
+        ...validGlobal,
+        serverName: "linear",
+        code: "123",
+      }).success,
+    ).toBe(true);
+    expect(
+      nativeAuthPollContextSchema.safeParse({
+        ...validProject,
+        serverName: "linear",
+      }).success,
+    ).toBe(true);
+    expect(
+      nativeAuthCancelContextSchema.safeParse({
+        ...validGlobal,
+        serverName: "linear",
+      }).success,
+    ).toBe(true);
   });
 
-  it("accepts mcpMutate action union and scope tuple", () => {
-    const add = providersMcpMutateRequestSchema.parse({
-      providerId: "claude-code",
+  it("accepts write transport with secrets and read transport with masks", () => {
+    const mutation = nativeMutationSchema.parse({
+      kind: "mcp",
       scope: "global",
       workspaceRoot: null,
       mutation: {
@@ -345,24 +730,46 @@ describe("batched provider-native RPC contracts", () => {
           type: "stdio",
           command: "npx",
           args: ["@playwright/mcp"],
-          env: null,
+          env: [{ name: "TOKEN", value: "secret" }],
         },
       },
     });
-    expect(add.mutation.action).toBe("add");
+    expect(mutation.kind).toBe("mcp");
+    if (mutation.kind !== "mcp" || mutation.mutation.action !== "add") {
+      throw new Error("expected mcp add");
+    }
+    expect(mutation.mutation.transport.type).toBe("stdio");
 
-    const toggleTool = providersMcpMutateRequestSchema.parse({
-      providerId: "amp",
-      scope: "project",
-      workspaceRoot: "/repo",
-      mutation: {
-        action: "toggleTool",
-        serverName: "playwright",
-        toolName: "browser_close",
-        enabled: false,
+    const result = providersSetEnabledResponseSchema.parse({
+      state: providerCliStateSchema.parse({
+        ...baseState("claude-code"),
+        nativeCapabilities: DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
+      }),
+      native: {
+        ok: true,
+        kind: "mcp",
+        servers: [
+          {
+            name: "playwright",
+            enabled: true,
+            transport: {
+              type: "stdio",
+              command: "npx",
+              env: [{ name: "TOKEN", hasValue: true }],
+            },
+            status: "unknown",
+            statusSource: "none",
+            statusDetail: null,
+            tools: [],
+            discoveryPending: false,
+            instructions: null,
+            configOnly: false,
+            stdioDegraded: false,
+          },
+        ],
       },
     });
-    expect(toggleTool.mutation.action).toBe("toggleTool");
+    expect(result.native?.ok).toBe(true);
   });
 
   it("requires inputSchema to be a JSON-Schema object or null", () => {
@@ -393,60 +800,203 @@ describe("batched provider-native RPC contracts", () => {
         readOnly: false,
       }).success,
     ).toBe(false);
+    // denySources defaults to [] when omitted (older hosts / other providers).
+    const withDefault = providerMcpToolSchema.parse({
+      name: "t",
+      description: null,
+      inputSchema: null,
+      enabled: true,
+      readOnly: false,
+    });
+    expect(withDefault.denySources).toEqual([]);
+    const withSources = providerMcpToolSchema.parse({
+      name: "t",
+      description: null,
+      inputSchema: null,
+      enabled: false,
+      readOnly: true,
+      denySources: ["user", "local"],
+    });
+    expect(withSources.denySources).toEqual(["user", "local"]);
   });
 
-  it("models mcpAuth login result union", () => {
-    const loginReq = providersMcpAuthRequestSchema.parse({
-      providerId: "droid",
-      scope: "global",
-      workspaceRoot: null,
-      auth: { action: "login", serverName: "linear" },
+  it("enumerates native error codes", () => {
+    for (const code of [
+      "duplicate_name",
+      "unsupported_scope",
+      "unsupported_action",
+      "no_change_detected",
+      "external_drift",
+      "store_version_unsupported",
+      "rollback_failed",
+    ] as const) {
+      expect(providerNativeErrorCodeSchema.parse(code)).toBe(code);
+    }
+  });
+});
+
+describe("B1: mutation@2.0 is amp-inclusive (host-v1.1.5 oracle)", () => {
+  const fixtures = hostV115MutationV20Fixtures;
+  const responseMethods = fixtures.mutationResponseMethods;
+  const requestMethods = fixtures.mutationRequestMethods;
+
+  it("regenerate-and-compare: checked-in fixture equals live generator output", async () => {
+    // Catches ANY hand-edit to the checked-in fixture (not just enum/provenance
+    // fields): re-run the full generator against host-v1.1.5 and deep-equal.
+    const fixtureDir = dirname(fileURLToPath(import.meta.url));
+    const traycerRoot = resolve(fixtureDir, "../../../../");
+    const regenerated = await buildHostV115MutationV20Fixtures(traycerRoot);
+    // Strip `as const` readonly by JSON round-trip for stable deep equality.
+    expect(JSON.parse(JSON.stringify(fixtures))).toEqual(
+      JSON.parse(JSON.stringify(regenerated)),
+    );
+    // Cross-check live protocol enums still match the tag-derived sets.
+    expect([...fixtures.mutationProviderIds]).toEqual([
+      ...providerIdSchema.options,
+    ]);
+    expect([...fixtures.listV20ProviderIds]).toEqual([
+      ...providerIdSchemaV20.options,
+    ]);
+    expect(fixtures.mutationProviderIds).toContain("amp");
+    expect(fixtures.listV20ProviderIds).not.toContain("amp");
+  }, 30_000);
+
+  it("tag-derived schemas reject deliberately invalid samples", async () => {
+    // Generation-time guarantee: samples must parse against host-v1.1.5 schemas.
+    // A wrong field type fails the tag-era parser (not the current branch).
+    const fixtureDir = dirname(fileURLToPath(import.meta.url));
+    const traycerRoot = resolve(fixtureDir, "../../../../");
+    const taggedSource = gitShow(
+      traycerRoot,
+      `${HOST_V115_MUTATION_V20_TAG}:${HOST_V115_MUTATION_V20_SCHEMAS_PATH}`,
+    );
+    const tagSchemas = await importTaggedProviderSchemas(taggedSource);
+    expect(() =>
+      assertParseAgainstTagSchema(
+        "providersSetApiKeyRequestSchema[bad]",
+        tagSchemas.providersSetApiKeyRequestSchema,
+        { providerId: "amp", apiKey: 123 },
+      ),
+    ).toThrow(/Tag-schema validation failed/);
+    expect(() =>
+      assertParseAgainstTagSchema(
+        "providerCliStateSchema[bad-enabled]",
+        tagSchemas.providerCliStateSchema,
+        { ...baseState("amp"), enabled: "yes" },
+      ),
+    ).toThrow(/Tag-schema validation failed/);
+  }, 30_000);
+
+  it("covers all ten tag-derived @2.0 request samples with amp", () => {
+    expect(requestMethods).toHaveLength(10);
+    for (const method of requestMethods) {
+      const sample =
+        fixtures.requestSamplesByMethod[
+          method as keyof typeof fixtures.requestSamplesByMethod
+        ];
+      const parser = MUTATION_V20_REQUEST_PARSER_BY_METHOD[method];
+      expect(sample, method).toBeDefined();
+      expect(parser, method).toBeDefined();
+      const parsed = parser.parse(sample) as { providerId: string };
+      expect(parsed.providerId).toBe("amp");
+    }
+  });
+
+  it("accepts amp on all ten state-returning @2.0 mutation responses", () => {
+    const ampState = providerCliStateSchemaMutationV20.parse(baseState("amp"));
+    expect(ampState.providerId).toBe("amp");
+    expect(responseMethods).toHaveLength(10);
+    for (const method of responseMethods) {
+      const entry = MUTATION_V20_RESPONSE_SCHEMA_BY_METHOD[method];
+      expect(entry, method).toBeDefined();
+      const parsed = entry.schema.parse({ state: ampState });
+      expect(
+        (parsed.state as { providerId: string } | null)?.providerId,
+      ).toBe("amp");
+      if (entry.nullableState) {
+        const nullParsed = entry.schema.parse({ state: null });
+        expect(nullParsed.state).toBeNull();
+      }
+    }
+  });
+
+  it("amp-accept matrix: every tag-derived provider × all ten @2.0 responses", () => {
+    expect(fixtures.mutationProviderIds).toHaveLength(
+      providerIdSchema.options.length,
+    );
+    for (const providerId of fixtures.mutationProviderIds) {
+      const state = providerCliStateSchemaMutationV20.parse(
+        baseState(providerId),
+      );
+      for (const method of responseMethods) {
+        const entry = MUTATION_V20_RESPONSE_SCHEMA_BY_METHOD[method];
+        expect(
+          entry.schema.safeParse({ state }).success,
+          `${method} rejects ${providerId}`,
+        ).toBe(true);
+      }
+    }
+  });
+
+  it("list@2.0 remains pre-amp (providerIdSchemaV20 freeze from tag)", () => {
+    // amp is in the mutation enum (tag latest) but not list@2.0's frozen set
+    expect(fixtures.listV20ProviderIds).not.toContain("amp");
+    expect(
+      providerCliStateSchemaV20.safeParse(baseState("amp")).success,
+    ).toBe(false);
+    const preAmpId = fixtures.listV20ProviderIds[0];
+    expect(
+      providerCliStateSchemaV20.safeParse(baseState(preAmpId)).success,
+    ).toBe(true);
+  });
+
+  it("@2.1-only fields strip for @2.0 callers via non-strict parse", () => {
+    const latest = providerCliStateSchema.parse({
+      ...baseState("amp"),
+      nativeCapabilities: {
+        supportedTabs: ["general", "mcp"],
+        mcp: sampleMcpCapabilities,
+        plugins: null,
+        skills: null,
+      },
     });
-    expect(loginReq.auth.action).toBe("login");
+    const asMutationV20 = providerCliStateSchemaMutationV20.parse(latest);
+    expect(asMutationV20).not.toHaveProperty("nativeCapabilities");
+    expect(asMutationV20.providerId).toBe("amp");
+    for (const method of responseMethods) {
+      const entry = MUTATION_V20_RESPONSE_SCHEMA_BY_METHOD[method];
+      const parsed = entry.schema.parse({ state: latest });
+      expect(parsed.state).not.toBeNull();
+      expect(parsed.state).not.toHaveProperty("nativeCapabilities");
+      expect((parsed.state as { providerId: string }).providerId).toBe("amp");
+    }
+  });
+});
 
-    expect(
-      providersMcpAuthResponseSchema.parse({
-        result: {
-          kind: "authorizationUrl",
-          authorizationUrl: "https://example.com/oauth",
-        },
-      }).result.kind,
-    ).toBe("authorizationUrl");
+describe("registry method-name fold", () => {
+  it("does not advertise the eight unreleased native method names", () => {
+    const names = Object.keys(hostRpcRegistry);
+    for (const method of [
+      "providers.mcpList",
+      "providers.mcpMutate",
+      "providers.mcpDiscover",
+      "providers.mcpAuth",
+      "providers.pluginsList",
+      "providers.pluginsMutate",
+      "providers.skillsList",
+      "providers.skillsMutate",
+    ]) {
+      expect(names).not.toContain(method);
+    }
+  });
 
-    expect(
-      providersMcpAuthResponseSchema.parse({
-        result: { kind: "pendingInstruction", instruction: "Check log" },
-      }).result.kind,
-    ).toBe("pendingInstruction");
-
-    expect(
-      providersMcpAuthResponseSchema.parse({
-        result: { kind: "done" },
-      }).result.kind,
-    ).toBe("done");
-
-    expect(
-      providersMcpAuthResponseSchema.parse({
-        result: { kind: "unsupported", reason: "config-only" },
-      }).result.kind,
-    ).toBe("unsupported");
-
-    expect(
-      providersMcpAuthRequestSchema.parse({
-        providerId: "copilot",
-        scope: "global",
-        workspaceRoot: null,
-        auth: { action: "forceReauth", serverName: "github" },
-      }).auth.action,
-    ).toBe("forceReauth");
-
-    expect(
-      providersMcpAuthRequestSchema.parse({
-        providerId: "droid",
-        scope: "global",
-        workspaceRoot: null,
-        auth: { action: "submitCode", serverName: "linear", code: "123456" },
-      }).auth.action,
-    ).toBe("submitCode");
+  it("matches the released method-name set (113)", () => {
+    // host-v1.0.0 / released-method-names fixture freezes 113 unary names.
+    // Ticket text said 112; the authoritative fixture is 113 (verified at
+    // host-v1.1.5 and origin/main).
+    expect(Object.keys(hostRpcRegistry).sort()).toEqual(
+      [...releasedMethodNames].sort(),
+    );
+    expect(releasedMethodNames).toHaveLength(113);
   });
 });

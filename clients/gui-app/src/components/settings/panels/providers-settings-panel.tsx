@@ -3,6 +3,7 @@ import {
   useEffect,
   useId,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -54,7 +55,7 @@ import { useHostClientFor } from "@/hooks/host/use-host-client-for";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useDebouncedValue } from "@/hooks/ui/use-debounced-value";
-import { useRunnerHost } from "@/providers/use-runner-host";
+import { useRunnerOpenExternalLink } from "@/hooks/runner/use-open-external-link-mutation";
 import { useProvidersFocusStore } from "@/stores/settings/providers-focus-store";
 import type { HostRpcRegistry } from "@/lib/host";
 import { HostRuntimeContext, useHostBinding } from "@/lib/host/runtime";
@@ -167,11 +168,11 @@ function tabHasContent(
         state.providerId === "traycer"
       );
     case "mcp":
-    case "skills":
-      return false;
     case "plugins":
-      // Dot when the provider advertises a plugins surface (list may still be empty).
-      return state.nativeCapabilities.plugins !== null;
+    case "skills":
+      // Truthful content dots need cached list length; without a cheap cache
+      // probe here we keep false (honest "unknown / empty").
+      return false;
   }
 }
 
@@ -637,7 +638,11 @@ function ProviderDetail({
             isPending={setEnabled.isPending}
             enabledProviderCount={enabledProviderCount}
             onSetEnabled={(id, enabled) =>
-              setEnabled.mutate({ providerId: id, enabled })
+              setEnabled.mutate({
+                providerId: id,
+                enabled,
+                native: null,
+              })
             }
           />
         </div>
@@ -648,6 +653,7 @@ function ProviderDetail({
           "flex flex-col transition-opacity",
           state.enabled ? "" : "pointer-events-none opacity-50",
         )}
+        {...(!state.enabled ? { inert: true } : {})}
       >
         <ApiKeySection state={state} />
 
@@ -659,7 +665,7 @@ function ProviderDetail({
           }}
           className="gap-3"
         >
-          <TabsList className="w-full max-w-full flex-wrap justify-start">
+          <TabsList className="h-auto w-full max-w-full flex-wrap justify-start">
             {tabs.map((tab) => (
               <TabsTrigger
                 key={tab}
@@ -1009,6 +1015,36 @@ function TerminalAgentArgsSection({
   const setArgs = useProvidersSetTerminalAgentArgs();
   const saved = state.terminalAgentArgs;
   const [draft, setDraft] = useState(saved);
+  const draftRef = useRef(draft);
+  useEffect(() => {
+    draftRef.current = draft;
+  }, [draft]);
+  const savedRef = useRef(saved);
+  useEffect(() => {
+    savedRef.current = saved;
+  }, [saved]);
+  // Capture mutate in a ref so the unmount-only cleanup never re-subscribes
+  // when useMutation returns a new result object each render.
+  const mutateRef = useRef(setArgs.mutate);
+  useEffect(() => {
+    mutateRef.current = setArgs.mutate;
+  }, [setArgs.mutate]);
+  const providerIdRef = useRef(providerId);
+  useEffect(() => {
+    providerIdRef.current = providerId;
+  }, [providerId]);
+
+  useEffect(() => {
+    return () => {
+      const next = draftRef.current.trim();
+      if (next !== savedRef.current) {
+        mutateRef.current({
+          providerId: providerIdRef.current,
+          terminalAgentArgs: next,
+        });
+      }
+    };
+  }, []);
 
   const harnessId = providerIdToGuiHarnessId(providerId);
   const supportsTerminalAgent =
@@ -1071,7 +1107,7 @@ function ApiKeySection({ state }: { readonly state: ProviderCliState }) {
   const [draft, setDraft] = useState("");
   const setApiKey = useProvidersSetApiKey();
   const clearApiKey = useProvidersClearApiKey();
-  const runnerHost = useRunnerHost();
+  const openExternalLink = useRunnerOpenExternalLink();
 
   if (!state.apiKey.supported) return null;
 
@@ -1103,7 +1139,7 @@ function ApiKeySection({ state }: { readonly state: ProviderCliState }) {
         <button
           type="button"
           onClick={() => {
-            void runnerHost.openExternalLink(dashboardUrl);
+            openExternalLink.mutate(dashboardUrl);
           }}
           className="inline-flex w-fit items-center gap-1.5 text-ui-xs font-medium text-primary transition-colors hover:text-primary/80 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 rounded"
         >

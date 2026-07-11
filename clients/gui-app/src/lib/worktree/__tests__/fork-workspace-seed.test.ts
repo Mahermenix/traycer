@@ -119,6 +119,7 @@ describe("buildForkWorkspaceSeed", () => {
           path: "/Users/me/traycer",
           name: "traycer",
           repoIdentifier: { owner: "traycerai", repo: "traycer" },
+          hostId: null,
         },
       },
     });

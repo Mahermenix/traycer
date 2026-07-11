@@ -1,7 +1,8 @@
 import { useMemo, useState, type ReactNode } from "react";
-import type {
-  ProviderCliState,
-  ProviderId,
+import {
+  PROVIDER_DISPLAY_NAMES,
+  type ProviderCliState,
+  type ProviderId,
 } from "@traycer/protocol/host/provider-schemas";
 import type {
   ProviderSkill,
@@ -28,9 +29,9 @@ const SKILL_NAME_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
 const SOURCE_BADGE_LABEL: Record<ProviderSkillSourceBadge, string> = {
   shared: "Shared",
-  provider: "Provider",
+  provider: "Provider-only",
   plugin: "Plugin",
-  managed: "Managed",
+  managed: "Built-in",
 };
 
 export function ProviderSkillsTab({
@@ -52,7 +53,7 @@ export function ProviderSkillsTab({
   return (
     <ProviderSkillsTabBody
       providerId={state.providerId}
-      providerLabel={state.providerId}
+      providerLabel={PROVIDER_DISPLAY_NAMES[state.providerId]}
       caps={caps}
     />
   );
@@ -67,11 +68,16 @@ function ProviderSkillsTabBody({
   readonly providerLabel: string;
   readonly caps: ProviderSkillsCapabilities;
 }): ReactNode {
+  const canList = caps.actionScopes.list.length > 0;
+  const canCreate = caps.actionScopes.create.length > 0;
+  const canImport = caps.actionScopes.import.length > 0;
+  const canAdd = canCreate || canImport;
+
   const listQuery = useProvidersSkillsList({
     providerId,
     scope: "global",
     workspaceRoot: null,
-    enabled: caps.canList,
+    enabled: canList,
   });
   const mutate = useProvidersSkillsMutate();
 
@@ -151,8 +157,6 @@ function ProviderSkillsTabBody({
     );
   }
 
-  const canAdd = caps.canAdd || caps.canImport;
-
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -178,7 +182,7 @@ function ProviderSkillsTabBody({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {caps.canImport ? (
+              {canImport ? (
                 <DropdownMenuItem
                   onClick={() => {
                     setPanel("import");
@@ -188,7 +192,7 @@ function ProviderSkillsTabBody({
                   Import skill…
                 </DropdownMenuItem>
               ) : null}
-              {caps.canAdd ? (
+              {canCreate ? (
                 <DropdownMenuItem
                   onClick={() => {
                     setPanel("create");
@@ -203,7 +207,7 @@ function ProviderSkillsTabBody({
         ) : null}
       </div>
 
-      {panel === "import" && caps.canImport ? (
+      {panel === "import" && canImport ? (
         <SkillImportPanel
           providerLabel={providerLabel}
           importSource={importSource}
@@ -213,11 +217,15 @@ function ProviderSkillsTabBody({
           isMutating={isMutating}
           pendingKey={pendingKey}
           onImport={onImport}
-          onCancel={() => setPanel("none")}
+          onCancel={() => {
+            setPanel("none");
+            setImportSource("");
+            setProviderScoped(false);
+          }}
         />
       ) : null}
 
-      {panel === "create" && caps.canAdd ? (
+      {panel === "create" && canCreate ? (
         <SkillCreatePanel
           providerLabel={providerLabel}
           createName={createName}
@@ -232,7 +240,13 @@ function ProviderSkillsTabBody({
           isMutating={isMutating}
           pendingKey={pendingKey}
           onCreate={onCreate}
-          onCancel={() => setPanel("none")}
+          onCancel={() => {
+            setPanel("none");
+            setCreateName("");
+            setCreateDescription("");
+            setCreateBody("");
+            setProviderScoped(false);
+          }}
         />
       ) : null}
 
@@ -553,10 +567,12 @@ function SkillRow({ skill }: { readonly skill: ProviderSkill }): ReactNode {
         <span
           className={cn(
             "rounded border px-1.5 py-0.5 text-ui-xs",
-            skill.source === "shared" && "border-sky-500/40 text-sky-300",
+            skill.source === "shared" &&
+              "border-sky-500/40 text-sky-700 dark:text-sky-300",
             skill.source === "provider" &&
-              "border-emerald-500/40 text-emerald-300",
-            skill.source === "plugin" && "border-violet-500/40 text-violet-300",
+              "border-emerald-500/40 text-emerald-700 dark:text-emerald-300",
+            skill.source === "plugin" &&
+              "border-violet-500/40 text-violet-700 dark:text-violet-300",
             skill.source === "managed" && "border-border text-muted-foreground",
           )}
         >

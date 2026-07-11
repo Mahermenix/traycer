@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type {
   ProviderCliState,
   ProviderId,
@@ -8,9 +8,10 @@ import type {
   ProviderPluginsCapabilities,
   ProvidersPluginsMutateAction,
 } from "@traycer/protocol/host/provider-native-schemas";
-import { Package, Plus, Store, Trash2 } from "lucide-react";
+import { Package, Plus, Trash2 } from "lucide-react";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
+import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useProvidersPluginsList } from "@/hooks/providers/use-providers-plugins-list-query";
@@ -51,12 +52,14 @@ function pluginCapabilityFlags(caps: ProviderPluginsCapabilities) {
       m === "file-drop" ||
       m === "patch",
   );
+  const canRemove = caps.actionScopes.remove.length > 0;
+  const canEnableDisable = caps.actionScopes.setEnabled.length > 0;
   const isReadOnly =
     caps.addModes.length === 0 ||
     (caps.addModes.length === 1 && caps.addModes[0] === "read-only") ||
-    (!caps.canRemove && !caps.canEnableDisable && !writableModes);
+    (!canRemove && !canEnableDisable && !writableModes);
   const canAdd = !isReadOnly && writableModes;
-  return { isReadOnly, canAdd };
+  return { isReadOnly, canAdd, canRemove, canEnableDisable };
 }
 
 function ProviderPluginsTabBody({
@@ -67,7 +70,6 @@ function ProviderPluginsTabBody({
   readonly caps: ProviderPluginsCapabilities;
 }): ReactNode {
   const { isReadOnly, canAdd } = pluginCapabilityFlags(caps);
-  const showMarketplace = caps.marketplaceBrowse;
   const showSessionNotice =
     caps.traycerSessionToolsNotice || providerId === "cursor";
 
@@ -81,23 +83,35 @@ function ProviderPluginsTabBody({
 
   const [sourceDraft, setSourceDraft] = useState("");
   const [addOpen, setAddOpen] = useState(false);
-  const [marketplaceOpen, setMarketplaceOpen] = useState(false);
-  const [marketplaceQuery, setMarketplaceQuery] = useState("");
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
   const [reloadHint, setReloadHint] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<ProviderPlugin | null>(null);
 
   const plugins = listQuery.data?.plugins ?? [];
-  const isMutating = mutate.isPending;
+  const isMutating = pendingIds.size > 0 || mutate.isPending;
+  const removeDialogPending =
+    removeTarget !== null && pendingIds.has(removeTarget.id);
 
   const sessionNotice = sessionNoticeFor(providerId, caps);
+
+  function markPending(trackId: string, pending: boolean): void {
+    setPendingIds((prev) => {
+      const next = new Set(prev);
+      if (pending) next.add(trackId);
+      else next.delete(trackId);
+      return next;
+    });
+  }
 
   function runMutation(
     mutation: ProvidersPluginsMutateAction,
     trackId: string | null,
   ): void {
     setLocalError(null);
-    setPendingId(trackId);
+    if (trackId !== null) markPending(trackId, true);
     mutate.mutate(
       {
         providerId,
@@ -107,31 +121,24 @@ function ProviderPluginsTabBody({
       },
       {
         onSuccess: () => {
-          setPendingId(null);
+          if (trackId !== null) markPending(trackId, false);
           setReloadHint(true);
           setSourceDraft("");
           setAddOpen(false);
+          setRemoveTarget(null);
         },
         onError: (err) => {
-          setPendingId(null);
+          if (trackId !== null) markPending(trackId, false);
           setLocalError(err.message);
         },
       },
     );
   }
 
-  const filteredMarketplace = useMemo(() => {
-    // Browse UI is host-side-free in v1 for non-claude; claude install still
-    // uses source string `plugin@marketplace`. Search is a local filter over
-    // a short tip list until a dedicated browse RPC ships.
-    void marketplaceQuery;
-    return [] as readonly { id: string; name: string; description: string }[];
-  }, [marketplaceQuery]);
-
   return (
     <div className="flex flex-col gap-3">
       {showSessionNotice && sessionNotice !== null ? (
-        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-ui-xs text-amber-200">
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-ui-xs text-amber-700 dark:text-amber-200">
           {sessionNotice}
         </div>
       ) : null}
@@ -148,22 +155,6 @@ function ProviderPluginsTabBody({
           Installed plugins
         </span>
         <div className="flex flex-wrap gap-2">
-          {showMarketplace ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="text-ui-xs"
-              disabled={isMutating}
-              onClick={() => {
-                setMarketplaceOpen((v) => !v);
-                setAddOpen(false);
-              }}
-            >
-              <Store className="size-3.5" />
-              Browse marketplace
-            </Button>
-          ) : null}
           {canAdd ? (
             <Button
               type="button"
@@ -173,7 +164,6 @@ function ProviderPluginsTabBody({
               disabled={isMutating}
               onClick={() => {
                 setAddOpen((v) => !v);
-                setMarketplaceOpen(false);
               }}
             >
               <Plus className="size-3.5" />
@@ -187,19 +177,7 @@ function ProviderPluginsTabBody({
         <PluginAddFromSource
           sourceDraft={sourceDraft}
           setSourceDraft={setSourceDraft}
-          isMutating={isMutating}
-          pendingId={pendingId}
-          runMutation={runMutation}
-        />
-      ) : null}
-
-      {marketplaceOpen && showMarketplace ? (
-        <PluginMarketplacePanel
-          marketplaceQuery={marketplaceQuery}
-          setMarketplaceQuery={setMarketplaceQuery}
-          isMutating={isMutating}
-          pendingId={pendingId}
-          filteredMarketplace={filteredMarketplace}
+          pendingIds={pendingIds}
           runMutation={runMutation}
         />
       ) : null}
@@ -217,9 +195,32 @@ function ProviderPluginsTabBody({
         plugins={plugins}
         isReadOnly={isReadOnly}
         caps={caps}
-        pendingId={pendingId}
-        isMutating={isMutating}
+        pendingIds={pendingIds}
         runMutation={runMutation}
+        onRequestRemove={setRemoveTarget}
+      />
+
+      <ConfirmDestructiveDialog
+        open={removeTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setRemoveTarget(null);
+        }}
+        title="Remove plugin"
+        description={
+          removeTarget === null
+            ? ""
+            : `Remove “${removeTarget.name}” from this provider?`
+        }
+        cascadeSummary={null}
+        actionLabel="Remove"
+        isPending={removeDialogPending}
+        onConfirm={() => {
+          if (removeTarget === null) return;
+          runMutation(
+            { action: "remove", id: removeTarget.id },
+            removeTarget.id,
+          );
+        }}
       />
     </div>
   );
@@ -238,19 +239,19 @@ function sessionNoticeFor(
 function PluginAddFromSource({
   sourceDraft,
   setSourceDraft,
-  isMutating,
-  pendingId,
+  pendingIds,
   runMutation,
 }: {
   readonly sourceDraft: string;
   readonly setSourceDraft: (v: string) => void;
-  readonly isMutating: boolean;
-  readonly pendingId: string | null;
+  readonly pendingIds: ReadonlySet<string>;
   readonly runMutation: (
     mutation: ProvidersPluginsMutateAction,
     trackId: string | null,
   ) => void;
 }): ReactNode {
+  const trackId = sourceDraft.trim();
+  const pending = trackId.length > 0 && pendingIds.has(trackId);
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-border/60 p-3">
       <label
@@ -266,20 +267,17 @@ function PluginAddFromSource({
           onChange={(e) => setSourceDraft(e.target.value)}
           placeholder="plugin@marketplace or /path/to/plugin"
           className="min-w-0 flex-1 text-ui-xs"
-          disabled={isMutating}
+          disabled={pending}
         />
         <Button
           type="button"
           size="sm"
-          disabled={isMutating || sourceDraft.trim().length === 0}
+          disabled={pending || trackId.length === 0}
           onClick={() =>
-            runMutation(
-              { action: "add", source: sourceDraft.trim() },
-              sourceDraft.trim(),
-            )
+            runMutation({ action: "add", source: trackId }, trackId)
           }
         >
-          {isMutating && pendingId === sourceDraft.trim() ? (
+          {pending ? (
             <AgentSpinningDots
               className={undefined}
               testId={undefined}
@@ -293,76 +291,6 @@ function PluginAddFromSource({
   );
 }
 
-function PluginMarketplacePanel({
-  marketplaceQuery,
-  setMarketplaceQuery,
-  isMutating,
-  pendingId,
-  filteredMarketplace,
-  runMutation,
-}: {
-  readonly marketplaceQuery: string;
-  readonly setMarketplaceQuery: (v: string) => void;
-  readonly isMutating: boolean;
-  readonly pendingId: string | null;
-  readonly filteredMarketplace: readonly {
-    id: string;
-    name: string;
-    description: string;
-  }[];
-  readonly runMutation: (
-    mutation: ProvidersPluginsMutateAction,
-    trackId: string | null,
-  ) => void;
-}): ReactNode {
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border border-border/60 p-3">
-      <p className="text-ui-xs text-muted-foreground">
-        Install with a marketplace source string (plugin@marketplace). Claude
-        marketplace listings are machine-readable via the CLI; paste the id
-        below or use Add from source.
-      </p>
-      <Input
-        value={marketplaceQuery}
-        onChange={(e) => setMarketplaceQuery(e.target.value)}
-        placeholder="plugin@claude-plugins-official"
-        className="text-ui-xs"
-        disabled={isMutating}
-      />
-      <Button
-        type="button"
-        size="sm"
-        className="self-start"
-        disabled={isMutating || marketplaceQuery.trim().length === 0}
-        onClick={() =>
-          runMutation(
-            { action: "add", source: marketplaceQuery.trim() },
-            marketplaceQuery.trim(),
-          )
-        }
-      >
-        {isMutating && pendingId === marketplaceQuery.trim() ? (
-          <AgentSpinningDots
-            className={undefined}
-            testId={undefined}
-            variant={undefined}
-          />
-        ) : null}
-        Install from marketplace
-      </Button>
-      {filteredMarketplace.length > 0 ? (
-        <ul className="flex flex-col gap-1">
-          {filteredMarketplace.map((item) => (
-            <li key={item.id} className="text-ui-xs">
-              {item.name}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
-
 function PluginsListBody({
   listLoading,
   listError,
@@ -370,9 +298,9 @@ function PluginsListBody({
   plugins,
   isReadOnly,
   caps,
-  pendingId,
-  isMutating,
+  pendingIds,
   runMutation,
+  onRequestRemove,
 }: {
   readonly listLoading: boolean;
   readonly listError: boolean;
@@ -380,12 +308,12 @@ function PluginsListBody({
   readonly plugins: readonly ProviderPlugin[];
   readonly isReadOnly: boolean;
   readonly caps: ProviderPluginsCapabilities;
-  readonly pendingId: string | null;
-  readonly isMutating: boolean;
+  readonly pendingIds: ReadonlySet<string>;
   readonly runMutation: (
     mutation: ProvidersPluginsMutateAction,
     trackId: string | null,
   ) => void;
+  readonly onRequestRemove: (plugin: ProviderPlugin) => void;
 }): ReactNode {
   if (listLoading) {
     return (
@@ -426,16 +354,16 @@ function PluginsListBody({
           plugin={plugin}
           caps={caps}
           isReadOnly={isReadOnly || plugin.readOnly}
-          pending={pendingId === plugin.id && isMutating}
+          pending={pendingIds.has(plugin.id)}
           onToggle={(enabled) =>
             runMutation(
               { action: "setEnabled", id: plugin.id, enabled },
               plugin.id,
             )
           }
-          onRemove={() =>
-            runMutation({ action: "remove", id: plugin.id }, plugin.id)
-          }
+          onRemove={() => {
+            onRequestRemove(plugin);
+          }}
         />
       ))}
     </ul>
@@ -457,6 +385,8 @@ function PluginRow({
   readonly onToggle: (enabled: boolean) => void;
   readonly onRemove: () => void;
 }): ReactNode {
+  const canRemove = caps.actionScopes.remove.length > 0;
+  const canEnableDisable = caps.actionScopes.setEnabled.length > 0;
   const sourceBadge = plugin.source ?? null;
   return (
     <li
@@ -488,12 +418,18 @@ function PluginRow({
             />
           ) : null}
         </div>
-        <div className="truncate text-ui-xs text-muted-foreground">
-          {plugin.id}
-        </div>
+        {(plugin.description ?? "").length > 0 ? (
+          <p className="truncate text-ui-xs text-muted-foreground">
+            {plugin.description}
+          </p>
+        ) : (
+          <div className="truncate text-ui-xs text-muted-foreground">
+            {plugin.id}
+          </div>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-2">
-        {caps.canEnableDisable && !isReadOnly ? (
+        {canEnableDisable && !isReadOnly ? (
           <Switch
             checked={plugin.enabled}
             disabled={pending}
@@ -505,7 +441,7 @@ function PluginRow({
             }
           />
         ) : null}
-        {caps.canRemove && !isReadOnly ? (
+        {canRemove && !isReadOnly ? (
           <Button
             type="button"
             variant="ghost"

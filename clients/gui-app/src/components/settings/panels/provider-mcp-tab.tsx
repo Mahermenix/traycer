@@ -4,6 +4,7 @@ import {
   ChevronRight,
   LogIn,
   LogOut,
+  Pencil,
   Plus,
   RefreshCw,
   Trash2,
@@ -29,17 +30,33 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
-import { redactLogText } from "@/lib/logger";
+import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-id";
 import { useProvidersMcpList } from "@/hooks/providers/use-providers-mcp-list-query";
 import { useProvidersMcpMutate } from "@/hooks/providers/use-providers-mcp-mutate-mutation";
 import { useProvidersMcpDiscover } from "@/hooks/providers/use-providers-mcp-discover-mutation";
 import { useProvidersMcpAuth } from "@/hooks/providers/use-providers-mcp-auth-mutation";
-import { useWorkspaceFoldersStore } from "@/stores/workspace/workspace-folders-store";
-import { useRunnerHost } from "@/providers/use-runner-host";
+import { isProviderNativeRpcError } from "@/hooks/providers/native-response-map";
+import { useRunnerOpenExternalLink } from "@/hooks/runner/use-open-external-link-mutation";
+import { useResolvedWorkspaceFolders } from "@/hooks/workspace/use-resolved-workspace-folders-query";
+import { useHostBinding } from "@/lib/host";
+import { nativeErrorMessage } from "@/lib/providers/native-error-copy";
+import { redactLogText } from "@/lib/logger";
+import { workspaceFolderName } from "@/lib/worktree/workspace-folder-name";
 import { cn } from "@/lib/utils";
+import type { McpPendingAuthEntry } from "@/stores/settings/mcp-pending-auth-store";
+import { useMcpPendingAuthStore } from "@/stores/settings/mcp-pending-auth-store";
+import { useProvidersWorkspaceSelectionStore } from "@/stores/settings/providers-workspace-selection-store";
+import { useWorkspaceFoldersStore } from "@/stores/workspace/workspace-folders-store";
 import { ProviderMcpAddDialog } from "./provider-mcp-add-dialog";
 
 const EMPTY_MCP_SERVERS: readonly ProviderMcpServer[] = [];
@@ -50,16 +67,6 @@ function resolveLockedScope(
 ): ProviderNativeScope {
   if (supportsProject && !supportsGlobal) return "project";
   return "global";
-}
-
-function workspaceDisplayName(
-  root: string,
-  infoByPath: Readonly<Record<string, { readonly name: string }>>,
-): string {
-  if (Object.hasOwn(infoByPath, root)) {
-    return infoByPath[root].name;
-  }
-  return root;
 }
 
 /**
@@ -94,29 +101,184 @@ function pruneAuthAwaiting(
   return next;
 }
 
-function mcpMutationFlags(capabilities: ProviderMcpCapabilities) {
-  const canAdd = capabilities.mutationActions.includes("add");
-  const canRemove = capabilities.mutationActions.includes("remove");
-  const canToggleServer = capabilities.mutationActions.includes("toggleServer");
-  const canToggleTool = capabilities.mutationActions.includes("toggleTool");
+interface ResumeOauthPollingInputs {
+  readonly pendingAuthEntries: Readonly<Record<string, McpPendingAuthEntry>>;
+  readonly providerId: ProviderId;
+  readonly effectiveScope: ProviderNativeScope;
+  readonly listWorkspaceRoot: string | null;
+  readonly hostId: string | null;
+}
+
+function resumeOauthPollingInputsEqual(
+  a: ResumeOauthPollingInputs,
+  b: ResumeOauthPollingInputs,
+): boolean {
+  return (
+    a.pendingAuthEntries === b.pendingAuthEntries &&
+    a.providerId === b.providerId &&
+    a.effectiveScope === b.effectiveScope &&
+    a.listWorkspaceRoot === b.listWorkspaceRoot &&
+    a.hostId === b.hostId
+  );
+}
+
+/**
+ * Resumes OAuth polling after a settings navigation, from the pending-auth
+ * store. Adjusted during render (guarded by comparing against the
+ * last-applied inputs) rather than in an effect - `pendingAuthEntries` is
+ * already reactive via the Zustand selector hook, so no effect is needed to
+ * detect changes; see `useResetFormOnReopen` in provider-mcp-add-dialog.tsx
+ * for the same pattern.
+ */
+function useResumeOauthPolling(
+  inputs: ResumeOauthPollingInputs,
+  setAuthInstruction: (instruction: string) => void,
+  setAuthAwaitingNames: (
+    updater: (prev: ReadonlySet<string>) => ReadonlySet<string>,
+  ) => void,
+): void {
+  const [seenInputs, setSeenInputs] = useState<ResumeOauthPollingInputs | null>(
+    null,
+  );
+  if (
+    seenInputs !== null &&
+    resumeOauthPollingInputsEqual(seenInputs, inputs)
+  ) {
+    return;
+  }
+  setSeenInputs(inputs);
+  const resumed = new Set<string>();
+  let resumedInstruction: string | null = null;
+  for (const entry of Object.values(inputs.pendingAuthEntries)) {
+    if (
+      entry.key.providerId === inputs.providerId &&
+      entry.key.scope === inputs.effectiveScope &&
+      entry.key.workspaceRoot === inputs.listWorkspaceRoot &&
+      (inputs.hostId === null || entry.hostId === inputs.hostId)
+    ) {
+      resumed.add(entry.key.serverName);
+      if (entry.instruction !== null) {
+        resumedInstruction = redactLogText(entry.instruction);
+      }
+    }
+  }
+  if (resumedInstruction !== null) {
+    setAuthInstruction(resumedInstruction);
+  }
+  if (resumed.size === 0) return;
+  setAuthAwaitingNames((prev) => {
+    let changed = false;
+    const next = new Set(prev);
+    for (const name of resumed) {
+      if (!next.has(name)) {
+        next.add(name);
+        changed = true;
+      }
+    }
+    return changed ? next : prev;
+  });
+}
+
+/**
+ * Action affordances for the currently selected scope. R04 advertises
+ * per-action scope tables — a verb supported only for global must not appear
+ * when the user is viewing project (and vice versa).
+ */
+function mcpMutationFlags(
+  capabilities: ProviderMcpCapabilities,
+  effectiveScope: ProviderNativeScope,
+) {
+  const scopes = capabilities.actionScopes;
+  const canAdd = scopes.add.includes(effectiveScope);
+  const canRemove = scopes.remove.includes(effectiveScope);
+  const canUpdate = scopes.update.includes(effectiveScope);
+  const canToggleServer = scopes.toggleServer.includes(effectiveScope);
+  const canToggleTool = scopes.toggleTool.includes(effectiveScope);
+  const canDiscover = scopes.discover.includes(effectiveScope);
+  const canAuth = scopes.auth.includes(effectiveScope);
   const toolsReadOnly =
     capabilities.perToolBacking === "degraded-server-level" ||
     capabilities.perToolBacking === "none" ||
     !canToggleTool;
-  return { canAdd, canRemove, canToggleServer, toolsReadOnly };
+  return {
+    canAdd,
+    canRemove,
+    canUpdate,
+    canToggleServer,
+    canDiscover,
+    canAuth,
+    toolsReadOnly,
+  };
 }
 
 function useMcpScope(capabilities: ProviderMcpCapabilities) {
+  const hostId = useReactiveActiveHostId();
+  // Prefer the runtime binding when present; null is valid (tests / host-less
+  // shells) and falls through to local-only resolution.
+  const binding = useHostBinding();
+  const client = binding?.hostClient ?? null;
   const folders = useWorkspaceFoldersStore((s) => s.folders);
   const folderInfoByPath = useWorkspaceFoldersStore((s) => s.folderInfoByPath);
-  const workspaceRoot = folders.length > 0 ? folders[0] : null;
+  const folderSource = useMemo(
+    () => ({ folders, folderInfoByPath }),
+    [folders, folderInfoByPath],
+  );
+  const selectedByHostId = useProvidersWorkspaceSelectionStore(
+    (s) => s.selectedByHostId,
+  );
+  const setSelected = useProvidersWorkspaceSelectionStore((s) => s.setSelected);
+
+  // Resolve against the HostRuntimeContext-bound host so paths from another
+  // machine never become Project workspaceRoot for this host (B6).
+  const resolved = useResolvedWorkspaceFolders(folderSource, client);
+  const workspaces = useMemo(
+    () =>
+      resolved.folders
+        .filter((folder) => folder.kind !== "unresolved")
+        .map((folder) => ({
+          path: folder.path,
+          name:
+            folder.name.length > 0
+              ? folder.name
+              : workspaceFolderName(folder.path),
+        })),
+    [resolved.folders],
+  );
+  const hostPaths = useMemo(
+    () => workspaces.map((ws) => ws.path),
+    [workspaces],
+  );
+
+  const selected = hostId === null ? undefined : selectedByHostId[hostId];
+  const selectedValid =
+    selected !== undefined && hostPaths.includes(selected) ? selected : null;
+
+  let workspaceRoot: string | null = null;
+  if (selectedValid !== null) {
+    workspaceRoot = selectedValid;
+  } else if (hostPaths.length === 1) {
+    workspaceRoot = hostPaths[0];
+  }
+
   const workspaceName =
     workspaceRoot === null
       ? null
-      : workspaceDisplayName(workspaceRoot, folderInfoByPath);
+      : (workspaces.find((w) => w.path === workspaceRoot)?.name ??
+        workspaceFolderName(workspaceRoot));
 
-  const supportsGlobal = capabilities.scopes.includes("global");
-  const supportsProject = capabilities.scopes.includes("project");
+  const setWorkspaceRoot = useCallback(
+    (path: string) => {
+      if (hostId === null) return;
+      setSelected(hostId, path);
+    },
+    [hostId, setSelected],
+  );
+
+  const multiWorkspace = hostPaths.length > 1;
+
+  const listScopes = capabilities.actionScopes.list;
+  const supportsGlobal = listScopes.includes("global");
+  const supportsProject = listScopes.includes("project");
   const multiScope = supportsGlobal && supportsProject;
   const lockedScope = resolveLockedScope(supportsProject, supportsGlobal);
 
@@ -126,16 +288,26 @@ function useMcpScope(capabilities: ProviderMcpCapabilities) {
   const projectNeedsWorkspace =
     effectiveScope === "project" && workspaceRoot === null;
   const listWorkspaceRoot = effectiveScope === "global" ? null : workspaceRoot;
+  // Project is only fully disabled when this host has zero resolvable
+  // workspaces. Multi with no selection still enables Project so the picker
+  // can be shown for first-use.
+  const projectDisabled = hostPaths.length === 0 && !resolved.isLoading;
 
   return {
+    hostId,
+    workspaces,
     workspaceRoot,
     workspaceName,
+    setWorkspaceRoot,
+    multiWorkspace,
     multiScope,
     effectiveScope,
     setScope,
     projectNeedsWorkspace,
+    projectDisabled,
     listWorkspaceRoot,
     listEnabled: !projectNeedsWorkspace,
+    workspacesLoading: resolved.isLoading,
   };
 }
 
@@ -147,27 +319,40 @@ export function ProviderMcpTab(props: {
   const { providerId, capabilities, providerLabel } = props;
   const scopeState = useMcpScope(capabilities);
   const {
+    hostId,
+    workspaces,
     workspaceRoot,
     workspaceName,
+    setWorkspaceRoot,
+    multiWorkspace,
     multiScope,
     effectiveScope,
     setScope,
     projectNeedsWorkspace,
+    projectDisabled,
     listWorkspaceRoot,
     listEnabled,
+    workspacesLoading,
   } = scopeState;
 
   const [addOpen, setAddOpen] = useState(false);
+  const [editTarget, setEditTarget] = useState<ProviderMcpServer | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
   const [pendingServerNames, setPendingServerNames] = useState<
     ReadonlySet<string>
   >(() => new Set());
+  const [rowErrors, setRowErrors] = useState<ReadonlyMap<string, string>>(
+    () => new Map(),
+  );
   // After opening an authorizationUrl, poll mcpList until the row settles.
   // Settled names are pruned during render (no sync effect).
   const [authAwaitingNames, setAuthAwaitingNames] = useState<
     ReadonlySet<string>
   >(() => new Set());
   const [authInstruction, setAuthInstruction] = useState<string | null>(null);
+  const pendingAuthUpsert = useMcpPendingAuthStore((s) => s.upsert);
+  const pendingAuthRemove = useMcpPendingAuthStore((s) => s.remove);
+  const pendingAuthEntries = useMcpPendingAuthStore((s) => s.entries);
 
   // Shadow badges: when viewing Global with a workspace, also read project
   // names so host-side project-overrides-global can be labeled.
@@ -197,6 +382,17 @@ export function ProviderMcpTab(props: {
   // inside an effect.
   const prunedAuthAwaiting = pruneAuthAwaiting(authAwaitingNames, servers);
   if (prunedAuthAwaiting !== authAwaitingNames) {
+    const settled = [...authAwaitingNames].filter(
+      (name) => !prunedAuthAwaiting.has(name),
+    );
+    for (const name of settled) {
+      pendingAuthRemove({
+        providerId,
+        scope: effectiveScope,
+        workspaceRoot: listWorkspaceRoot,
+        serverName: name,
+      });
+    }
     setAuthAwaitingNames(prunedAuthAwaiting);
   }
 
@@ -210,7 +406,7 @@ export function ProviderMcpTab(props: {
   const mutate = useProvidersMcpMutate();
   const discover = useProvidersMcpDiscover();
   const auth = useProvidersMcpAuth();
-  const runnerHost = useRunnerHost();
+  const openExternalLink = useRunnerOpenExternalLink();
 
   const existingNames = useMemo(() => servers.map((s) => s.name), [servers]);
 
@@ -219,14 +415,38 @@ export function ProviderMcpTab(props: {
   // this `boolean | null` and fails the dialog's `isPending: boolean` prop.
   const deleteDialogPending = mutate.isPending && deleteTarget !== null;
 
-  const { canAdd, canRemove, canToggleServer, toolsReadOnly } =
-    mcpMutationFlags(capabilities);
+  const {
+    canAdd,
+    canRemove,
+    canUpdate,
+    canToggleServer,
+    canDiscover,
+    canAuth,
+    toolsReadOnly,
+  } = mcpMutationFlags(capabilities, effectiveScope);
 
   const markPending = useCallback((name: string, pending: boolean) => {
     setPendingServerNames((prev) => {
       const next = new Set(prev);
       if (pending) next.add(name);
       else next.delete(name);
+      return next;
+    });
+  }, []);
+
+  const clearRowError = useCallback((name: string) => {
+    setRowErrors((prev) => {
+      if (!prev.has(name)) return prev;
+      const next = new Map(prev);
+      next.delete(name);
+      return next;
+    });
+  }, []);
+
+  const setRowError = useCallback((name: string, message: string) => {
+    setRowErrors((prev) => {
+      const next = new Map(prev);
+      next.set(name, message);
       return next;
     });
   }, []);
@@ -240,9 +460,22 @@ export function ProviderMcpTab(props: {
     [providerId, effectiveScope, listWorkspaceRoot],
   );
 
+  useResumeOauthPolling(
+    {
+      pendingAuthEntries,
+      providerId,
+      effectiveScope,
+      listWorkspaceRoot,
+      hostId,
+    },
+    setAuthInstruction,
+    setAuthAwaitingNames,
+  );
+
   const handleRefresh = useCallback(
     (serverName: string) => {
       markPending(serverName, true);
+      clearRowError(serverName);
       discover.mutate(
         { ...scopeTuple, serverName, forceRefresh: true },
         {
@@ -252,70 +485,157 @@ export function ProviderMcpTab(props: {
         },
       );
     },
-    [discover, markPending, scopeTuple],
+    [clearRowError, discover, markPending, scopeTuple],
   );
 
   const handleToggleServer = useCallback(
     (server: ProviderMcpServer, enabled: boolean) => {
-      mutate.mutate({
-        ...scopeTuple,
-        mutation: { action: "toggleServer", name: server.name, enabled },
-      });
+      markPending(server.name, true);
+      clearRowError(server.name);
+      mutate.mutate(
+        {
+          ...scopeTuple,
+          mutation: { action: "toggleServer", name: server.name, enabled },
+          suppressToast: true,
+        },
+        {
+          onError: (error) => {
+            if (isProviderNativeRpcError(error)) {
+              setRowError(
+                server.name,
+                nativeErrorMessage(error.nativeCode, error.nativeDetail),
+              );
+            }
+          },
+          onSettled: () => {
+            markPending(server.name, false);
+          },
+        },
+      );
     },
-    [mutate, scopeTuple],
+    [clearRowError, markPending, mutate, scopeTuple, setRowError],
   );
 
   const handleToggleTool = useCallback(
     (serverName: string, toolName: string, enabled: boolean) => {
-      mutate.mutate({
-        ...scopeTuple,
-        mutation: {
-          action: "toggleTool",
-          serverName,
-          toolName,
-          enabled,
-        },
-      });
-    },
-    [mutate, scopeTuple],
-  );
-
-  const handleToggleAllTools = useCallback(
-    (server: ProviderMcpServer, enabled: boolean) => {
-      for (const tool of server.tools) {
-        if (tool.readOnly || tool.enabled === enabled) continue;
-        mutate.mutate({
+      markPending(serverName, true);
+      clearRowError(serverName);
+      mutate.mutate(
+        {
           ...scopeTuple,
           mutation: {
             action: "toggleTool",
-            serverName: server.name,
-            toolName: tool.name,
+            serverName,
+            toolName,
             enabled,
           },
-        });
+          suppressToast: true,
+        },
+        {
+          onError: (error) => {
+            if (isProviderNativeRpcError(error)) {
+              setRowError(
+                serverName,
+                nativeErrorMessage(error.nativeCode, error.nativeDetail),
+              );
+            }
+          },
+          onSettled: () => {
+            markPending(serverName, false);
+          },
+        },
+      );
+    },
+    [clearRowError, markPending, mutate, scopeTuple, setRowError],
+  );
+
+  const handleToggleAllTools = useCallback(
+    async (server: ProviderMcpServer, enabled: boolean) => {
+      markPending(server.name, true);
+      clearRowError(server.name);
+      try {
+        for (const tool of server.tools) {
+          if (tool.readOnly || tool.enabled === enabled) continue;
+          await mutate.mutateAsync({
+            ...scopeTuple,
+            mutation: {
+              action: "toggleTool",
+              serverName: server.name,
+              toolName: tool.name,
+              enabled,
+            },
+            suppressToast: true,
+          });
+        }
+      } catch (error) {
+        if (isProviderNativeRpcError(error)) {
+          setRowError(
+            server.name,
+            nativeErrorMessage(error.nativeCode, error.nativeDetail),
+          );
+        }
+      } finally {
+        markPending(server.name, false);
       }
     },
-    [mutate, scopeTuple],
+    [clearRowError, markPending, mutate, scopeTuple, setRowError],
   );
 
   const handleAuth = useCallback(
     (serverName: string, action: "login" | "logout" | "forceReauth") => {
       markPending(serverName, true);
       setAuthInstruction(null);
+      clearRowError(serverName);
       auth.mutate(
         {
           ...scopeTuple,
-          auth: { action, serverName },
+          auth: { action, serverName, code: undefined },
         },
         {
           onSuccess: (data) => {
             const result = data.result;
+            const authKey = {
+              providerId: scopeTuple.providerId,
+              scope: scopeTuple.scope,
+              workspaceRoot: scopeTuple.workspaceRoot,
+              serverName,
+            };
             if (result.kind === "authorizationUrl") {
               setAuthAwaitingNames((prev) => new Set(prev).add(serverName));
-              void runnerHost.openExternalLink(result.authorizationUrl);
+              if (hostId !== null) {
+                pendingAuthUpsert({
+                  key: authKey,
+                  hostId,
+                  startedAt: Date.now(),
+                  authorizationUrl: result.authorizationUrl,
+                  instruction: null,
+                });
+              }
+              openExternalLink.mutate(result.authorizationUrl);
             } else if (result.kind === "pendingInstruction") {
               setAuthAwaitingNames((prev) => new Set(prev).add(serverName));
-              setAuthInstruction(redactLogText(result.instruction));
+              const instruction = redactLogText(result.instruction);
+              setAuthInstruction(instruction);
+              if (hostId !== null) {
+                pendingAuthUpsert({
+                  key: authKey,
+                  hostId,
+                  startedAt: Date.now(),
+                  authorizationUrl: null,
+                  instruction: result.instruction,
+                });
+              }
+            } else if (result.kind === "pending") {
+              setAuthAwaitingNames((prev) => new Set(prev).add(serverName));
+              if (hostId !== null) {
+                pendingAuthUpsert({
+                  key: authKey,
+                  hostId,
+                  startedAt: Date.now(),
+                  authorizationUrl: null,
+                  instruction: null,
+                });
+              }
             } else if (result.kind === "unsupported") {
               setAuthInstruction(
                 redactLogText(
@@ -331,26 +651,70 @@ export function ProviderMcpTab(props: {
         },
       );
     },
-    [auth, markPending, runnerHost, scopeTuple],
+    [
+      auth,
+      clearRowError,
+      hostId,
+      markPending,
+      openExternalLink,
+      pendingAuthUpsert,
+      scopeTuple,
+    ],
   );
 
   const handleDelete = useCallback(() => {
     if (deleteTarget === null) return;
     const name = deleteTarget;
     markPending(name, true);
+    clearRowError(name);
     mutate.mutate(
       {
         ...scopeTuple,
         mutation: { action: "remove", name },
+        suppressToast: true,
       },
       {
+        onError: (error) => {
+          if (isProviderNativeRpcError(error)) {
+            setRowError(
+              name,
+              nativeErrorMessage(error.nativeCode, error.nativeDetail),
+            );
+          }
+        },
         onSettled: () => {
           markPending(name, false);
           setDeleteTarget(null);
         },
       },
     );
-  }, [deleteTarget, markPending, mutate, scopeTuple]);
+  }, [
+    clearRowError,
+    deleteTarget,
+    markPending,
+    mutate,
+    scopeTuple,
+    setRowError,
+  ]);
+
+  const handleDialogOpenChange = useCallback((open: boolean) => {
+    if (!open) {
+      setAddOpen(false);
+      setEditTarget(null);
+    }
+  }, []);
+
+  const handleAdded = useCallback(
+    (args: { name: string; requiresAuth: boolean }) => {
+      if (args.requiresAuth && canAuth) {
+        handleAuth(args.name, "login");
+      }
+    },
+    [canAuth, handleAuth],
+  );
+
+  const dialogOpen = addOpen || editTarget !== null;
+  const dialogMode = editTarget !== null ? "edit" : "add";
 
   return (
     <div className="flex flex-col gap-3" data-testid="provider-mcp-tab">
@@ -359,17 +723,22 @@ export function ProviderMcpTab(props: {
         effectiveScope={effectiveScope}
         canAdd={canAdd}
         projectNeedsWorkspace={projectNeedsWorkspace}
+        projectDisabled={projectDisabled}
         onScopeChange={setScope}
         onAdd={() => {
+          setEditTarget(null);
           setAddOpen(true);
         }}
       />
 
-      {effectiveScope === "project" && workspaceRoot !== null ? (
-        <p className="text-ui-xs text-muted-foreground">
-          Project:{" "}
-          <span className="font-medium text-foreground">{workspaceName}</span>
-        </p>
+      {effectiveScope === "project" ? (
+        <ProjectWorkspacePicker
+          multiWorkspace={multiWorkspace}
+          workspaceRoot={workspaceRoot}
+          workspaceName={workspaceName}
+          workspaces={workspaces}
+          onWorkspaceRootChange={setWorkspaceRoot}
+        />
       ) : null}
 
       <McpCapabilityNotices
@@ -379,6 +748,8 @@ export function ProviderMcpTab(props: {
 
       <McpServerList
         projectNeedsWorkspace={projectNeedsWorkspace}
+        multiWorkspace={multiWorkspace}
+        workspacesLoading={workspacesLoading}
         listPending={listQuery.isPending}
         listError={listQuery.isError}
         errorMessage={listQuery.isError ? listQuery.error.message : null}
@@ -387,24 +758,37 @@ export function ProviderMcpTab(props: {
         capabilities={capabilities}
         shadowedNames={shadowedNames}
         pendingServerNames={pendingServerNames}
+        rowErrors={rowErrors}
         canRemove={canRemove}
+        canUpdate={canUpdate}
         canToggleServer={canToggleServer}
+        canDiscover={canDiscover}
+        canAuth={canAuth}
         toolsReadOnly={toolsReadOnly}
         onRefresh={handleRefresh}
         onToggleServer={handleToggleServer}
         onToggleTool={handleToggleTool}
-        onToggleAllTools={handleToggleAllTools}
+        onToggleAllTools={(server, enabled) => {
+          void handleToggleAllTools(server, enabled);
+        }}
         onAuth={handleAuth}
+        onEdit={(server) => {
+          setAddOpen(false);
+          setEditTarget(server);
+        }}
         onDelete={setDeleteTarget}
       />
 
       <ProviderMcpAddDialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
+        open={dialogOpen}
+        onOpenChange={handleDialogOpenChange}
+        mode={dialogMode}
+        initialServer={editTarget}
         providerLabel={providerLabel}
         capabilities={capabilities}
         existingNames={existingNames}
         scopeTuple={scopeTuple}
+        onAdded={handleAdded}
       />
 
       <ConfirmDestructiveDialog
@@ -427,11 +811,65 @@ export function ProviderMcpTab(props: {
   );
 }
 
+function ProjectWorkspacePicker(props: {
+  readonly multiWorkspace: boolean;
+  readonly workspaceRoot: string | null;
+  readonly workspaceName: string | null;
+  readonly workspaces: readonly {
+    readonly path: string;
+    readonly name: string;
+  }[];
+  readonly onWorkspaceRootChange: (value: string) => void;
+}): ReactNode {
+  const {
+    multiWorkspace,
+    workspaceRoot,
+    workspaceName,
+    workspaces,
+    onWorkspaceRootChange,
+  } = props;
+  if (multiWorkspace) {
+    return (
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-ui-xs text-muted-foreground">Project:</span>
+        <Select
+          value={workspaceRoot ?? undefined}
+          onValueChange={onWorkspaceRootChange}
+        >
+          <SelectTrigger
+            className="h-8 w-[min(90vw,16rem)]"
+            aria-label="Project workspace"
+          >
+            <SelectValue placeholder="Select workspace" />
+          </SelectTrigger>
+          <SelectContent>
+            {workspaces.map((ws) => (
+              <SelectItem key={ws.path} value={ws.path}>
+                {ws.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    );
+  }
+  if (workspaceRoot !== null) {
+    return (
+      <p className="text-ui-xs text-muted-foreground">
+        Project:{" "}
+        <span className="font-medium text-foreground">{workspaceName}</span>
+      </p>
+    );
+  }
+  return null;
+}
+
 function McpScopeHeader(props: {
   readonly multiScope: boolean;
   readonly effectiveScope: ProviderNativeScope;
   readonly canAdd: boolean;
   readonly projectNeedsWorkspace: boolean;
+  readonly projectDisabled: boolean;
   readonly onScopeChange: (scope: ProviderNativeScope) => void;
   readonly onAdd: () => void;
 }): ReactNode {
@@ -447,6 +885,8 @@ function McpScopeHeader(props: {
           <ScopeChip
             label="Global"
             active={props.effectiveScope === "global"}
+            disabled={false}
+            title={null}
             onClick={() => {
               props.onScopeChange("global");
             }}
@@ -454,6 +894,8 @@ function McpScopeHeader(props: {
           <ScopeChip
             label="Project"
             active={props.effectiveScope === "project"}
+            disabled={props.projectDisabled}
+            title={props.projectDisabled ? "Open a workspace first" : null}
             onClick={() => {
               props.onScopeChange("project");
             }}
@@ -501,6 +943,8 @@ function McpCapabilityNotices(props: {
 
 function McpServerList(props: {
   readonly projectNeedsWorkspace: boolean;
+  readonly multiWorkspace: boolean;
+  readonly workspacesLoading: boolean;
   readonly listPending: boolean;
   readonly listError: boolean;
   readonly errorMessage: string | null;
@@ -509,8 +953,12 @@ function McpServerList(props: {
   readonly capabilities: ProviderMcpCapabilities;
   readonly shadowedNames: ReadonlySet<string>;
   readonly pendingServerNames: ReadonlySet<string>;
+  readonly rowErrors: ReadonlyMap<string, string>;
   readonly canRemove: boolean;
+  readonly canUpdate: boolean;
   readonly canToggleServer: boolean;
+  readonly canDiscover: boolean;
+  readonly canAuth: boolean;
   readonly toolsReadOnly: boolean;
   readonly onRefresh: (serverName: string) => void;
   readonly onToggleServer: (
@@ -530,13 +978,30 @@ function McpServerList(props: {
     serverName: string,
     action: "login" | "logout" | "forceReauth",
   ) => void;
+  readonly onEdit: (server: ProviderMcpServer) => void;
   readonly onDelete: (serverName: string) => void;
 }): ReactNode {
   if (props.projectNeedsWorkspace) {
+    if (props.workspacesLoading) {
+      return (
+        <div className="flex items-center gap-2 py-6 text-ui-sm text-muted-foreground">
+          <MutedAgentSpinner />
+          Resolving workspaces on this host
+        </div>
+      );
+    }
+    if (props.multiWorkspace) {
+      return (
+        <EmptyState
+          title="Select a workspace"
+          description="Choose a project workspace above to manage project-scoped MCP servers on this host."
+        />
+      );
+    }
     return (
       <EmptyState
         title="Open a workspace"
-        description="Open a workspace to manage project-scoped MCP servers."
+        description="Open a workspace on this host to manage project-scoped MCP servers."
       />
     );
   }
@@ -577,8 +1042,12 @@ function McpServerList(props: {
             server.discoveryPending ||
             server.status === "connecting"
           }
+          rowError={props.rowErrors.get(server.name) ?? null}
           canRemove={props.canRemove}
+          canUpdate={props.canUpdate}
           canToggleServer={props.canToggleServer}
+          canDiscover={props.canDiscover}
+          canAuth={props.canAuth}
           toolsReadOnly={props.toolsReadOnly}
           onRefresh={() => {
             props.onRefresh(server.name);
@@ -590,7 +1059,7 @@ function McpServerList(props: {
             props.onToggleTool(server.name, toolName, enabled);
           }}
           onToggleAllTools={(enabled) => {
-            props.onToggleAllTools(server, enabled);
+            void props.onToggleAllTools(server, enabled);
           }}
           onLogin={() => {
             props.onAuth(server.name, "login");
@@ -600,6 +1069,9 @@ function McpServerList(props: {
           }}
           onForceReauth={() => {
             props.onAuth(server.name, "forceReauth");
+          }}
+          onEdit={() => {
+            props.onEdit(server);
           }}
           onDelete={() => {
             props.onDelete(server.name);
@@ -613,18 +1085,25 @@ function McpServerList(props: {
 function ScopeChip(props: {
   readonly label: string;
   readonly active: boolean;
+  readonly disabled: boolean;
+  readonly title: string | null;
   readonly onClick: () => void;
 }): ReactNode {
   return (
     <button
       type="button"
       onClick={props.onClick}
+      disabled={props.disabled}
+      title={props.title ?? undefined}
       aria-pressed={props.active}
       className={cn(
         "inline-flex items-center rounded-sm px-3 py-1 text-ui-sm transition-colors",
         props.active
           ? "bg-card text-foreground shadow-sm"
           : "text-muted-foreground hover:text-foreground",
+        props.disabled
+          ? "cursor-not-allowed opacity-50 hover:text-muted-foreground"
+          : null,
       )}
     >
       {props.label}
@@ -649,14 +1128,20 @@ function EmptyState(props: {
 function serverRowFlags(
   server: ProviderMcpServer,
   capabilities: ProviderMcpCapabilities,
+  canAuth: boolean,
 ) {
+  // Auth action buttons require both the action in authActions and the
+  // selected scope advertising auth support (actionScopes.auth).
   const showLogin =
+    canAuth &&
     capabilities.authActions.includes("login") &&
     (server.status === "needs_auth" || server.status === "error");
   const showLogout =
+    canAuth &&
     capabilities.authActions.includes("logout") &&
     server.status === "connected";
   const showForceReauth =
+    canAuth &&
     capabilities.authActions.includes("forceReauth") &&
     (server.status === "needs_auth" || server.status === "error");
   const toolsListable =
@@ -666,13 +1151,31 @@ function serverRowFlags(
   return { showLogin, showLogout, showForceReauth, toolsListable };
 }
 
+function rowErrorBannerText(
+  rowError: string | null,
+  server: ProviderMcpServer,
+): string | null {
+  if (rowError !== null) return rowError;
+  if (
+    server.statusDetail !== null &&
+    (server.status === "error" || server.status === "needs_auth")
+  ) {
+    return redactLogText(server.statusDetail);
+  }
+  return null;
+}
+
 function McpServerRow(props: {
   readonly server: ProviderMcpServer;
   readonly capabilities: ProviderMcpCapabilities;
   readonly shadowed: boolean;
   readonly pending: boolean;
+  readonly rowError: string | null;
   readonly canRemove: boolean;
+  readonly canUpdate: boolean;
   readonly canToggleServer: boolean;
+  readonly canDiscover: boolean;
+  readonly canAuth: boolean;
   readonly toolsReadOnly: boolean;
   readonly onRefresh: () => void;
   readonly onToggleServer: (enabled: boolean) => void;
@@ -681,6 +1184,7 @@ function McpServerRow(props: {
   readonly onLogin: () => void;
   readonly onLogout: () => void;
   readonly onForceReauth: () => void;
+  readonly onEdit: () => void;
   readonly onDelete: () => void;
 }): ReactNode {
   const {
@@ -688,8 +1192,12 @@ function McpServerRow(props: {
     capabilities,
     shadowed,
     pending,
+    rowError,
     canRemove,
+    canUpdate,
     canToggleServer,
+    canDiscover,
+    canAuth,
     toolsReadOnly,
     onRefresh,
     onToggleServer,
@@ -698,6 +1206,7 @@ function McpServerRow(props: {
     onLogin,
     onLogout,
     onForceReauth,
+    onEdit,
     onDelete,
   } = props;
   const [open, setOpen] = useState(false);
@@ -705,7 +1214,7 @@ function McpServerRow(props: {
 
   const statusLabel = statusLabelFor(server);
   const { showLogin, showLogout, showForceReauth, toolsListable } =
-    serverRowFlags(server, capabilities);
+    serverRowFlags(server, capabilities, canAuth);
 
   return (
     <li className="rounded-lg border border-border/60">
@@ -749,20 +1258,22 @@ function McpServerRow(props: {
             showLogout={showLogout}
             showForceReauth={showForceReauth}
             canRemove={canRemove}
+            canUpdate={canUpdate}
             canToggleServer={canToggleServer}
+            canDiscover={canDiscover}
             onLogin={onLogin}
             onLogout={onLogout}
             onForceReauth={onForceReauth}
             onRefresh={onRefresh}
+            onEdit={onEdit}
             onDelete={onDelete}
             onToggleServer={onToggleServer}
           />
         </div>
 
-        {server.statusDetail !== null &&
-        (server.status === "error" || server.status === "needs_auth") ? (
+        {rowErrorBannerText(rowError, server) !== null ? (
           <p className="border-t border-border/40 px-3 py-2 text-ui-xs text-destructive">
-            {redactLogText(server.statusDetail)}
+            {rowErrorBannerText(rowError, server)}
           </p>
         ) : null}
 
@@ -772,9 +1283,11 @@ function McpServerRow(props: {
               <ToolsUnavailableState
                 server={server}
                 onLogin={
-                  capabilities.authActions.includes("login") ? onLogin : null
+                  canAuth && capabilities.authActions.includes("login")
+                    ? onLogin
+                    : null
                 }
-                onRefresh={onRefresh}
+                onRefresh={canDiscover ? onRefresh : null}
                 pending={pending}
               />
             ) : (
@@ -847,11 +1360,14 @@ function ServerRowActions(props: {
   readonly showLogout: boolean;
   readonly showForceReauth: boolean;
   readonly canRemove: boolean;
+  readonly canUpdate: boolean;
   readonly canToggleServer: boolean;
+  readonly canDiscover: boolean;
   readonly onLogin: () => void;
   readonly onLogout: () => void;
   readonly onForceReauth: () => void;
   readonly onRefresh: () => void;
+  readonly onEdit: () => void;
   readonly onDelete: () => void;
   readonly onToggleServer: (enabled: boolean) => void;
 }): ReactNode {
@@ -893,16 +1409,30 @@ function ServerRowActions(props: {
           <LogOut className="size-3.5" />
         </Button>
       ) : null}
-      <Button
-        type="button"
-        size="icon-sm"
-        variant="ghost"
-        disabled={props.pending}
-        onClick={props.onRefresh}
-        aria-label={`Refresh ${props.serverName}`}
-      >
-        <RefreshCw className="size-3.5" />
-      </Button>
+      {props.canDiscover ? (
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          disabled={props.pending}
+          onClick={props.onRefresh}
+          aria-label={`Refresh ${props.serverName}`}
+        >
+          <RefreshCw className="size-3.5" />
+        </Button>
+      ) : null}
+      {props.canUpdate ? (
+        <Button
+          type="button"
+          size="icon-sm"
+          variant="ghost"
+          disabled={props.pending}
+          onClick={props.onEdit}
+          aria-label={`Edit ${props.serverName}`}
+        >
+          <Pencil className="size-3.5" />
+        </Button>
+      ) : null}
       {props.canRemove ? (
         <Button
           type="button"
@@ -1040,7 +1570,7 @@ function ServerToolsPanel(props: {
 function ToolsUnavailableState(props: {
   readonly server: ProviderMcpServer;
   readonly onLogin: (() => void) | null;
-  readonly onRefresh: () => void;
+  readonly onRefresh: (() => void) | null;
   readonly pending: boolean;
 }): ReactNode {
   const { server, onLogin, onRefresh, pending } = props;
@@ -1064,6 +1594,10 @@ function ToolsUnavailableState(props: {
     message = "Enable this server to discover tools.";
   }
 
+  const showRetry =
+    onRefresh !== null &&
+    (server.status === "error" || server.status === "disconnected");
+
   return (
     <div className="flex flex-col items-start gap-2 py-2">
       <p className="text-ui-xs text-muted-foreground">{message}</p>
@@ -1079,7 +1613,7 @@ function ToolsUnavailableState(props: {
             Sign in
           </Button>
         ) : null}
-        {server.status === "error" || server.status === "disconnected" ? (
+        {showRetry ? (
           <Button
             type="button"
             size="sm"
@@ -1095,7 +1629,24 @@ function ToolsUnavailableState(props: {
   );
 }
 
+function denySourceLabel(source: string): string {
+  if (source === "user") return "user settings";
+  if (source === "shared") return "shared project settings";
+  if (source === "local") return "local project settings";
+  return source;
+}
+
+function toolDenySourceSummary(tool: ProviderMcpTool): string | null {
+  const sources = tool.denySources ?? [];
+  if (sources.length === 0) return null;
+  return sources.map(denySourceLabel).join(", ");
+}
+
 function toolAriaLabel(tool: ProviderMcpTool, readOnly: boolean): string {
+  const denySummary = toolDenySourceSummary(tool);
+  if (readOnly && denySummary !== null) {
+    return `${tool.name} (disabled by ${denySummary})`;
+  }
   if (readOnly) return tool.name;
   if (tool.enabled) return `Disable tool ${tool.name}`;
   return `Enable tool ${tool.name}`;
@@ -1108,12 +1659,14 @@ function ToolChip(props: {
   readonly onToggle: (enabled: boolean) => void;
 }): ReactNode {
   const { tool, readOnly, disabled, onToggle } = props;
+  const denySummary = toolDenySourceSummary(tool);
+  const chipDisabled = disabled || readOnly;
   const chip = (
     <button
       type="button"
-      disabled={disabled || readOnly}
+      aria-disabled={chipDisabled}
       onClick={() => {
-        if (readOnly) return;
+        if (chipDisabled) return;
         onToggle(!tool.enabled);
       }}
       className={cn(
@@ -1127,13 +1680,20 @@ function ToolChip(props: {
       aria-pressed={tool.enabled}
       aria-label={toolAriaLabel(tool, readOnly)}
     >
-      {tool.name}
+      <span className="truncate">{tool.name}</span>
+      {denySummary !== null ? (
+        <span className="mt-0.5 block truncate text-[0.65rem] font-normal text-muted-foreground no-underline">
+          {denySummary}
+        </span>
+      ) : null}
     </button>
   );
 
   return (
     <HoverCard openDelay={200} closeDelay={100}>
-      <HoverCardTrigger asChild>{chip}</HoverCardTrigger>
+      <HoverCardTrigger asChild>
+        <span className="block w-full">{chip}</span>
+      </HoverCardTrigger>
       <HoverCardContent
         align="start"
         className="w-[min(90vw,20rem)] max-h-[min(50vh,18rem)] overflow-auto p-3"
@@ -1141,6 +1701,14 @@ function ToolChip(props: {
         <div className="text-ui-sm font-medium text-foreground">
           {tool.name}
         </div>
+        {denySummary !== null ? (
+          <p className="mt-1 text-ui-xs text-muted-foreground">
+            Disabled by {denySummary}
+            {readOnly && denySummary !== "local project settings"
+              ? " (locked — clear the deny in that source to re-enable)"
+              : null}
+          </p>
+        ) : null}
         {tool.description !== null && tool.description.length > 0 ? (
           <p className="mt-1 text-ui-xs text-muted-foreground">
             {tool.description}
@@ -1219,8 +1787,9 @@ function statusDotClass(
   status: ProviderMcpServerStatus,
   pending: boolean,
 ): string {
-  if (pending || status === "connecting") return "animate-pulse bg-amber-500";
-  if (status === "connected") return "bg-emerald-500";
+  if (pending || status === "connecting")
+    return "animate-pulse bg-amber-500 dark:bg-amber-400";
+  if (status === "connected") return "bg-emerald-500 dark:bg-emerald-400";
   if (status === "needs_auth" || status === "error") return "bg-destructive";
   return "bg-muted-foreground/50";
 }
