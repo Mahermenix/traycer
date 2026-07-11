@@ -248,7 +248,7 @@ describe("ProviderCliState.profiles[] downgrade to v1.0", () => {
   });
 });
 
-describe("providers.list v3.0 -> v2.0 downgrade strips profiles[]", () => {
+describe("providers.list latest -> v2.0 downgrade strips profiles[]", () => {
   const stateWithProfile = providerCliStateSchema.parse({
     ...providerState("claude-code"),
     profiles: [
@@ -287,6 +287,10 @@ describe("providers.list v3.0 -> v2.0 downgrade strips profiles[]", () => {
   });
 
   it("downgradeProviderCliStateListToV20 never leaks profile identity to a v2.0 caller", () => {
+    // Latest major carries profiles[]; the path from latest → v2.0 must strip
+    // them. providers.list's latest is major 3 (Devin/Pi shipped as v3.2, a
+    // minor - not a new major, since v3.1's live schema already made the
+    // provider-id set additive/non-breaking).
     const downgraded = downgradeResponseAcrossMajors(
       hostRpcRegistry["providers.list"],
       3,

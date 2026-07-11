@@ -15,6 +15,7 @@ export const providerIdSchema = z.enum([
   "kilocode",
   "openrouter",
   "amp",
+  "devin",
 ]);
 export type ProviderId = z.infer<typeof providerIdSchema>;
 
@@ -36,9 +37,8 @@ export type ProviderIdV10 = z.infer<typeof providerIdSchemaV10>;
 /**
  * Frozen provider id set as shipped in protocol v2.0 (before Amp). Used only
  * by the frozen v2.0 `providers.list` response so an already-shipped v2.0
- * client never receives the Amp provider; the v3.0 line adds it with a v3→v2
- * (and v3→v1) downgrade bridge. Do not add new providers here - extend the
- * latest `providerIdSchema` and use the existing v3 bridge instead.
+ * client never receives the Amp provider. Do not add new providers here -
+ * extend the latest `providerIdSchema` and use the existing version bridges.
  */
 export const providerIdSchemaV20 = z.enum([
   "claude-code",

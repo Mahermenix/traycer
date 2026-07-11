@@ -852,10 +852,16 @@ describe("B1: mutation@2.0 is amp-inclusive (host-v1.1.5 oracle)", () => {
     expect(JSON.parse(JSON.stringify(fixtures))).toEqual(
       JSON.parse(JSON.stringify(regenerated)),
     );
-    // Cross-check live protocol enums still match the tag-derived sets.
-    expect([...fixtures.mutationProviderIds]).toEqual([
-      ...providerIdSchema.options,
-    ]);
+    // Cross-check: every tag-derived mutation provider id remains valid in
+    // the live schema. The live enum is allowed to grow beyond the tag's
+    // snapshot (e.g. Devin/Pi post-date host-v1.1.5) since
+    // `providerCliStateSchemaMutationV20` deliberately tracks it - it must
+    // never shrink or rename what the tag already proved accepted.
+    for (const providerId of fixtures.mutationProviderIds) {
+      expect(providerIdSchema.options).toContain(providerId);
+    }
+    // list@2.0 is frozen, so its tag-derived set must equal the frozen enum
+    // exactly - unlike the mutation set above, it must never grow.
     expect([...fixtures.listV20ProviderIds]).toEqual([
       ...providerIdSchemaV20.options,
     ]);
@@ -923,10 +929,13 @@ describe("B1: mutation@2.0 is amp-inclusive (host-v1.1.5 oracle)", () => {
   });
 
   it("amp-accept matrix: every tag-derived provider × all ten @2.0 responses", () => {
-    expect(fixtures.mutationProviderIds).toHaveLength(
-      providerIdSchema.options.length,
-    );
+    // The tag-derived set is a snapshot of what host-v1.1.5 shipped, so it
+    // may be a strict subset of the live enum (which has since grown, e.g.
+    // Devin/Pi) - it must never be empty or contain an id the live schema
+    // doesn't recognize.
+    expect(fixtures.mutationProviderIds.length).toBeGreaterThan(0);
     for (const providerId of fixtures.mutationProviderIds) {
+      expect(providerIdSchema.options).toContain(providerId);
       const state = providerCliStateSchemaMutationV20.parse(
         baseState(providerId),
       );
