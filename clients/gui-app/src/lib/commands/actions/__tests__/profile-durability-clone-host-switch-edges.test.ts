@@ -111,8 +111,7 @@ function claudeState(profiles: ProviderProfile[]): ProviderCliState {
 function buildClient(
   hostId: string,
   providersListHandler:
-    | (() => { providers: ProviderCliState[]; native: null })
-    | null,
+    (() => { providers: ProviderCliState[]; native: null }) | null,
 ): HostClient<HostRpcRegistry> {
   const client = new HostClient<HostRpcRegistry>({
     registry: hostRpcRegistry,
