@@ -887,6 +887,7 @@ export const providersAwaitLoginUpgradeV1ToV2 = defineUpgradePath<
       response.state === null
         ? null
         : upgradeProviderStateFromV10(response.state),
+    existingProfileId: null,
   }),
 });
 
