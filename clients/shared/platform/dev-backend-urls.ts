@@ -9,9 +9,11 @@
  * hostile or stray runtime environment cannot repoint a shipped build.
  * Within dev builds the value is restricted to either:
  *   - a loopback http origin (local multi-run stacks), or
- *   - an origin listed in `TRAYCER_DEV_ALLOWED_BACKEND_ORIGINS` (JSON array
- *     of origin strings), which the internal orchestrator sets for
+ *   - an origin listed in `TRAYCER_DEV_ALLOWED_BACKEND_ORIGINS` (comma-
+ *     separated https origins), which the internal orchestrator sets for
  *     `--use-staging-backend` without hardcoding remote hosts in OSS.
+ * Comma-separated (not JSON) so Windows cmd `set "K=V"` env wiring cannot
+ * strip nested quotes and corrupt the value.
  *
  * Kept free of `electron`/`node:*` imports so preload bundles can pull it
  * in via `config.ts` without importing anything main-process-owned.
@@ -19,7 +21,7 @@
 
 export const DEV_AUTHN_BASE_URL_ENV = "TRAYCER_DEV_AUTHN_BASE_URL";
 export const DEV_CLOUD_UI_BASE_URL_ENV = "TRAYCER_DEV_CLOUD_UI_BASE_URL";
-/** JSON array of https origins the orchestrator may inject (dev builds only). */
+/** Comma-separated https origins the orchestrator may inject (dev only). */
 export const DEV_ALLOWED_BACKEND_ORIGINS_ENV =
   "TRAYCER_DEV_ALLOWED_BACKEND_ORIGINS";
 
@@ -28,8 +30,8 @@ const ALLOWED_DEV_BACKEND_HOSTS: ReadonlySet<string> = new Set([
   "127.0.0.1",
 ]);
 
-// Parse the orchestrator-supplied allowlist once per lookup. Empty / unset
-// means only loopback is permitted - the OSS default for a plain checkout.
+// Parse the orchestrator-supplied allowlist. Empty / unset means only
+// loopback is permitted - the OSS default for a plain checkout.
 export function allowedDevBackendOriginsFromEnv(
   env: NodeJS.ProcessEnv,
 ): ReadonlySet<string> {
@@ -37,29 +39,20 @@ export function allowedDevBackendOriginsFromEnv(
   if (raw === undefined || raw.trim().length === 0) {
     return new Set();
   }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
+  const parts = raw
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  if (parts.length === 0) {
     throw new Error(
-      `${DEV_ALLOWED_BACKEND_ORIGINS_ENV} must be a JSON array of origin strings`,
-    );
-  }
-  if (!Array.isArray(parsed)) {
-    throw new Error(
-      `${DEV_ALLOWED_BACKEND_ORIGINS_ENV} must be a JSON array of origin strings`,
+      `${DEV_ALLOWED_BACKEND_ORIGINS_ENV} must be a comma-separated list of origin strings`,
     );
   }
   const origins = new Set<string>();
-  for (const entry of parsed) {
-    if (typeof entry !== "string" || entry.trim().length === 0) {
-      throw new Error(
-        `${DEV_ALLOWED_BACKEND_ORIGINS_ENV} must be a JSON array of origin strings`,
-      );
-    }
+  for (const entry of parts) {
     let url: URL;
     try {
-      url = new URL(entry.trim());
+      url = new URL(entry);
     } catch {
       throw new Error(
         `${DEV_ALLOWED_BACKEND_ORIGINS_ENV} entry must be a valid URL`,
@@ -112,8 +105,7 @@ export function devBackendUrlFromEnv(
     throw new Error(`${envVar} must be an origin URL`);
   }
 
-  // Orchestrator-supplied allowlist (e.g. internal staging) - no hostnames
-  // are hard-coded in this OSS module.
+  // Orchestrator-supplied allowlist - no hostnames are hard-coded here.
   if (
     url.protocol === "https:" &&
     allowedDevBackendOriginsFromEnv(env).has(url.origin)

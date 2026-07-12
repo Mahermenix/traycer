@@ -65,7 +65,7 @@ describe("dev-backend-urls", () => {
 
   it("accepts https origins listed in TRAYCER_DEV_ALLOWED_BACKEND_ORIGINS", () => {
     const env = {
-      [DEV_ALLOWED_BACKEND_ORIGINS_ENV]: JSON.stringify(ALLOWED_ORIGINS),
+      [DEV_ALLOWED_BACKEND_ORIGINS_ENV]: ALLOWED_ORIGINS.join(","),
       [DEV_AUTHN_BASE_URL_ENV]: "https://backend-a.example",
     };
     expect(
@@ -79,7 +79,7 @@ describe("dev-backend-urls", () => {
   it("rejects https origins that are not on the allowlist", () => {
     expect(() =>
       devBackendUrlFromEnv("dev", DEV_AUTHN_BASE_URL_ENV, BAKED, {
-        [DEV_ALLOWED_BACKEND_ORIGINS_ENV]: JSON.stringify(ALLOWED_ORIGINS),
+        [DEV_ALLOWED_BACKEND_ORIGINS_ENV]: ALLOWED_ORIGINS.join(","),
         [DEV_AUTHN_BASE_URL_ENV]: "https://not-allowed.example",
       }),
     ).toThrow(/ALLOWED_BACKEND_ORIGINS|loopback/);
