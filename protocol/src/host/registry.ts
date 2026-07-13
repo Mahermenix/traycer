@@ -93,6 +93,7 @@ import {
   hostGetRateLimitUsageUpgradeV11ToV12,
   hostGetRateLimitUsageUpgradeV12ToV20,
   hostGetRateLimitUsageDowngradeV2ToV1,
+  providersConsumeRateLimitResetCreditV10,
 } from "@traycer/protocol/host/rate-limit/contracts";
 import {
   epicBatchDeleteV10,
@@ -1711,7 +1712,7 @@ export const worktreeListBindingsForEpicUpgradeV10ToV11 = defineUpgradePath<
 // Note: git contract definitions are imported from git-contracts.ts above
 // and registered inline in hostRpcRegistry and hostStreamRpcRegistry below.
 
-const hostRpcRegistryDefinition = {
+const HOST_RPC_REGISTRY_DEFINITION = {
   "host.status": {
     1: {
       latestMinor: 0,
@@ -1764,6 +1765,19 @@ const hostRpcRegistryDefinition = {
         },
       },
       downgradePathsFromLatest: { 1: hostGetRateLimitUsageDowngradeV2ToV1 },
+    },
+  },
+  "providers.consumeRateLimitResetCredit": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: providersConsumeRateLimitResetCreditV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
     },
   },
   "host.notifications.list": {
@@ -3562,7 +3576,7 @@ const hostRpcRegistryDefinition = {
 
 export const hostRpcRegistry = defineFloorAwareVersionedRpcRegistry(
   RELEASED_FLOOR_METHOD_NAMES,
-  hostRpcRegistryDefinition,
+  HOST_RPC_REGISTRY_DEFINITION,
 );
 
 export type HostRpcRegistry = typeof hostRpcRegistry;
