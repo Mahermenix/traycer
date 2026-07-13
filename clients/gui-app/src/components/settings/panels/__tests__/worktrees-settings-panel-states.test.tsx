@@ -45,6 +45,7 @@ const state = vi.hoisted(() => ({
   enrichment: {
     enrichedByPath: new Map<string, WorktreeHostEntryV12>(),
     erroredPaths: new Set<string>(),
+    seededPaths: new Set<string>(),
     reportVisiblePaths: vi.fn(),
     enriching: false,
   },
@@ -149,6 +150,7 @@ beforeEach(() => {
   state.enrichment = {
     enrichedByPath: new Map(),
     erroredPaths: new Set(),
+    seededPaths: new Set(),
     reportVisiblePaths: vi.fn(),
     enriching: false,
   };
@@ -285,6 +287,7 @@ describe("WorktreesSettingsPanel host-scoped states", () => {
     state.enrichment = {
       enrichedByPath: new Map([["/wt/clean", cleanWorktree]]),
       erroredPaths: new Set(),
+      seededPaths: new Set(),
       reportVisiblePaths: vi.fn(),
       enriching: false,
     };
@@ -362,6 +365,7 @@ describe("WorktreesSettingsPanel host-scoped states", () => {
     state.enrichment = {
       enrichedByPath: new Map([["/wt/clean", cleanWorktree]]),
       erroredPaths: new Set(),
+      seededPaths: new Set(),
       reportVisiblePaths: vi.fn(),
       enriching: false,
     };

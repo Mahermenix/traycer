@@ -4,6 +4,7 @@ import {
   useCallback,
   useDeferredValue,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -51,10 +52,12 @@ import {
   classifyWorktree,
   classifyWorktreeTier,
   describeReviewReasons,
+  provenRemovable,
   type WorktreeTier,
 } from "@traycer-clients/shared/worktree/classify-worktree";
 import {
   buildTaskMergeRollups,
+  taskMergeRollupEqual,
   taskMergeRollupLabel,
   type TaskMergeRollup,
 } from "@/lib/worktree/task-merge-rollup";
@@ -634,6 +637,7 @@ function WorktreesBody(props: {
         worktrees={listing.worktrees}
         enrichedByPath={enrichment.enrichedByPath}
         erroredPaths={enrichment.erroredPaths}
+        seededPaths={enrichment.seededPaths}
         onVisiblePathsChange={enrichment.reportVisiblePaths}
         taskTitlesByEpicId={taskTitlesByEpicId}
         toolbarProps={toolbarProps}
@@ -806,6 +810,26 @@ function buildWorktreeFlatItems(
 // List renders many per-worktree states (loading / empty / error / per-row
 // actions); branches are independent, not reducible nesting.
 // eslint-disable-next-line complexity
+/**
+ * Identity-stable wrapper for callbacks passed to memoized rows: the returned
+ * function never changes identity, but always invokes the latest render's
+ * closure (kept fresh in a layout effect, so it is committed before any user
+ * event can fire). Without this, a handler whose dependencies churn on every
+ * enrichment pass busts every row's memo - a full-list re-render per probe.
+ * Not `useEffectEvent`: React documents those as not-for-props.
+ */
+function useStableRowCallback<Args extends readonly unknown[]>(
+  callback: (...args: Args) => void,
+): (...args: Args) => void {
+  const latestRef = useRef(callback);
+  useLayoutEffect(() => {
+    latestRef.current = callback;
+  });
+  return useCallback((...args: Args) => {
+    latestRef.current(...args);
+  }, []);
+}
+
 export function WorktreesList(props: {
   readonly openStreamTransport: (hostId: string) => DurableStreamTransport;
   readonly hostId: string;
@@ -824,6 +848,12 @@ export function WorktreesList(props: {
   // a pending one (kept out of tier filtering, base presentation), but its pill
   // reads a non-animated "Unknown" instead of an infinite "Checking…" spinner.
   readonly erroredPaths: ReadonlySet<string>;
+  // Paths whose overlay entry is the restored warm-open SEED (last run's data,
+  // not yet re-verified by this session's probes). Their tier pill renders
+  // normally, but delete surfaces treat them as still-checking: a seeded
+  // "Landed" may have gained commits since the snapshot was written, so no
+  // delete confirmation may trust it.
+  readonly seededPaths: ReadonlySet<string>;
   // Reports the worktree paths currently on screen (from the virtualizer) so the
   // owner can enrich just those. Called whenever the on-screen set changes; the
   // owner debounces + batches.
@@ -843,6 +873,7 @@ export function WorktreesList(props: {
     worktrees,
     enrichedByPath,
     erroredPaths,
+    seededPaths,
     onVisiblePathsChange,
     taskTitlesByEpicId,
     openStreamTransport,
@@ -874,6 +905,20 @@ export function WorktreesList(props: {
       return "pending";
     },
     [enrichedByPath, erroredPaths],
+  );
+  // DELETE surfaces read this variant instead: a snapshot-seeded row reads
+  // "pending" (its restored tier is last-run display data, not verified
+  // truth), so it can't unlock a delete confirmation, is excluded at
+  // confirm-time re-checks, and counts into the action bar's Checking notice
+  // - until this session's live probe replaces the seed. Display (the pill,
+  // tier filters) keeps using `enrichmentStateFor`, so warm-open tiers still
+  // paint instantly.
+  const deleteEnrichmentStateFor = useCallback(
+    (worktreePath: string): WorktreeEnrichmentState =>
+      seededPaths.has(worktreePath)
+        ? "pending"
+        : enrichmentStateFor(worktreePath),
+    [seededPaths, enrichmentStateFor],
   );
   // True-AND merge rollup per owning Task (epic), aggregated across every worktree
   // entry the epic owns (superproject branch + each entry's owned submodules). Same
@@ -1101,9 +1146,9 @@ export function WorktreesList(props: {
   const checkingSelectedCount = useMemo(
     () =>
       selectedTargets.filter(
-        (entry) => enrichmentStateFor(entry.worktreePath) === "pending",
+        (entry) => deleteEnrichmentStateFor(entry.worktreePath) === "pending",
       ).length,
-    [selectedTargets, enrichmentStateFor],
+    [selectedTargets, deleteEnrichmentStateFor],
   );
   // Freshest listing keyed by path, so a pending delete captured at dialog-open
   // is always re-resolved to its CURRENT entry (a background refresh may have
@@ -1134,7 +1179,7 @@ export function WorktreesList(props: {
       }
       const stillEligible =
         selectablePathSet.has(fresh.worktreePath) &&
-        enrichmentStateFor(fresh.worktreePath) !== "pending";
+        deleteEnrichmentStateFor(fresh.worktreePath) !== "pending";
       if (stillEligible) kept.push(fresh);
       else dropped.push(fresh);
     }
@@ -1143,28 +1188,14 @@ export function WorktreesList(props: {
     pendingDeleteTargets,
     selectablePathSet,
     worktreesByPath,
-    enrichmentStateFor,
+    deleteEnrichmentStateFor,
   ]);
-  const keptDeleteTargets = pendingResolution?.kept ?? null;
-  const singleDeleteTarget =
-    keptDeleteTargets !== null && keptDeleteTargets.length === 1
-      ? keptDeleteTargets[0]
-      : null;
-  const singleDialogCopy =
-    singleDeleteTarget === null
-      ? null
-      : singleWorktreeDeleteDialogCopy(
-          singleDeleteTarget,
-          enrichmentStateFor(singleDeleteTarget.worktreePath),
-        );
-  const bulkDeleteSummary =
-    keptDeleteTargets !== null && keptDeleteTargets.length > 1
-      ? summarizeBulkWorktreeDelete(
-          keptDeleteTargets,
-          visibleWorktrees,
-          erroredPaths,
-        )
-      : null;
+  const { singleDialog, bulkDeleteSummary } = deriveWorktreeDeleteDialogs(
+    pendingResolution,
+    deleteEnrichmentStateFor,
+    visibleWorktrees,
+    erroredPaths,
+  );
   // A non-null resolution that drops EVERY pending target (most commonly
   // because they all regressed to `Checking`) never renders a dialog -
   // `singleDialogCopy` and `bulkDeleteSummary` are both null for zero kept
@@ -1180,11 +1211,11 @@ export function WorktreesList(props: {
     toast.message(
       worktreeDropMessage(
         dropped,
-        (worktreePath) => enrichmentStateFor(worktreePath) === "pending",
+        (worktreePath) => deleteEnrichmentStateFor(worktreePath) === "pending",
       ),
     );
     setPendingDeleteTargets(null);
-  }, [pendingResolution, enrichmentStateFor]);
+  }, [pendingResolution, deleteEnrichmentStateFor]);
   const progressSummary = useMemo(
     () => summarizeWorktreeDeleteRuns(runs),
     [runs],
@@ -1202,13 +1233,15 @@ export function WorktreesList(props: {
     [hostId],
   );
 
-  const toggleSelection = useCallback(
-    (worktreePath: string) => {
-      if (!selectablePathSet.has(worktreePath)) return;
-      setSelectedPaths((prev) => withMemberToggled(prev, worktreePath));
-    },
-    [selectablePathSet],
-  );
+  // Row-prop handlers go through `useStableRowCallback`: their dependencies
+  // (`selectablePathSet`, the delete-gating readers) get fresh identities on
+  // every enrichment pass, and a churning handler prop would re-render EVERY
+  // memoized row for one row's data change. The wrapper pins the prop
+  // identity while always invoking the latest closure.
+  const toggleSelection = useStableRowCallback((worktreePath: string) => {
+    if (!selectablePathSet.has(worktreePath)) return;
+    setSelectedPaths((prev) => withMemberToggled(prev, worktreePath));
+  });
   // Standard global tri-state select-all: acts on the CURRENTLY-VISIBLE,
   // selectable rows (post-filter + post-search, across all repo groups). When
   // every visible selectable row is already selected it deselects them;
@@ -1258,18 +1291,17 @@ export function WorktreesList(props: {
       const deletableTargets = targets.filter(
         (entry) =>
           selectablePathSet.has(entry.worktreePath) &&
-          enrichmentStateFor(entry.worktreePath) !== "pending",
+          deleteEnrichmentStateFor(entry.worktreePath) !== "pending",
       );
       if (deletableTargets.length === 0) return;
       setPendingDeleteTargets(deletableTargets);
     },
-    [selectablePathSet, enrichmentStateFor],
+    [selectablePathSet, deleteEnrichmentStateFor],
   );
-  const requestDeleteTarget = useCallback(
+  const requestDeleteTarget = useStableRowCallback(
     (target: WorktreeHostEntryV12) => {
       requestDeleteTargets([target]);
     },
-    [requestDeleteTargets],
   );
   const requestDeleteSelectedTargets = useCallback(() => {
     requestDeleteTargets(selectedTargets);
@@ -1301,7 +1333,8 @@ export function WorktreesList(props: {
       toast.message(
         worktreeDropMessage(
           dropped,
-          (worktreePath) => enrichmentStateFor(worktreePath) === "pending",
+          (worktreePath) =>
+            deleteEnrichmentStateFor(worktreePath) === "pending",
         ),
       );
     }
@@ -1574,6 +1607,9 @@ export function WorktreesList(props: {
                             enrichment={enrichmentStateFor(
                               item.entry.worktreePath,
                             )}
+                            deleteEnrichment={deleteEnrichmentStateFor(
+                              item.entry.worktreePath,
+                            )}
                             taskTitlesByEpicId={taskTitlesByEpicId}
                             taskRollupByEpicId={taskRollupByEpicId}
                             deleteStatus={
@@ -1616,14 +1652,14 @@ export function WorktreesList(props: {
         </div>
 
         <ConfirmDestructiveDialog
-          open={singleDialogCopy !== null}
+          open={singleDialog.open}
           onOpenChange={(open) => {
             if (!open) setPendingDeleteTargets(null);
           }}
-          title={singleDialogCopy?.title ?? ""}
-          description={singleDialogCopy?.description ?? ""}
+          title={singleDialog.title}
+          description={singleDialog.description}
           cascadeSummary={null}
-          actionLabel={singleDialogCopy?.actionLabel ?? "Delete"}
+          actionLabel={singleDialog.actionLabel}
           isPending={false}
           onConfirm={handleConfirm}
         />
@@ -2012,12 +2048,16 @@ function worktreeDeleteDisabledReason(
   return null;
 }
 
-const WorktreeRow = memo(function WorktreeRow(props: {
+interface WorktreeRowProps {
   readonly entry: WorktreeHostEntryV12;
   // This row's activity-enrichment state, driving the tier pill: `pending` (still
   // in flight → "Checking…"), `unknown` (settled to error → non-animated fallback),
   // or `ready` (enriched → real tier). Base fields paint regardless.
   readonly enrichment: WorktreeEnrichmentState;
+  // The DELETE-scoped variant: identical except a snapshot-seeded row reads
+  // "pending" until its live probe lands, so the delete affordance stays
+  // disabled while the pill still shows the restored tier.
+  readonly deleteEnrichment: WorktreeEnrichmentState;
   readonly taskTitlesByEpicId: ReadonlyMap<string, string>;
   readonly taskRollupByEpicId: ReadonlyMap<string, TaskMergeRollup>;
   readonly deleteStatus: WorktreeRowDeleteStatus | null;
@@ -2026,10 +2066,55 @@ const WorktreeRow = memo(function WorktreeRow(props: {
   readonly onToggleSelection: (worktreePath: string) => void;
   readonly onManageScripts: (target: WorktreeHostEntryV12) => void;
   readonly onDelete: (target: WorktreeHostEntryV12) => void;
-}): ReactNode {
+}
+
+/**
+ * Custom memo comparator: the task title/rollup maps are rebuilt wholesale on
+ * every listing/enrichment pass, so comparing them by identity would re-render
+ * EVERY row whenever ANY row's data changed (during a convergence pass that is
+ * a full-list re-render per probe - the panel's 100-450ms main-thread blocks).
+ * A row only reads its own Tasks' slices of those maps, so compare exactly
+ * those by value; everything else compares by identity/value as usual - both
+ * enrichment states included, so a seeded row's delete affordance re-enables
+ * the moment its live probe lands.
+ */
+function worktreeRowPropsEqual(
+  prev: WorktreeRowProps,
+  next: WorktreeRowProps,
+): boolean {
+  if (
+    prev.entry !== next.entry ||
+    prev.enrichment !== next.enrichment ||
+    prev.deleteEnrichment !== next.deleteEnrichment ||
+    prev.deleteStatus !== next.deleteStatus ||
+    prev.selected !== next.selected ||
+    prev.canSelect !== next.canSelect ||
+    prev.onToggleSelection !== next.onToggleSelection ||
+    prev.onManageScripts !== next.onManageScripts ||
+    prev.onDelete !== next.onDelete
+  ) {
+    return false;
+  }
+  // `prev.entry === next.entry` (checked above), so both sides read the same
+  // owner epic ids - the only keys this row looks up in either map.
+  return next.entry.owners.every(
+    ({ epicId }) =>
+      prev.taskTitlesByEpicId.get(epicId) ===
+        next.taskTitlesByEpicId.get(epicId) &&
+      taskMergeRollupEqual(
+        prev.taskRollupByEpicId.get(epicId),
+        next.taskRollupByEpicId.get(epicId),
+      ),
+  );
+}
+
+const WorktreeRow = memo(function WorktreeRow(
+  props: WorktreeRowProps,
+): ReactNode {
   const {
     entry,
     enrichment,
+    deleteEnrichment,
     taskTitlesByEpicId,
     taskRollupByEpicId,
     deleteStatus,
@@ -2131,7 +2216,10 @@ const WorktreeRow = memo(function WorktreeRow(props: {
       ) : null}
       {!deleting ? (
         <WorktreeRowActions
-          deleteDisabledReason={worktreeDeleteDisabledReason(entry, enrichment)}
+          deleteDisabledReason={worktreeDeleteDisabledReason(
+            entry,
+            deleteEnrichment,
+          )}
           onCopyPath={copyPath}
           onManageScripts={manageScripts}
           onDelete={deleteWorktree}
@@ -2142,7 +2230,7 @@ const WorktreeRow = memo(function WorktreeRow(props: {
       ) : null}
     </div>
   );
-});
+}, worktreeRowPropsEqual);
 
 /**
  * Evidence-tier pill. Leads every row with a TEXT label (never color-only, for
@@ -3101,7 +3189,8 @@ function deleteDialogCopy(entry: WorktreeHostEntryV12): {
     status !== null &&
     status.ahead !== null &&
     status.ahead > 0 &&
-    !status.mergedIntoDefault
+    !status.mergedIntoDefault &&
+    !provenRemovable(entry)
   ) {
     const count = status.ahead;
     const plural = count === 1 ? "" : "s";
@@ -3115,7 +3204,12 @@ function deleteDialogCopy(entry: WorktreeHostEntryV12): {
   // commit count is unknown). Removing the worktree keeps the branch ref — the
   // commits survive on the branch — but they were never pushed anywhere, so
   // this machine is the only copy. Honest, not overstated as unrecoverable.
-  if (status !== null && status.ahead === null && !status.mergedIntoDefault) {
+  if (
+    status !== null &&
+    status.ahead === null &&
+    !status.mergedIntoDefault &&
+    !provenRemovable(entry)
+  ) {
     return {
       title: "Delete worktree with unpushed local commits?",
       description: `${branch} has local-only commits not on the default branch and was never pushed. Removing the worktree keeps the branch ref, so the commits survive on the branch — but this machine is their only copy. Traycer runs the repo's teardown script, then removes ${entry.worktreePath}.`,
@@ -3157,6 +3251,52 @@ function unknownRiskDeleteDialogCopy(entry: WorktreeHostEntryV12): {
     title: "Delete worktree with unknown status?",
     description: `${branch}'s branch and activity status could not be verified, so Traycer cannot confirm this worktree is safe to remove or free of unpushed work. Traycer runs the repo's teardown script, then removes ${entry.worktreePath}.`,
     actionLabel: "Delete anyway",
+  };
+}
+
+/**
+ * The delete-confirmation dialogs derived from a pending-delete resolution:
+ * exactly one kept target opens the single confirmation (its copy resolved
+ * against the DELETE-scoped enrichment state), several open the bulk one, and
+ * zero opens neither (the stale-intent effect clears the pending state). The
+ * single dialog's fields are pre-defaulted so the render site reads them
+ * unconditionally.
+ */
+function deriveWorktreeDeleteDialogs(
+  resolution: {
+    readonly kept: readonly WorktreeHostEntryV12[];
+    readonly dropped: readonly WorktreeHostEntryV12[];
+  } | null,
+  deleteEnrichmentStateFor: (worktreePath: string) => WorktreeEnrichmentState,
+  visibleWorktrees: readonly WorktreeHostEntryV12[],
+  erroredPaths: ReadonlySet<string>,
+): {
+  readonly singleDialog: {
+    readonly open: boolean;
+    readonly title: string;
+    readonly description: string;
+    readonly actionLabel: string;
+  };
+  readonly bulkDeleteSummary: WorktreeBulkDeleteSummary | null;
+} {
+  const kept = resolution === null ? null : resolution.kept;
+  const singleTarget = kept !== null && kept.length === 1 ? kept[0] : null;
+  const singleCopy =
+    singleTarget === null
+      ? null
+      : singleWorktreeDeleteDialogCopy(
+          singleTarget,
+          deleteEnrichmentStateFor(singleTarget.worktreePath),
+        );
+  return {
+    singleDialog:
+      singleCopy === null
+        ? { open: false, title: "", description: "", actionLabel: "Delete" }
+        : { open: true, ...singleCopy },
+    bulkDeleteSummary:
+      kept !== null && kept.length > 1
+        ? summarizeBulkWorktreeDelete(kept, visibleWorktrees, erroredPaths)
+        : null,
   };
 }
 
