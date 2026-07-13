@@ -36,6 +36,11 @@ import { releasedMethodNames } from "./__fixtures__/released-method-names";
  */
 describe("released method-name set (host-v1.0.0) is frozen", () => {
   it("keeps every released method in the registry", () => {
+    // Post-#272 the registry may grow ADDITIVE optional methods beyond the
+    // floor; those ride the optional manifest channel and are not
+    // handshake-fatal. The frozen floor itself must remain fully present, and
+    // `RELEASED_FLOOR_METHOD_NAMES` (the canonical floor export other modules
+    // key off of) must stay in sync with this guarded fixture.
     expect([...RELEASED_FLOOR_METHOD_NAMES].sort()).toEqual(
       [...releasedMethodNames].sort(),
     );

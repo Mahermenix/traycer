@@ -96,9 +96,13 @@ import { useAuthStore } from "@/stores/auth/auth-store";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { useHostClient, useHostBinding } from "@/lib/host";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
-import { useEpicCreateChat } from "@/hooks/epic/use-epic-chat-mutations";
+import {
+  useEpicCreateChat,
+  useEpicUpdateChatRunSettings,
+} from "@/hooks/epic/use-epic-chat-mutations";
 import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { cloneChatOnHostSwitch } from "@/lib/commands/actions/clone-chat-on-host-switch";
+import { enqueuePersistChatRunSettings } from "@/lib/chats/chat-run-settings-write-queue";
 import { ChatDeadTileBanner } from "./dead-tile-banner";
 import { useHostQuery } from "@/hooks/host/use-host-query";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
@@ -1406,6 +1410,26 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
       sendImplementPlanMessage,
     ],
   );
+  // Durable settings sync: mirror composer selection changes onto the host's
+  // per-chat record so headless turns (incoming A2A messages) run on the
+  // freshly picked profile. Best-effort - an old host rejects the optional
+  // method with E_HOST_UNSUPPORTED and behavior degrades to persist-on-send.
+  // Routed through the module-scoped `enqueuePersistChatRunSettings` (not a
+  // local chain) so a task-wide switch's sibling writes
+  // (`useTaskProfileRateLimitSwitch`) serialize against THIS chat's own
+  // composer writes too, not just against each other.
+  const updateChatRunSettings = useEpicUpdateChatRunSettings();
+  const updateChatRunSettingsMutateAsync = updateChatRunSettings.mutateAsync;
+  const persistChatRunSettings = useCallback(
+    (settings: ChatRunSettings): void => {
+      enqueuePersistChatRunSettings(updateChatRunSettingsMutateAsync, {
+        epicId: currentEpicId,
+        chatId: node.id,
+        settings,
+      });
+    },
+    [currentEpicId, node.id, updateChatRunSettingsMutateAsync],
+  );
   const {
     editQueuedItem,
     cancelQueuedItem,
@@ -1427,6 +1451,7 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
     activeEditingQueueItemId,
     dispatchUi,
     setEpicRunSettings,
+    persistChatRunSettings,
   });
   const handleForkOpenChange = useCallback((open: boolean): void => {
     if (!open) setForkTarget(null);

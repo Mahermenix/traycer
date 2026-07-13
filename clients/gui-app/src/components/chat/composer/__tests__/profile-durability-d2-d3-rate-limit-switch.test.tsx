@@ -195,6 +195,8 @@ function ComposerProfileSwitchHarness() {
           current={rateLimitPrompt.current}
           alternatives={rateLimitPrompt.alternatives}
           onSwitchProfile={onSwitchProfile}
+          affectedChatCount={1}
+          onSwitchProfileForTask={() => undefined}
           onDismiss={rateLimitPrompt.dismiss}
         />
       ) : null}
@@ -266,6 +268,8 @@ function ComposerBannerPrecedenceHarness({
           current={rateLimitPrompt.current}
           alternatives={rateLimitPrompt.alternatives}
           onSwitchProfile={setProfileId}
+          affectedChatCount={1}
+          onSwitchProfileForTask={() => undefined}
           onDismiss={rateLimitPrompt.dismiss}
         />
       ) : null}
