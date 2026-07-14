@@ -3,6 +3,7 @@ import {
   chatSchema,
   deletedEpicArtifactSchema,
   epicArtifactSchema,
+  roleClaimsSchema,
   tuiAgentSchema,
 } from "@traycer/protocol/persistence/epic/schemas";
 
@@ -39,4 +40,9 @@ export const epicSchema = z.object({
   // workspaceFolders); transcript bytes stay in the host-owned PTY.
   // Default `{}` so existing epics without the field still parse.
   tuiAgents: z.record(z.string(), tuiAgentSchema).default({}),
+  // Agent role claims, keyed by claimId. Agents self-designate a role over a
+  // Task-local scope so peers can avoid duplicating responsibility; unrelated
+  // to the collaborator ACL that `epic.batchUpdateRoles` manages.
+  // Default `{}` so existing epics without the field still parse.
+  roleClaims: roleClaimsSchema.default({}),
 });

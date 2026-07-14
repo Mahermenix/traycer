@@ -36,7 +36,13 @@ import {
 import {
   agentInboxReadV10,
   agentInboxSubscribeV10,
+  agentInboxSubscribeV11,
 } from "@traycer/protocol/host/agent/inbox";
+import {
+  agentRolesClaimV10,
+  agentRolesListV10,
+  agentRolesRelinquishV10,
+} from "@traycer/protocol/host/agent/roles";
 import {
   agentGuiGetPlanV10,
   agentGuiListCommandsV10,
@@ -2220,6 +2226,50 @@ export const hostRpcRegistry = defineFloorAwareVersionedRpcRegistry(
       downgradePathsFromLatest: {},
     },
   },
+  // Agent role claims. Non-floor, so each declares its missing-peer behavior:
+  // an old host simply does not advertise them and the caller gets
+  // E_HOST_UNSUPPORTED for these calls only. Registered here in the SAME change
+  // that adds the resolvers - advertising a method the host cannot dispatch is
+  // exactly how `agent.tui.listHarnesses` shipped broken.
+  "agent.roles.claim": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: agentRolesClaimV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  "agent.roles.list": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: agentRolesListV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  "agent.roles.relinquish": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: agentRolesRelinquishV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
   "agent.inbox.read": {
     1: {
       latestMinor: 0,
@@ -3615,10 +3665,17 @@ export const hostStreamRpcRegistry = defineVersionedStreamRpcRegistry({
   },
   "agent.inbox.subscribe": {
     1: {
-      latestMinor: 0,
+      // @1.1 adds the additive `role-awareness` frame. @1.0 stays installed and
+      // FROZEN: a monitor that negotiated it never receives the new kind, and
+      // the resolver gates on the negotiated version rather than assuming the
+      // peer will tolerate an unknown frame.
+      latestMinor: 1,
       versions: {
         0: {
           contract: agentInboxSubscribeV10,
+        },
+        1: {
+          contract: agentInboxSubscribeV11,
         },
       },
     },
