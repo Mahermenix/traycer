@@ -1,8 +1,11 @@
 import type {
   ClaimAgentRoleResponse,
+  ClaimAgentRoleResponseV11,
   ListAgentRolesResponse,
   RelinquishAgentRoleResponse,
+  RelinquishAgentRoleResponseV11,
   RoleAwarenessDelivery,
+  RoleAwarenessDeliveryV11,
   RoleClaimWire,
 } from "@traycer/protocol/host/agent/roles";
 
@@ -91,4 +94,71 @@ function formatAwarenessSummary(delivery: RoleAwarenessDelivery): string {
     parts.push("failed 0");
   }
   return `Awareness: ${parts.join(" · ")}. The registry update is durable regardless.`;
+}
+
+// ─── v1.1 vocabulary (GUI tools + CLI share these formatters verbatim) ───
+//
+// `deferredToPrompt` is neither delivery nor failure, so it gets its own
+// word - "prompt-pending" - rather than being folded into "delivered" (no
+// event was queued, no model read anything) or "failed" (nothing went
+// wrong; the next fresh prompt for that agent will carry the update). Any
+// surface rendering a v1.1 awareness report must use this word for the
+// category, never "delivered".
+const PROMPT_PENDING_LABEL = "prompt-pending";
+
+/**
+ * Same shape as {@link formatAwarenessSummary}, extended with the
+ * prompt-pending bucket. Kept as a distinct function - rather than an
+ * overload - so the v1.0 formatter's output stays byte-identical to the
+ * released surface for any caller still on that formatter.
+ */
+function formatAwarenessSummaryV11(delivery: RoleAwarenessDeliveryV11): string {
+  const parts = [
+    `delivered ${delivery.deliveredTo.length}`,
+    `${PROMPT_PENDING_LABEL} ${delivery.deferredToPrompt.length}`,
+    `unreachable ${delivery.unreachable.length}`,
+  ];
+  if (delivery.failed.length > 0) {
+    const reasons = delivery.failed
+      .map((entry) => `${entry.agentId}: ${entry.reason}`)
+      .join(", ");
+    parts.push(`failed ${delivery.failed.length} (${reasons})`);
+  } else {
+    parts.push("failed 0");
+  }
+  return `Awareness: ${parts.join(" · ")}. The registry update is durable regardless.`;
+}
+
+export function formatClaimRoleResponseV11(
+  response: ClaimAgentRoleResponseV11,
+): string {
+  const lines = [
+    response.created
+      ? `Claimed role ${claimLabel(response.claim)}.`
+      : `You already hold this role - existing claim returned unchanged (safe retry).`,
+    `claimId: ${response.claim.claimId}`,
+  ];
+  if (response.overlapping.length > 0) {
+    lines.push(
+      `Overlap: ${response.overlapping
+        .map((claim) => `${claimLabel(claim)} held by agent ${claim.agentId}`)
+        .join(
+          "; ",
+        )}. Overlaps are allowed, but check whether this duplication is intentional.`,
+    );
+  }
+  lines.push(formatAwarenessSummaryV11(response.awareness));
+  return lines.join("\n");
+}
+
+export function formatRelinquishRoleResponseV11(
+  response: RelinquishAgentRoleResponseV11,
+): string {
+  if (!response.released) {
+    return "No matching claim to relinquish - it may already be released.";
+  }
+  return [
+    "Role relinquished.",
+    formatAwarenessSummaryV11(response.awareness),
+  ].join("\n");
 }

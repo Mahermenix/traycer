@@ -28,10 +28,14 @@ import {
 import { RELEASED_FLOOR_METHOD_NAMES } from "@traycer/protocol/host/released-floor";
 import {
   agentRolesClaimV10,
+  agentRolesClaimV11,
   agentRolesListV10,
   agentRolesRelinquishV10,
+  agentRolesRelinquishV11,
   claimAgentRoleRequestSchema,
+  claimAgentRoleResponseSchema,
   relinquishAgentRoleRequestSchema,
+  relinquishAgentRoleResponseSchema,
 } from "@traycer/protocol/host/agent/roles";
 
 const ROLE_METHODS = [
@@ -80,6 +84,59 @@ describe("agent.roles.* contracts", () => {
       expect(RELEASED_FLOOR_METHOD_NAMES).not.toContain(method);
       expect(hostRpcRegistry[method].degrade).toEqual({ kind: "unsupported" });
     }
+  });
+});
+
+describe("agent.roles.claim / agent.roles.relinquish v1.1 (advertised with host projection)", () => {
+  it("declares v1.1 contracts bound to the same method names and major version", () => {
+    expect(agentRolesClaimV11.method).toBe("agent.roles.claim");
+    expect(agentRolesRelinquishV11.method).toBe("agent.roles.relinquish");
+
+    for (const contract of [agentRolesClaimV11, agentRolesRelinquishV11]) {
+      expect(contract.schemaVersion).toEqual({ major: 1, minor: 1 });
+    }
+  });
+
+  it("reuses the EXACT v1.0 request schemas - v1.1 only changes what the response can say", () => {
+    expect(agentRolesClaimV11.requestSchema).toBe(claimAgentRoleRequestSchema);
+    expect(agentRolesRelinquishV11.requestSchema).toBe(
+      relinquishAgentRoleRequestSchema,
+    );
+  });
+
+  it("is installed as latestMinor 1 alongside the frozen v1.0 slot", () => {
+    // Advertising minor 1 lands in the same change as the host resolvers that
+    // produce `deferredToPrompt` and the v1.0 negotiated fold.
+    for (const method of [
+      "agent.roles.claim",
+      "agent.roles.relinquish",
+    ] as const) {
+      const line = hostRpcRegistry[method][1];
+      expect(line.latestMinor).toBe(1);
+      expect(Object.keys(line.versions).sort()).toEqual(["0", "1"]);
+      expect(line.versions[0].contract.schemaVersion).toEqual({
+        major: 1,
+        minor: 0,
+      });
+      expect(line.versions[1].contract.schemaVersion).toEqual({
+        major: 1,
+        minor: 1,
+      });
+    }
+  });
+
+  it("keeps the released v1.0 response schemas object-identical (no preprocess wrappers)", () => {
+    expect(agentRolesClaimV10.responseSchema).toBe(
+      claimAgentRoleResponseSchema,
+    );
+    expect(agentRolesRelinquishV10.responseSchema).toBe(
+      relinquishAgentRoleResponseSchema,
+    );
+  });
+
+  it("agent.roles.list has no v1.1 - listing is unaffected by prompt-cutover awareness", () => {
+    expect(agentRolesListV10.schemaVersion).toEqual({ major: 1, minor: 0 });
+    expect(hostRpcRegistry["agent.roles.list"][1].latestMinor).toBe(0);
   });
 });
 

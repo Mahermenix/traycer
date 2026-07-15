@@ -14,14 +14,14 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  formatClaimRoleResponse,
+  formatClaimRoleResponseV11,
   formatListRolesResponse,
-  formatRelinquishRoleResponse,
+  formatRelinquishRoleResponseV11,
 } from "@traycer/protocol/agent/agent-roles-format";
 import type {
-  ClaimAgentRoleResponse,
+  ClaimAgentRoleResponseV11,
   ListAgentRolesResponse,
-  RelinquishAgentRoleResponse,
+  RelinquishAgentRoleResponseV11,
 } from "@traycer/protocol/host/agent/roles";
 import {
   buildAgentRoleClaimCommand,
@@ -81,7 +81,7 @@ const callHostRpcMock = vi.mocked(callHostRpc);
 
 const CLAIM_ID = "11111111-1111-4111-8111-111111111111";
 
-const CLAIM_RESPONSE: ClaimAgentRoleResponse = {
+const CLAIM_RESPONSE: ClaimAgentRoleResponseV11 = {
   claim: {
     claimId: CLAIM_ID,
     agentId: "agent-1",
@@ -91,16 +91,26 @@ const CLAIM_RESPONSE: ClaimAgentRoleResponse = {
   },
   created: true,
   overlapping: [],
-  awareness: { deliveredTo: ["peer-1"], unreachable: [], failed: [] },
+  awareness: {
+    deliveredTo: ["peer-1"],
+    deferredToPrompt: [],
+    unreachable: [],
+    failed: [],
+  },
 };
 
 const LIST_RESPONSE: ListAgentRolesResponse = {
   claims: [CLAIM_RESPONSE.claim],
 };
 
-const RELINQUISH_RESPONSE: RelinquishAgentRoleResponse = {
+const RELINQUISH_RESPONSE: RelinquishAgentRoleResponseV11 = {
   released: true,
-  awareness: { deliveredTo: [], unreachable: [], failed: [] },
+  awareness: {
+    deliveredTo: [],
+    deferredToPrompt: [],
+    unreachable: [],
+    failed: [],
+  },
 };
 
 beforeEach(() => {
@@ -134,7 +144,7 @@ describe("agent role claim command function", () => {
     expect(result.exitCode).toBe(0);
     expect(result.data).toEqual(CLAIM_RESPONSE);
     // Byte-identical to the GUI tool rendering: one formatter, two surfaces.
-    expect(result.human).toBe(formatClaimRoleResponse(CLAIM_RESPONSE));
+    expect(result.human).toBe(formatClaimRoleResponseV11(CLAIM_RESPONSE));
   });
 
   it("NORMALIZES role/scope through the protocol schema before transport", async () => {
@@ -257,7 +267,7 @@ describe("agent role relinquish command function", () => {
       claimId: CLAIM_ID,
     });
     expect(result.human).toBe(
-      formatRelinquishRoleResponse(RELINQUISH_RESPONSE),
+      formatRelinquishRoleResponseV11(RELINQUISH_RESPONSE),
     );
   });
 });

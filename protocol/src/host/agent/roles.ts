@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { defineRpcContract } from "@traycer/protocol/framework/index";
+import {
+  defineRpcContract,
+  defineUpgradePath,
+} from "@traycer/protocol/framework/index";
 import {
   roleNameSchema,
   roleScopeSchema,
@@ -167,10 +170,107 @@ export type RelinquishAgentRoleResponse = z.infer<
   typeof relinquishAgentRoleResponseSchema
 >;
 
+// ─── Awareness v1.1 (additive) ───────────────────────────────────────────
+//
+// Everything above this line is the released v1.0 wire surface and is
+// FROZEN - no new field, no relaxed validation. `agent.roles.list` has no
+// v1.1: listing reads the durable registry directly and is unaffected by
+// prompt-cutover awareness, so it never earns a minor bump here.
+//
+// `deferredToPrompt` names agents whose fresh-query prompt cutover was still
+// open when this mutation routed: the in-flight attempt reads the
+// authoritative registry if it reaches cutover; otherwise the next fresh
+// query does. It is deliberately NOT folded into `deliveredTo` - no event was
+// queued and no model read anything, so claiming delivery would be false.
+export const roleAwarenessDeliverySchemaV11 = z.object({
+  deliveredTo: z.array(z.string()),
+  deferredToPrompt: z.array(z.string()),
+  unreachable: z.array(z.string()),
+  failed: z.array(
+    z.object({
+      agentId: z.string(),
+      reason: z.enum([
+        "sink-closed",
+        "timeout",
+        "delivery-error",
+        "reserved-id-collision",
+        "no-active-turn",
+      ]),
+    }),
+  ),
+});
+export type RoleAwarenessDeliveryV11 = z.infer<
+  typeof roleAwarenessDeliverySchemaV11
+>;
+
+/**
+ * v1.0 has no concept of prompt deferral. A v1.0-negotiated caller still gets
+ * a truthful answer by folding `deferredToPrompt` into `unreachable`: both
+ * already mean "nothing was delivered; the registry heals on a later fresh
+ * prompt" on that surface, so the fold loses no promise the v1.0 contract
+ * ever made. This only ever moves ids between the two array fields both
+ * versions already have - it invents no `failed` reason.
+ *
+ * The generic RPC dispatcher only Zod-strips newer-minor fields for
+ * within-major callers, which would *drop* deferred ids. Host dispatch must
+ * call these helpers after canonical v1.1 validation and before the caller's
+ * v1.0 response schema parse - never via a preprocess wrapper on the released
+ * v1.0 contracts.
+ */
+export function downProjectRoleAwarenessDeliveryToV10(
+  delivery: RoleAwarenessDeliveryV11,
+): RoleAwarenessDelivery {
+  return roleAwarenessDeliverySchema.parse({
+    deliveredTo: delivery.deliveredTo,
+    unreachable: [...delivery.unreachable, ...delivery.deferredToPrompt],
+    failed: delivery.failed,
+  });
+}
+
+export const claimAgentRoleResponseSchemaV11 = z.object({
+  claim: roleClaimWireSchema,
+  created: z.boolean(),
+  overlapping: z.array(roleClaimWireSchema),
+  awareness: roleAwarenessDeliverySchemaV11,
+});
+export type ClaimAgentRoleResponseV11 = z.infer<
+  typeof claimAgentRoleResponseSchemaV11
+>;
+
+export function downProjectClaimResponseToV10(
+  response: ClaimAgentRoleResponseV11,
+): ClaimAgentRoleResponse {
+  return claimAgentRoleResponseSchema.parse({
+    claim: response.claim,
+    created: response.created,
+    overlapping: response.overlapping,
+    awareness: downProjectRoleAwarenessDeliveryToV10(response.awareness),
+  });
+}
+
+export const relinquishAgentRoleResponseSchemaV11 = z.object({
+  awareness: roleAwarenessDeliverySchemaV11,
+  released: z.boolean(),
+});
+export type RelinquishAgentRoleResponseV11 = z.infer<
+  typeof relinquishAgentRoleResponseSchemaV11
+>;
+
+export function downProjectRelinquishResponseToV10(
+  response: RelinquishAgentRoleResponseV11,
+): RelinquishAgentRoleResponse {
+  return relinquishAgentRoleResponseSchema.parse({
+    awareness: downProjectRoleAwarenessDeliveryToV10(response.awareness),
+    released: response.released,
+  });
+}
+
 export const agentRolesClaimV10 = defineRpcContract({
   method: "agent.roles.claim",
   schemaVersion: { major: 1, minor: 0 } as const,
   requestSchema: claimAgentRoleRequestSchema,
+  // Released schema object identity is load-bearing for surface-compat and
+  // freeze tests - do not wrap with preprocess.
   responseSchema: claimAgentRoleResponseSchema,
 });
 
@@ -186,4 +286,63 @@ export const agentRolesRelinquishV10 = defineRpcContract({
   schemaVersion: { major: 1, minor: 0 } as const,
   requestSchema: relinquishAgentRoleRequestSchema,
   responseSchema: relinquishAgentRoleResponseSchema,
+});
+
+// Same requests and same major version as v1.0 - v1.1 only changes what the
+// awareness report can say, never what a caller sends. Installed into the
+// registry with latestMinor 1; host dispatch folds deferred→unreachable for
+// negotiated v1.0 after canonical v1.1 validation.
+export const agentRolesClaimV11 = defineRpcContract({
+  method: "agent.roles.claim",
+  schemaVersion: { major: 1, minor: 1 } as const,
+  requestSchema: claimAgentRoleRequestSchema,
+  responseSchema: claimAgentRoleResponseSchemaV11,
+});
+
+export const agentRolesRelinquishV11 = defineRpcContract({
+  method: "agent.roles.relinquish",
+  schemaVersion: { major: 1, minor: 1 } as const,
+  requestSchema: relinquishAgentRoleRequestSchema,
+  responseSchema: relinquishAgentRoleResponseSchemaV11,
+});
+
+// Request is identical across minors. Response upgrade synthesizes an empty
+// deferred bucket so an older stored/v1.0-shaped body can be read as v1.1;
+// live hosts return canonical v1.1 and down-project for older callers instead.
+export const agentRolesClaimUpgradeV10ToV11 = defineUpgradePath<
+  typeof agentRolesClaimV10,
+  typeof agentRolesClaimV11
+>({
+  from: agentRolesClaimV10.schemaVersion,
+  to: agentRolesClaimV11.schemaVersion,
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => ({
+    claim: response.claim,
+    created: response.created,
+    overlapping: response.overlapping,
+    awareness: {
+      deliveredTo: response.awareness.deliveredTo,
+      deferredToPrompt: [],
+      unreachable: response.awareness.unreachable,
+      failed: response.awareness.failed,
+    },
+  }),
+});
+
+export const agentRolesRelinquishUpgradeV10ToV11 = defineUpgradePath<
+  typeof agentRolesRelinquishV10,
+  typeof agentRolesRelinquishV11
+>({
+  from: agentRolesRelinquishV10.schemaVersion,
+  to: agentRolesRelinquishV11.schemaVersion,
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => ({
+    released: response.released,
+    awareness: {
+      deliveredTo: response.awareness.deliveredTo,
+      deferredToPrompt: [],
+      unreachable: response.awareness.unreachable,
+      failed: response.awareness.failed,
+    },
+  }),
 });

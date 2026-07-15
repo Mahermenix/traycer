@@ -47,9 +47,13 @@ import {
   agentInboxSubscribeV11,
 } from "@traycer/protocol/host/agent/inbox";
 import {
+  agentRolesClaimUpgradeV10ToV11,
   agentRolesClaimV10,
+  agentRolesClaimV11,
   agentRolesListV10,
+  agentRolesRelinquishUpgradeV10ToV11,
   agentRolesRelinquishV10,
+  agentRolesRelinquishV11,
 } from "@traycer/protocol/host/agent/roles";
 import {
   agentGuiGetPlanV10,
@@ -2289,11 +2293,19 @@ const HOST_RPC_REGISTRY_DEFINITION = {
   // exactly how `agent.tui.listHarnesses` shipped broken.
   "agent.roles.claim": {
     1: {
-      latestMinor: 0,
+      // @1.1 adds `deferredToPrompt` on the awareness report. @1.0 stays
+      // installed and FROZEN; a negotiated v1.0 peer gets deferred ids folded
+      // into `unreachable` at host dispatch after canonical v1.1 validation
+      // (not via a preprocess wrapper on the released v1.0 schema).
+      latestMinor: 1,
       versions: {
         0: {
           contract: agentRolesClaimV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: agentRolesClaimV11,
+          upgradeFromPreviousVersion: agentRolesClaimUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -2315,11 +2327,15 @@ const HOST_RPC_REGISTRY_DEFINITION = {
   },
   "agent.roles.relinquish": {
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: agentRolesRelinquishV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: agentRolesRelinquishV11,
+          upgradeFromPreviousVersion: agentRolesRelinquishUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},

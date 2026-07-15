@@ -8,8 +8,10 @@
 import { describe, expect, it } from "vitest";
 import {
   formatClaimRoleResponse,
+  formatClaimRoleResponseV11,
   formatListRolesResponse,
   formatRelinquishRoleResponse,
+  formatRelinquishRoleResponseV11,
 } from "../agent-roles-format";
 import type { RoleClaimWire } from "../../host/agent/roles";
 
@@ -127,6 +129,60 @@ describe("formatRelinquishRoleResponse", () => {
     const text = formatRelinquishRoleResponse({
       released: false,
       awareness: NO_AWARENESS,
+    });
+    expect(text).toBe(
+      "No matching claim to relinquish - it may already be released.",
+    );
+  });
+});
+
+describe("v1.1 formatters describe prompt deferral without calling it delivery", () => {
+  const NO_AWARENESS_V11 = {
+    deliveredTo: [],
+    deferredToPrompt: [],
+    unreachable: [],
+    failed: [],
+  };
+
+  it("formatClaimRoleResponseV11 renders a distinct prompt-pending bucket, never folded into delivered", () => {
+    const text = formatClaimRoleResponseV11({
+      claim: claim({}),
+      created: true,
+      overlapping: [],
+      awareness: {
+        deliveredTo: ["peer-1"],
+        deferredToPrompt: ["peer-2", "peer-3"],
+        unreachable: [],
+        failed: [],
+      },
+    });
+
+    expect(text).toContain("delivered 1");
+    expect(text).toContain("prompt-pending 2");
+    expect(text).not.toContain("delivered 3");
+    // The word "delivered" must not appear anywhere near the deferred count.
+    expect(text).not.toMatch(/delivered\s+3/);
+  });
+
+  it("formatRelinquishRoleResponseV11 uses the same prompt-pending vocabulary", () => {
+    const text = formatRelinquishRoleResponseV11({
+      released: true,
+      awareness: {
+        deliveredTo: [],
+        deferredToPrompt: ["peer-1"],
+        unreachable: [],
+        failed: [],
+      },
+    });
+
+    expect(text).toContain("Role relinquished.");
+    expect(text).toContain("prompt-pending 1");
+  });
+
+  it("formatRelinquishRoleResponseV11 keeps the no-oracle line for released:false", () => {
+    const text = formatRelinquishRoleResponseV11({
+      released: false,
+      awareness: NO_AWARENESS_V11,
     });
     expect(text).toBe(
       "No matching claim to relinquish - it may already be released.",
