@@ -133,6 +133,7 @@ export const PERSIST_STORES = [
     kind: "static",
   },
   { camelName: "gitPanel", leaf: "git-panel", kind: "static" },
+  { camelName: "prPanel", leaf: "pr-panel", kind: "static" },
   {
     camelName: "initialChatHandoff",
     leaf: "initial-chat-handoffs",
