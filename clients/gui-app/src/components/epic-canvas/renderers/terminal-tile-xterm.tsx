@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ClipboardEvent,
   type DragEvent,
   type RefObject,
 } from "react";
@@ -76,7 +77,7 @@ interface XtermInitialOptions extends ITerminalOptions {
   };
 }
 
-const TERMINAL_DRAG_PATH_ESCAPE_PATTERN = /([\\\s!"#$&'()*;<>?[\]^`{|}])/g;
+const TERMINAL_PATH_ESCAPE_PATTERN = /([\\\s!"#$&'()*;<>?[\]^`{|}])/g;
 const getEmptyFindTargetId = (): string | null => null;
 const ignoreSearchResults = (): void => {};
 
@@ -396,6 +397,13 @@ export function TerminalXtermHost(props: TerminalXtermHostProps) {
   });
   useActiveTerminalFocus(termRef, props.shouldFocusOnActivePane);
 
+  const pastePaths = useCallback((paths: readonly string[]): void => {
+    const input = terminalPathInput(uniquePaths(paths));
+    if (input.length === 0) return;
+    termRef.current?.paste(input);
+    termRef.current?.focus();
+  }, []);
+
   const handleDragEnter = useCallback(
     (event: DragEvent<HTMLDivElement>): void => {
       if (!dataTransferHasFiles(event.dataTransfer)) return;
@@ -462,14 +470,34 @@ export function TerminalXtermHost(props: TerminalXtermHostProps) {
           : runnerHost.fileDrops.copyDroppedFilePaths(fileUrlPaths);
       void Promise.all([resolvedFilePaths, stableUrlPaths])
         .then(([paths, urlPaths]) => {
-          const input = droppedPathInput(uniquePaths([...paths, ...urlPaths]));
-          if (input.length === 0) return;
-          termRef.current?.paste(input);
-          termRef.current?.focus();
+          pastePaths([...paths, ...urlPaths]);
         })
         .catch(() => undefined);
     },
-    [runnerHost.fileDrops, setIsDraggingFiles],
+    [pastePaths, runnerHost.fileDrops, setIsDraggingFiles],
+  );
+
+  const handlePaste = useCallback(
+    (event: ClipboardEvent<HTMLDivElement>): void => {
+      const files = collectDroppedFiles(event.clipboardData);
+      const fileUrlPaths =
+        files.length === 0
+          ? collectDroppedFileUrlPaths(event.clipboardData)
+          : [];
+      if (files.length === 0 && fileUrlPaths.length === 0) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const resolvedFilePaths =
+        files.length === 0
+          ? Promise.resolve([] as readonly string[])
+          : runnerHost.fileDrops.resolveDroppedFilePaths(files);
+      void resolvedFilePaths
+        .then((paths) => {
+          pastePaths([...paths, ...fileUrlPaths]);
+        })
+        .catch(() => undefined);
+    },
+    [pastePaths, runnerHost.fileDrops],
   );
 
   // `absolute inset-0` sidesteps the percentage-height chain (`h-full` →
@@ -484,8 +512,11 @@ export function TerminalXtermHost(props: TerminalXtermHostProps) {
   // directly and is robust to initial-mount timing.
   //
   // `mountRef` is the imperative attach point for the persistent xterm
-  // container (owned by the registry, not React) and carries the file-drop
+  // container (owned by the registry, not React) and carries the file-transfer
   // handlers so it stays the direct parent of `data-testid="terminal-xterm-host"`.
+  // Paste uses capture because xterm handles clipboard events on its hidden
+  // textarea; file clipboard entries must be claimed before that target handler
+  // discards their empty text payload.
   // The drag overlay is a React sibling so React never reconciles around the
   // foreign container node.
   return (
@@ -500,6 +531,7 @@ export function TerminalXtermHost(props: TerminalXtermHostProps) {
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        onPasteCapture={handlePaste}
       />
       {isDraggingFiles ? (
         <div
@@ -993,12 +1025,12 @@ function uniquePaths(paths: readonly string[]): readonly string[] {
   return Array.from(new Set(paths.filter((path) => path.length > 0)));
 }
 
-function droppedPathInput(paths: readonly string[]): string {
-  return paths.map(escapeTerminalDragPath).join(" ");
+function terminalPathInput(paths: readonly string[]): string {
+  return paths.map(escapeTerminalPath).join(" ");
 }
 
-function escapeTerminalDragPath(path: string): string {
-  return path.replace(TERMINAL_DRAG_PATH_ESCAPE_PATTERN, "\\$1");
+function escapeTerminalPath(path: string): string {
+  return path.replace(TERMINAL_PATH_ESCAPE_PATTERN, "\\$1");
 }
 
 function useTerminalFindRegistration(

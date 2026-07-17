@@ -1301,6 +1301,61 @@ describe("<TerminalXtermHost /> terminal find", () => {
     expect(xtermMocks.terminals[0].focus).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    "terminal",
+    "terminal-agent",
+  ] satisfies readonly TerminalTileFindKind[])(
+    "pastes copied file paths through xterm for %s tiles",
+    async (tileKind) => {
+      const onUserInput = vi.fn();
+      const copiedPath = "/Users/tgill/Documents/agent notes.md";
+      const copiedFile = new File(["notes"], "agent notes.md", {
+        type: "text/markdown",
+      });
+      runnerHostMocks.resolveDroppedFilePaths.mockResolvedValue([copiedPath]);
+
+      render(
+        <TerminalXtermHost
+          sessionId="test-session"
+          tileKind={tileKind}
+          instanceId="test-instance"
+          effectiveCols={80}
+          effectiveRows={24}
+          onUserInput={onUserInput}
+          onContainerResize={vi.fn()}
+          onWriterReady={vi.fn()}
+          shouldFocusOnActivePane={false}
+          findTargetId={null}
+          keepAlive={false}
+          chrome="padded"
+        />,
+      );
+
+      const pasteTarget = screen.getByTestId("terminal-xterm-host");
+
+      fireEvent.paste(pasteTarget, {
+        clipboardData: {
+          types: ["Files"],
+          files: [copiedFile],
+          items: [],
+        },
+      });
+
+      await waitFor(() => {
+        expect(runnerHostMocks.resolveDroppedFilePaths).toHaveBeenCalledWith([
+          copiedFile,
+        ]);
+        expect(xtermMocks.terminals[0].paste).toHaveBeenCalledWith(
+          "/Users/tgill/Documents/agent\\ notes.md",
+        );
+        expect(onUserInput).toHaveBeenCalledWith(
+          "\x1b[200~/Users/tgill/Documents/agent\\ notes.md\x1b[201~",
+        );
+      });
+      expect(xtermMocks.terminals[0].focus).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("copies ephemeral file URL drops into a stable path before pasting", async () => {
     const onUserInput = vi.fn();
     const stablePath =
