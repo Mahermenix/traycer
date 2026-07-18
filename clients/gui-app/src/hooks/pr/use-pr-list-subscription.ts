@@ -47,6 +47,9 @@ interface SharedSubscription {
   unsubscribeFromStream: () => void;
   sendRefresh: () => void;
   lastEvent: PrSubscribeListForEpicServerFrame | null;
+  // Set once the stream is terminal; its `sendRefresh` is then inert, so the
+  // entry is REPLACED (not reused) on retry - see the subscribe effect.
+  isTerminal: boolean;
   consumers: Map<symbol, () => void>;
 }
 
@@ -122,6 +125,12 @@ export function usePrListSubscription(args: {
   );
 
   const [consumerId] = useState(() => Symbol("pr-list-consumer"));
+  // Bumped by `retry()` to re-run the subscribe effect so a TERMINAL shared
+  // session is replaced with a fresh one (its `sendRefresh` is inert).
+  const [retryNonce, retry] = useReducer(
+    (count: number): number => count + 1,
+    0,
+  );
 
   useEffect(() => {
     if (
@@ -131,6 +140,7 @@ export function usePrListSubscription(args: {
     ) {
       return;
     }
+    void retryNonce;
 
     const activeArgs: ActiveSubscriptionArgs = {
       hostId: stableArgs.hostId,
@@ -140,7 +150,10 @@ export function usePrListSubscription(args: {
     const key = subscriptionKeyFor(wsStreamClient, activeArgs);
     let shared = subscriptions.get(key);
 
-    if (shared === undefined) {
+    // Create fresh when there is none OR when the cached one is terminal, so a
+    // retry actually reconnects instead of reusing a dead session.
+    if (shared === undefined || shared.isTerminal) {
+      shared?.unsubscribeFromStream();
       shared = createSharedSubscription(
         wsStreamClient,
         queryClient,
@@ -165,13 +178,14 @@ export function usePrListSubscription(args: {
       shared.consumers.delete(consumerId);
 
       // ADR-0003: no grace period - tear down immediately when ref count
-      // reaches 0.
+      // reaches 0. Only delete the map slot if it still holds THIS entry - a
+      // retry may have already replaced it with a fresh session.
       if (shared.refCount === 0) {
         shared.unsubscribeFromStream();
-        subscriptions.delete(key);
+        if (subscriptions.get(key) === shared) subscriptions.delete(key);
       }
     };
-  }, [stableArgs, queryClient, wsStreamClient, consumerId]);
+  }, [stableArgs, queryClient, wsStreamClient, consumerId, retryNonce]);
 
   // Read current cache state via useQuery with disabled fetching. The
   // subscription effect above feeds cache updates, so this renders
@@ -192,8 +206,15 @@ export function usePrListSubscription(args: {
   const data = queryData ?? null;
 
   const sendRefresh = useCallback(() => {
+    // A terminal session's `sendRefresh` is inert; a refresh there means
+    // RECONNECT - re-run the effect to replace the dead entry. A live session
+    // refreshes normally.
+    if (errorEvent !== null) {
+      retry();
+      return;
+    }
     activeSubscriptionFor(wsStreamClient, stableArgs)?.sendRefresh();
-  }, [wsStreamClient, stableArgs]);
+  }, [errorEvent, wsStreamClient, stableArgs]);
 
   return {
     data,
@@ -228,6 +249,7 @@ function createSharedSubscription(
       );
     },
     lastEvent: null,
+    isTerminal: false,
     consumers: new Map(),
   };
 
@@ -237,6 +259,7 @@ function createSharedSubscription(
   // current ones render the error instead of a forever-pending skeleton.
   const markTerminal = (frame: PrListErrorFrame): void => {
     sessionClosed = true;
+    shared.isTerminal = true;
     session.close();
     shared.lastEvent = frame;
     for (const consumer of shared.consumers.values()) {

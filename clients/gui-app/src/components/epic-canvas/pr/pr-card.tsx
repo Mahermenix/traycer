@@ -54,6 +54,11 @@ export function PrCard(props: {
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>): void => {
+      // Only the card itself activates on Enter/Space. Without this guard a
+      // keydown on the nested GitHub anchor bubbles up here and opens the
+      // detail tile in addition to following the link (and it's an invalid
+      // nested-interactive pattern for assistive tech).
+      if (event.target !== event.currentTarget) return;
       if (event.key === "Enter" || event.key === " ") {
         event.preventDefault();
         props.onOpen?.();

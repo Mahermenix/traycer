@@ -65,7 +65,11 @@ function EpicShellSessionBody(props: EpicShellProps) {
     <SnapshotLoadingProvider value={snapshotContextValue}>
       {props.active ? <EpicConnectionToasts epicId={props.epicId} /> : null}
       <ResourcesStreamMount epicId={props.epicId} />
-      <PrListBackgroundMount epicId={props.epicId} tabId={props.tabId} />
+      <PrListBackgroundMount
+        epicId={props.epicId}
+        tabId={props.tabId}
+        active={props.active}
+      />
       <CanvasColumn
         statusRow={<EpicShellStatusRow snapshotLoaded={snapshotLoaded} />}
         canvas={<TileCanvas epicId={props.epicId} tabId={props.tabId} />}

@@ -45,6 +45,7 @@ function formatPrCheckConclusionLabel(
   if (conclusion === "cancelled") return "Cancelled";
   if (conclusion === "skipped") return "Skipped";
   if (conclusion === "timed_out") return "Timed out";
+  if (conclusion === "stale") return "Stale";
   return "Action required";
 }
 

@@ -72,6 +72,10 @@ interface SharedDetailSubscription {
   unsubscribeFromStream: () => void;
   sendRefresh: () => void;
   lastEvent: PrSubscribeDetailServerFrame | null;
+  // Set once the stream reaches a terminal state (fatal frame or an
+  // unexpected close). A terminal session's `sendRefresh` is inert, so the
+  // entry must be REPLACED (not reused) on retry - see the subscribe effect.
+  isTerminal: boolean;
   consumers: Map<symbol, () => void>;
 }
 
@@ -178,6 +182,12 @@ export function usePrDetailSubscription(args: {
   );
 
   const [consumerId] = useState(() => Symbol("pr-detail-consumer"));
+  // Bumped by `retry()` to force this consumer's subscribe effect to re-run so
+  // a TERMINAL shared session is torn down and replaced with a fresh one.
+  const [retryNonce, retry] = useReducer(
+    (count: number): number => count + 1,
+    0,
+  );
 
   useEffect(() => {
     if (
@@ -187,6 +197,7 @@ export function usePrDetailSubscription(args: {
     ) {
       return;
     }
+    void retryNonce;
 
     const activeArgs: ActiveDetailSubscriptionArgs = {
       hostId: stableArgs.hostId,
@@ -199,7 +210,12 @@ export function usePrDetailSubscription(args: {
     const key = subscriptionKeyFor(wsStreamClient, activeArgs);
     let shared = subscriptions.get(key);
 
-    if (shared === undefined) {
+    // Create a fresh session when there is none OR when the cached one is
+    // terminal (its stream is dead and its `sendRefresh` is inert). Replacing a
+    // terminal entry is what makes "Try again" actually reconnect instead of
+    // spinning against a closed session.
+    if (shared === undefined || shared.isTerminal) {
+      shared?.unsubscribeFromStream();
       shared = createSharedSubscription(
         wsStreamClient,
         queryClient,
@@ -223,18 +239,20 @@ export function usePrDetailSubscription(args: {
       shared.consumers.delete(consumerId);
 
       // ADR-0003: no grace period - tear down immediately when ref count
-      // reaches 0.
+      // reaches 0. Only delete the map slot if it still holds THIS entry - a
+      // retry may have already replaced it with a fresh session.
       if (shared.refCount === 0) {
         shared.unsubscribeFromStream();
-        subscriptions.delete(key);
+        if (subscriptions.get(key) === shared) subscriptions.delete(key);
       }
     };
-  }, [stableArgs, queryClient, wsStreamClient, consumerId]);
+  }, [stableArgs, queryClient, wsStreamClient, consumerId, retryNonce]);
 
   const { data: queryData } = useQuery({
     ...queryOptions({
       queryKey: prQueryKeys.detail({
         hostId: stableArgs.hostId,
+        epicId: stableArgs.epicId,
         githubHost: stableArgs.githubHost,
         owner: stableArgs.owner,
         repo: stableArgs.repo,
@@ -253,8 +271,16 @@ export function usePrDetailSubscription(args: {
   const data = queryData ?? null;
 
   const sendRefresh = useCallback(() => {
+    // After a terminal error the session is dead and its `sendRefresh` is a
+    // no-op; a user "refresh"/"Try again" there means RECONNECT. Re-run the
+    // subscribe effect (which replaces the terminal entry) instead of sending a
+    // frame into a closed session. A live session refreshes as normal.
+    if (errorEvent !== null) {
+      retry();
+      return;
+    }
     activeSubscriptionFor(wsStreamClient, stableArgs)?.sendRefresh();
-  }, [wsStreamClient, stableArgs]);
+  }, [errorEvent, wsStreamClient, stableArgs]);
 
   return {
     data,
@@ -293,11 +319,13 @@ function createSharedSubscription(
       );
     },
     lastEvent: null,
+    isTerminal: false,
     consumers: new Map(),
   };
 
   const markTerminal = (frame: PrDetailErrorFrame): void => {
     sessionClosed = true;
+    shared.isTerminal = true;
     session.close();
     shared.lastEvent = frame;
     for (const consumer of shared.consumers.values()) {
@@ -384,6 +412,7 @@ function writeIntoCache(
   queryClient.setQueryData(
     prQueryKeys.detail({
       hostId: args.hostId,
+      epicId: args.epicId,
       githubHost: args.githubHost,
       owner: args.owner,
       repo: args.repo,
@@ -405,6 +434,7 @@ function replayLastEventIntoCache(
 ): void {
   const key = prQueryKeys.detail({
     hostId: args.hostId,
+    epicId: args.epicId,
     githubHost: args.githubHost,
     owner: args.owner,
     repo: args.repo,

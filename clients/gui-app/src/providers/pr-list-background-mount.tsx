@@ -7,6 +7,8 @@ import {
   evaluatePrListAgainstBaseline,
 } from "@/lib/pr/pr-changed-dot";
 import {
+  useActiveLeftPanelId,
+  useLeftPanelGroups,
   useLeftPanelSectionCollapsed,
   useMainPanelCollapsed,
 } from "@/stores/epics/left-panel-store";
@@ -18,6 +20,8 @@ import {
 export interface PrListBackgroundMountProps {
   readonly epicId: string;
   readonly tabId: string;
+  /** Whether this pane is the focused/visible one (from the epic shell). */
+  readonly active: boolean;
 }
 
 /**
@@ -27,10 +31,19 @@ export interface PrListBackgroundMountProps {
  * transport session. Unmount of the last pane releases the subscription —
  * zero PR traffic when the epic is closed.
  *
- * Panel visibility (sidebar expanded ∧ pull-requests section expanded) is
- * read from the left-panel store so we never touch the PR panel body (T6).
- * While visible: baseline advances continuously and the dot is cleared.
- * While hidden: directional deltas light `hasChanged`.
+ * "Looking at the PR panel" is a precise condition, NOT merely
+ * `!sectionCollapsed`: the sidebar renders only the ACTIVE rail group's
+ * sections (`getActivePanelDefinitions`), and this pane must itself be the
+ * focused one. So the panel is genuinely visible iff this pane is `active`,
+ * the sidebar is expanded, the active rail group contains the pull-requests
+ * section, and that section is expanded. A looser predicate would treat the
+ * default Chats view (its rail group active, both collapse flags false) as the
+ * PR panel and silently absorb every change so the dot never lights - and let
+ * a hidden pane clear the shared `(hostId, epicId)` dot.
+ *
+ * While visible: baseline advances continuously and the dot is cleared. While
+ * not visible (including background panes): directional deltas light
+ * `hasChanged`.
  */
 export function PrListBackgroundMount(
   props: PrListBackgroundMountProps,
@@ -48,7 +61,18 @@ export function PrListBackgroundMount(
 
   const mainCollapsed = useMainPanelCollapsed(props.tabId);
   const sectionCollapsed = useLeftPanelSectionCollapsed("pull-requests");
-  const panelVisible = !mainCollapsed && !sectionCollapsed;
+  const activePanelId = useActiveLeftPanelId(props.tabId);
+  const panelGroups = useLeftPanelGroups();
+  const activeGroupHasPullRequests = panelGroups.some(
+    (group) =>
+      group.panelIds.includes(activePanelId) &&
+      group.panelIds.includes("pull-requests"),
+  );
+  const panelVisible =
+    props.active &&
+    !mainCollapsed &&
+    activeGroupHasPullRequests &&
+    !sectionCollapsed;
 
   const scopeState = usePrSeenFactsStore((s) =>
     hostId === null

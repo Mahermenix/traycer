@@ -17,14 +17,19 @@ export const prQueryKeys = {
     [...hostQueryKeys.scope(hostId), "pr", "listForEpic", epicId] as const,
 
   /**
-   * Query key for one PR's heavy detail cache (`pr.subscribeDetail`). Scoped
-   * by `(hostId, githubHost, owner, repo, prNumber)` - NOT by `epicId`: the
-   * heavy fact is host-global (tech plan: "a PR shared by two epics is one
-   * row"), so tiles opened from different epics for the same PR on the same
-   * host share one cache entry.
+   * Query key for one PR's projected detail cache (`pr.subscribeDetail`).
+   * Scoped by `(hostId, epicId, githubHost, owner, repo, prNumber)`. The heavy
+   * FACTS are host-global (the host persists one row per PR), but the projected
+   * FRAME is epic-flavored: the host stamps each frame with the subscribing
+   * epic's `owners`, `repoIdentifier`, and merge-provenance fallback. Two epics
+   * viewing the same PR run separate epic-scoped sessions; omitting `epicId`
+   * here would collapse them onto one cache entry and let each epic's frame
+   * clobber the other's owners. Scope by `epicId` so the frame projections stay
+   * isolated per epic.
    */
   detail: (args: {
     readonly hostId: string;
+    readonly epicId: string;
     readonly githubHost: string;
     readonly owner: string;
     readonly repo: string;
@@ -34,6 +39,7 @@ export const prQueryKeys = {
       ...hostQueryKeys.scope(args.hostId),
       "pr",
       "detail",
+      args.epicId,
       args.githubHost,
       args.owner,
       args.repo,

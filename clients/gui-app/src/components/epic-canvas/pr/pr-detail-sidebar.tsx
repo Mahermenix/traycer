@@ -110,7 +110,17 @@ export function PrDetailSidebar(props: {
     >
       <PrSidebarSection heading="Reviewers">
         {reviewers.length === 0 ? (
-          <p className="text-muted-foreground/70">No reviews</p>
+          <PrSidebarNoReviewers
+            // Reviewer state is reconstructed from the last-~20 activity window,
+            // which newer comments can push a review out of. Only claim a
+            // definitive "No reviews" when the window is complete AND the
+            // authoritative review decision agrees there were none; otherwise
+            // the approval may simply be off-window (and the merge box, which
+            // reads `reviewDecision`, would say "Approved" beside it).
+            uncertain={
+              props.activity.isTruncated || props.core.reviewDecision !== null
+            }
+          />
         ) : (
           <ul className="flex flex-col gap-1.5">
             {reviewers.map((reviewer) => {
@@ -171,6 +181,16 @@ export function PrDetailSidebar(props: {
         </PrSidebarSection>
       ) : null}
     </aside>
+  );
+}
+
+function PrSidebarNoReviewers(props: {
+  readonly uncertain: boolean;
+}): ReactNode {
+  return (
+    <p className="text-muted-foreground/70">
+      {props.uncertain ? "See GitHub for review history" : "No reviews"}
+    </p>
   );
 }
 

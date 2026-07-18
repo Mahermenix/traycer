@@ -46,6 +46,7 @@ import {
 } from "@/stores/epics/canvas/types";
 import {
   TILE_KIND_GIT_DIFF,
+  TILE_KIND_PR_DETAIL,
   TILE_KIND_SNAPSHOT_DIFF,
 } from "@/stores/epics/canvas/tile-kinds";
 import { TabStrip } from "@/components/epic-canvas/canvas/tab-strip";
@@ -79,6 +80,7 @@ function panelIdForTabType(
   if (tabType === TILE_KIND_GIT_DIFF) return "git-diff";
   if (tabType === TILE_KIND_SNAPSHOT_DIFF) return "chats";
   if (tabType === WORKSPACE_FILE_TAB_KIND) return "file-tree";
+  if (tabType === TILE_KIND_PR_DETAIL) return "pull-requests";
   return "artifacts";
 }
 

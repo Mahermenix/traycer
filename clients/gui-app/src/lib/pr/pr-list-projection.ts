@@ -128,20 +128,24 @@ export function prListRowKey(item: PrLightItem, hostId: string): string {
   ].join("|");
 }
 
-/** Card primary label: `#number · title` (or head identity when base is unknown). */
+/**
+ * Card primary label: `#number · title` (or head identity when base is
+ * unknown). A never-swept row has a `null` title; rather than assert a
+ * definitive "Untitled pull request" for something we simply haven't observed
+ * yet, fall back to the bare identity (`#number` or head ref).
+ */
 export function formatPrRowTitle(item: PrLightItem): string {
-  const title =
-    item.title !== null && item.title.length > 0
-      ? item.title
-      : "Untitled pull request";
-  if (item.base !== null) {
-    return `#${item.base.prNumber} · ${title}`;
+  const identity = prRowIdentity(item);
+  const hasTitle = item.title !== null && item.title.length > 0;
+  return hasTitle ? `${identity} · ${item.title}` : identity;
+}
+
+function prRowIdentity(item: PrLightItem): string {
+  if (item.base !== null) return `#${item.base.prNumber}`;
+  if (item.headRefName !== null && item.headRefName.length > 0) {
+    return item.headRefName;
   }
-  const head =
-    item.headRefName !== null && item.headRefName.length > 0
-      ? item.headRefName
-      : "unknown head";
-  return `${head} · ${title}`;
+  return "unknown head";
 }
 
 export function formatPrChecksRollup(

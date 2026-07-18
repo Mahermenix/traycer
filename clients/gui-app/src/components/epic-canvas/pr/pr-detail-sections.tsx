@@ -40,15 +40,16 @@ import {
 import { useRelativeTimestamp } from "@/lib/relative-time";
 import { cn } from "@/lib/utils";
 
-// GitHub timeline geometry (Primer TimelineItem): the card column starts at
-// 2.75rem (ml-11/pl-11); the 2px connector line runs 1rem inside its left
-// edge (left-15 = 3.75rem) and is covered by the opaque cards (bg-canvas,
-// the tile backdrop), showing only in the gaps between them. Event badges
-// are GitHub's 32px circles whose LEFT edge sits at the card column edge
-// (ml-11 + size-8 spans 2.75-4.75rem, swallowing the line with margin on
-// both sides). Comment avatars are GitHub's 40px (size-10), nearly flush
-// against the card (gap-1: 2.5rem + 0.25rem = the 2.75rem card edge), in
-// the gutter fully left of the line - never on it.
+// GitHub timeline geometry (Primer TimelineItem): a single left gutter, the
+// width of a comment avatar (size-10 = 2.5rem), with the 2px connector line
+// running through its CENTER (left-5 = 1.25rem). Comment avatars sit at the
+// gutter's left and are centered on the line; event badges (size-8 = 2rem)
+// are centered inside a matching 2.5rem gutter so they land on the same line.
+// Both are opaque (bg-canvas / ring-canvas), so the line shows only in the
+// gap between items. The card / text column begins just past the gutter at
+// 2.75rem (gap-1 after the 2.5rem avatar; ml-11/pl-11 for the merge box,
+// files card, review bodies, and "view older" link), so nothing overlaps the
+// line and every avatar/badge threads it.
 
 type PrTimelineEntry =
   | { readonly kind: "activity"; readonly item: PrActivityItem }
@@ -88,7 +89,7 @@ export function PrDetailTimeline(props: {
 
   return (
     <div
-      className="relative flex min-w-0 flex-col gap-4 before:absolute before:top-2 before:bottom-2 before:left-15 before:w-0.5 before:bg-border/70"
+      className="relative flex min-w-0 flex-col gap-4 before:absolute before:top-2 before:bottom-2 before:left-5 before:w-0.5 before:bg-border/70"
       data-testid="pr-detail-timeline"
     >
       <PrTimelineCardItem
@@ -145,14 +146,13 @@ function PrTimelineCommitItem(props: {
       : null);
   return (
     <div
-      className="flex min-w-0 items-center gap-2 text-ui-xs text-muted-foreground"
+      className="flex min-w-0 items-center gap-1 text-ui-xs text-muted-foreground"
       data-testid="pr-detail-commit-item"
     >
-      <span
-        className="ml-11 flex size-8 shrink-0 items-center justify-center rounded-full bg-canvas ring-2 ring-canvas"
-        aria-hidden
-      >
-        <GitCommitHorizontal className="size-4" />
+      <span className="flex w-10 shrink-0 justify-center" aria-hidden>
+        <span className="flex size-8 items-center justify-center rounded-full bg-canvas text-muted-foreground ring-2 ring-canvas">
+          <GitCommitHorizontal className="size-4" />
+        </span>
       </span>
       <PrActorAvatar actor={actor} size="sm" className={undefined} />
       <span className="min-w-0 flex-1 truncate">
@@ -305,15 +305,16 @@ function PrTimelineReviewItem(props: {
       className="flex min-w-0 flex-col gap-2"
       data-testid="pr-detail-activity-item"
     >
-      <div className="flex min-w-0 items-center gap-2 text-ui-xs text-muted-foreground">
-        <span
-          className={cn(
-            "ml-11 flex size-8 shrink-0 items-center justify-center rounded-full ring-2 ring-canvas",
-            event.iconClass,
-          )}
-          aria-hidden
-        >
-          <event.Icon className="size-4" />
+      <div className="flex min-w-0 items-center gap-1 text-ui-xs text-muted-foreground">
+        <span className="flex w-10 shrink-0 justify-center" aria-hidden>
+          <span
+            className={cn(
+              "flex size-8 items-center justify-center rounded-full ring-2 ring-canvas",
+              event.iconClass,
+            )}
+          >
+            <event.Icon className="size-4" />
+          </span>
         </span>
         <PrActorAvatar
           actor={props.item.author}
@@ -401,18 +402,23 @@ function PrFileChangeGlyph(props: {
 export function PrDetailFilesChanged(props: {
   readonly files: PrFilesSection;
   readonly prUrl: string | null;
+  // PR-wide diffstat from `core`. The header must show these, NOT the sum of
+  // the shown (≤100) file rows: on a >100-file PR the row sum covers only the
+  // first 100 while `totalCount` covers all, so pairing them would read as a
+  // total that doesn't add up. Fall back to the shown sum only when the
+  // PR-wide values are absent (never observed).
+  readonly additions: number | null;
+  readonly deletions: number | null;
 }): ReactNode {
   if (props.files.files.length === 0) return null;
   const shownCount = props.files.files.length;
   const totalCount = props.files.totalCount ?? shownCount;
-  const additions = props.files.files.reduce(
-    (sum, file) => sum + (file.additions ?? 0),
-    0,
-  );
-  const deletions = props.files.files.reduce(
-    (sum, file) => sum + (file.deletions ?? 0),
-    0,
-  );
+  const additions =
+    props.additions ??
+    props.files.files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
+  const deletions =
+    props.deletions ??
+    props.files.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
 
   return (
     <Collapsible

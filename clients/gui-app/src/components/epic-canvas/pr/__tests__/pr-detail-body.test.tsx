@@ -413,6 +413,7 @@ describe("PrDetailBody", () => {
     queryClient.setQueryData(
       prQueryKeys.detail({
         hostId: "host1",
+        epicId: "epic-2",
         githubHost: "github.com",
         owner: "acme",
         repo: "widgets",

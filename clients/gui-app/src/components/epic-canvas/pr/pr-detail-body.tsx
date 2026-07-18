@@ -120,6 +120,8 @@ export function PrDetailBody(props: {
             <PrDetailFilesChanged
               files={subscription.data.files}
               prUrl={subscription.data.core.prUrl}
+              additions={subscription.data.core.additions}
+              deletions={subscription.data.core.deletions}
             />
             <PrDetailMergeBox
               core={subscription.data.core}
@@ -129,7 +131,7 @@ export function PrDetailBody(props: {
           <PrDetailSidebar
             core={subscription.data.core}
             activity={subscription.data.activity}
-            className="@3xl:basis-64 @3xl:shrink-0"
+            className="@3xl:w-[clamp(12rem,28%,18rem)] @3xl:shrink-0"
           />
         </div>
       </div>
@@ -149,15 +151,19 @@ function resolvePrDetailBannerState(
 }
 
 /**
- * The single staleness hint shown in the header is the OLDEST of the three
+ * The single staleness hint shown in the header is the OLDEST of the five
  * per-section `observedAt` timestamps - the view as a whole is only as fresh
- * as its stalest section.
+ * as its stalest section. Files and commits are independently timestamped
+ * protocol sections, so a cached/mixed frame with differing section freshness
+ * is reported honestly rather than trusting one heavy timestamp everywhere.
  */
 function oldestObservedAt(data: PrDetailSubscriptionData): number | null {
   return [
     data.core.observedAt,
     data.checks.observedAt,
     data.activity.observedAt,
+    data.files.observedAt,
+    data.commits.observedAt,
   ].reduce<number | null>((oldest, candidate) => {
     if (candidate === null) return oldest;
     if (oldest === null) return candidate;
