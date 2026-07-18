@@ -8,7 +8,9 @@ import {
   prSubscribeDetailServerFrameSchema,
   type PrActivitySection,
   type PrChecksSection,
+  type PrCommitsSection,
   type PrDetailCore,
+  type PrFilesSection,
   type PrLiveness,
   type PrSourceStatus,
   type PrSubscribeDetailServerFrame,
@@ -26,6 +28,8 @@ export interface PrDetailSubscriptionData {
   readonly core: PrDetailCore;
   readonly checks: PrChecksSection;
   readonly activity: PrActivitySection;
+  readonly files: PrFilesSection;
+  readonly commits: PrCommitsSection;
 }
 
 type PrDetailDataFrame = Extract<
@@ -361,6 +365,8 @@ function toSubscriptionData(
     core: frame.core,
     checks: frame.checks,
     activity: frame.activity,
+    files: frame.files,
+    commits: frame.commits,
   };
 }
 

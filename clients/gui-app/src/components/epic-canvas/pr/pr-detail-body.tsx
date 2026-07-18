@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { PrDetailHeader } from "@/components/epic-canvas/pr/pr-detail-header";
 import {
+  PrDetailFilesChanged,
   PrDetailMergeBox,
   PrDetailTimeline,
 } from "@/components/epic-canvas/pr/pr-detail-sections";
@@ -114,6 +115,11 @@ export function PrDetailBody(props: {
             <PrDetailTimeline
               core={subscription.data.core}
               activity={subscription.data.activity}
+              commits={subscription.data.commits}
+            />
+            <PrDetailFilesChanged
+              files={subscription.data.files}
+              prUrl={subscription.data.core.prUrl}
             />
             <PrDetailMergeBox
               core={subscription.data.core}

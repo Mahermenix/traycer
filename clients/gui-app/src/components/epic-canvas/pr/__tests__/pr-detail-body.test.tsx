@@ -10,7 +10,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type {
   PrActivitySection,
   PrChecksSection,
+  PrCommitsSection,
   PrDetailCore,
+  PrFilesSection,
   PrLiveness,
   PrSourceStatus,
   PrSubscribeDetailServerFrame,
@@ -228,6 +230,30 @@ function buildPrActivitySection(
   };
 }
 
+function buildPrFilesSection(
+  overrides: Partial<PrFilesSection>,
+): PrFilesSection {
+  return {
+    observedAt: 1_000,
+    files: [],
+    totalCount: null,
+    isTruncated: false,
+    ...overrides,
+  };
+}
+
+function buildPrCommitsSection(
+  overrides: Partial<PrCommitsSection>,
+): PrCommitsSection {
+  return {
+    observedAt: 1_000,
+    commits: [],
+    totalCount: null,
+    isTruncated: false,
+    ...overrides,
+  };
+}
+
 function buildPrDetailFrame(
   overrides: Partial<{
     readonly kind: "snapshot" | "updated";
@@ -236,6 +262,8 @@ function buildPrDetailFrame(
     readonly core: Partial<PrDetailCore>;
     readonly checks: Partial<PrChecksSection>;
     readonly activity: Partial<PrActivitySection>;
+    readonly files: Partial<PrFilesSection>;
+    readonly commits: Partial<PrCommitsSection>;
   }>,
 ): PrSubscribeDetailServerFrame {
   return {
@@ -246,6 +274,8 @@ function buildPrDetailFrame(
     core: buildPrDetailCore(overrides.core ?? {}),
     checks: buildPrChecksSection(overrides.checks ?? {}),
     activity: buildPrActivitySection(overrides.activity ?? {}),
+    files: buildPrFilesSection(overrides.files ?? {}),
+    commits: buildPrCommitsSection(overrides.commits ?? {}),
   };
 }
 
@@ -256,6 +286,8 @@ function buildPrDetailSubscriptionData(
     readonly core: Partial<PrDetailCore>;
     readonly checks: Partial<PrChecksSection>;
     readonly activity: Partial<PrActivitySection>;
+    readonly files: Partial<PrFilesSection>;
+    readonly commits: Partial<PrCommitsSection>;
   }>,
 ): PrDetailSubscriptionData {
   return {
@@ -264,6 +296,8 @@ function buildPrDetailSubscriptionData(
     core: buildPrDetailCore(overrides.core ?? {}),
     checks: buildPrChecksSection(overrides.checks ?? {}),
     activity: buildPrActivitySection(overrides.activity ?? {}),
+    files: buildPrFilesSection(overrides.files ?? {}),
+    commits: buildPrCommitsSection(overrides.commits ?? {}),
   };
 }
 
@@ -416,5 +450,85 @@ describe("PrDetailBody", () => {
     });
     expect(screen.getByTestId("pr-detail-body")).toBeTruthy();
     expect(screen.queryByTestId("pr-detail-loading")).toBeNull();
+  });
+
+  it("renders files-changed rows and interleaves commits chronologically before later comments", async () => {
+    renderBody({
+      epicId: "epic-3",
+      githubHost: "github.com",
+      owner: "acme",
+      repo: "widgets",
+      prNumber: 9,
+      isActive: true,
+    });
+    await waitFor(() => {
+      expect(mockWsStreamClient.subscribeCallCount).toBe(1);
+    });
+    const session = mockWsStreamClient.getSession("pr.subscribeDetail", {
+      epicId: "epic-3",
+      githubHost: "github.com",
+      owner: "acme",
+      repo: "widgets",
+      prNumber: 9,
+    });
+    expect(session).toBeDefined();
+    if (session === undefined) return;
+
+    session.emitFrame(
+      buildPrDetailFrame({
+        core: { base: { owner: "acme", repo: "widgets", prNumber: 9 } },
+        activity: {
+          items: [
+            {
+              kind: "comment",
+              id: "c1",
+              author: { login: "octocat", avatarUrl: null },
+              body: "later comment",
+              createdAt: 2_000,
+            },
+          ],
+        },
+        commits: {
+          commits: [
+            {
+              oid: "abcdef1234567890",
+              messageHeadline: "feat: first commit",
+              author: null,
+              authorName: "Git Author",
+              committedAt: 1_000,
+            },
+          ],
+          totalCount: 1,
+          isTruncated: false,
+        },
+        files: {
+          files: [
+            {
+              path: "src/app.ts",
+              additions: 4,
+              deletions: 1,
+              changeType: "modified",
+            },
+          ],
+          totalCount: 1,
+          isTruncated: false,
+        },
+      }),
+    );
+
+    await screen.findByTestId("pr-detail-body");
+    expect(screen.getByTestId("pr-detail-files")).toBeTruthy();
+    expect(screen.getByText("src/app.ts")).toBeTruthy();
+    const commit = screen.getByTestId("pr-detail-commit-item");
+    expect(commit.textContent).toContain("feat: first commit");
+    expect(commit.textContent).toContain("abcdef1");
+    // The commit (committedAt 1_000) precedes the comment (createdAt 2_000).
+    const timeline = screen.getByTestId("pr-detail-timeline");
+    const order = [
+      ...timeline.querySelectorAll(
+        '[data-testid="pr-detail-commit-item"], [data-testid="pr-detail-activity-item"]',
+      ),
+    ].map((element) => element.getAttribute("data-testid"));
+    expect(order).toEqual(["pr-detail-commit-item", "pr-detail-activity-item"]);
   });
 });

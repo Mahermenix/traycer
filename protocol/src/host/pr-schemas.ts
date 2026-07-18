@@ -275,6 +275,59 @@ export const prActivitySectionSchema = z.object({
 });
 export type PrActivitySection = z.infer<typeof prActivitySectionSchema>;
 
+/** GraphQL `PullRequestChangedFile.changeType`, lowercased. */
+export const prFileChangeTypeSchema = z.enum([
+  "added",
+  "deleted",
+  "modified",
+  "renamed",
+  "copied",
+  "changed",
+]);
+export type PrFileChangeType = z.infer<typeof prFileChangeTypeSchema>;
+
+export const prChangedFileSchema = z.object({
+  path: z.string(),
+  additions: z.number().int().nonnegative().nullable(),
+  deletions: z.number().int().nonnegative().nullable(),
+  changeType: prFileChangeTypeSchema.nullable(),
+});
+export type PrChangedFile = z.infer<typeof prChangedFileSchema>;
+
+/**
+ * `files` section of a detail frame - the first 100 changed files (names and
+ * per-file counts only; patch content is deliberately not carried in v1).
+ */
+export const prFilesSectionSchema = z.object({
+  observedAt: z.number().nullable(),
+  files: z.array(prChangedFileSchema).max(100),
+  totalCount: z.number().int().nonnegative().nullable(),
+  isTruncated: z.boolean(),
+});
+export type PrFilesSection = z.infer<typeof prFilesSectionSchema>;
+
+/**
+ * One commit on the PR. `author` is the GitHub user when resolvable;
+ * `authorName` falls back to the git author string for unlinked commits.
+ */
+export const prCommitSchema = z.object({
+  oid: z.string(),
+  messageHeadline: z.string().nullable(),
+  author: prActorSchema.nullable(),
+  authorName: z.string().nullable(),
+  committedAt: z.number().nullable(),
+});
+export type PrCommit = z.infer<typeof prCommitSchema>;
+
+/** `commits` section of a detail frame - the last 30 commits, chronological. */
+export const prCommitsSectionSchema = z.object({
+  observedAt: z.number().nullable(),
+  commits: z.array(prCommitSchema).max(30),
+  totalCount: z.number().int().nonnegative().nullable(),
+  isTruncated: z.boolean(),
+});
+export type PrCommitsSection = z.infer<typeof prCommitsSectionSchema>;
+
 /**
  * `core` section of a detail frame - the light fields plus the heavy-only
  * overview fields (body, author, reviewers/review requests, headRefOid,
@@ -316,6 +369,8 @@ const prSubscribeDetailFrameFields = {
   core: prDetailCoreSchema,
   checks: prChecksSectionSchema,
   activity: prActivitySectionSchema,
+  files: prFilesSectionSchema,
+  commits: prCommitsSectionSchema,
 } as const;
 
 export const prSubscribeDetailServerFrameSchema = z.discriminatedUnion(

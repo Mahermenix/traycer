@@ -12,7 +12,9 @@ import {
   prChecksSectionSchema,
   prActivityItemSchema,
   prActivitySectionSchema,
+  prCommitsSectionSchema,
   prDetailCoreSchema,
+  prFilesSectionSchema,
   prSubscribeDetailServerFrameSchema,
   prSubscribeClientFrameSchema,
   prStateSchema,
@@ -530,6 +532,88 @@ const DETAIL_ACTIVITY_FIXTURE = {
   isTruncated: false,
 };
 
+const DETAIL_FILES_FIXTURE = {
+  observedAt: 1_700_000_000_000,
+  files: [
+    {
+      path: "src/index.ts",
+      additions: 12,
+      deletions: 3,
+      changeType: "modified" as const,
+    },
+  ],
+  totalCount: 1,
+  isTruncated: false,
+};
+
+const DETAIL_COMMITS_FIXTURE = {
+  observedAt: 1_700_000_000_000,
+  commits: [
+    {
+      oid: "0123456789abcdef",
+      messageHeadline: "feat: add widget",
+      author: ACTOR_FIXTURE,
+      authorName: "Octo Cat",
+      committedAt: 1_700_000_000_000,
+    },
+  ],
+  totalCount: 1,
+  isTruncated: false,
+};
+
+describe("prFilesSectionSchema", () => {
+  it("parses and reparses a populated section unchanged", () => {
+    const parsed1 = prFilesSectionSchema.parse(DETAIL_FILES_FIXTURE);
+    const parsed2 = prFilesSectionSchema.parse(parsed1);
+    expect(parsed2).toEqual(parsed1);
+  });
+
+  it("parses a never-swept section with every nullable field null", () => {
+    const parsed = prFilesSectionSchema.parse({
+      observedAt: null,
+      files: [
+        { path: "src/a.ts", additions: null, deletions: null, changeType: null },
+      ],
+      totalCount: null,
+      isTruncated: false,
+    });
+    expect(parsed.files[0]).toMatchObject({
+      additions: null,
+      deletions: null,
+      changeType: null,
+    });
+  });
+});
+
+describe("prCommitsSectionSchema", () => {
+  it("parses and reparses a populated section unchanged", () => {
+    const parsed1 = prCommitsSectionSchema.parse(DETAIL_COMMITS_FIXTURE);
+    const parsed2 = prCommitsSectionSchema.parse(parsed1);
+    expect(parsed2).toEqual(parsed1);
+  });
+
+  it("parses an unlinked commit with a null author but a git author name", () => {
+    const parsed = prCommitsSectionSchema.parse({
+      observedAt: null,
+      commits: [
+        {
+          oid: "feed",
+          messageHeadline: null,
+          author: null,
+          authorName: "Git Author",
+          committedAt: null,
+        },
+      ],
+      totalCount: null,
+      isTruncated: true,
+    });
+    expect(parsed.commits[0]).toMatchObject({
+      author: null,
+      authorName: "Git Author",
+    });
+  });
+});
+
 describe("prSubscribeDetailServerFrameSchema", () => {
   prSourceStatusSchema.options.forEach((sourceStatus) => {
     prLivenessSchema.options.forEach((liveness) => {
@@ -542,6 +626,8 @@ describe("prSubscribeDetailServerFrameSchema", () => {
           core: DETAIL_CORE_POPULATED_FIXTURE,
           checks: DETAIL_CHECKS_FIXTURE,
           activity: DETAIL_ACTIVITY_FIXTURE,
+          files: DETAIL_FILES_FIXTURE,
+          commits: DETAIL_COMMITS_FIXTURE,
         };
         const parsed1 = prSubscribeDetailServerFrameSchema.parse(fixture);
         const parsed2 = prSubscribeDetailServerFrameSchema.parse(parsed1);
@@ -560,6 +646,8 @@ describe("prSubscribeDetailServerFrameSchema", () => {
         core: DETAIL_CORE_POPULATED_FIXTURE,
         checks: DETAIL_CHECKS_FIXTURE,
         activity: DETAIL_ACTIVITY_FIXTURE,
+        files: DETAIL_FILES_FIXTURE,
+        commits: DETAIL_COMMITS_FIXTURE,
       };
       const parsed1 = prSubscribeDetailServerFrameSchema.parse(fixture);
       const parsed2 = prSubscribeDetailServerFrameSchema.parse(parsed1);

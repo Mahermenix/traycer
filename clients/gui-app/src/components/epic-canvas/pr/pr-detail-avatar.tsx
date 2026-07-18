@@ -17,7 +17,7 @@ import { cn } from "@/lib/utils";
  */
 export function PrActorAvatar(props: {
   readonly actor: PrActor | null;
-  readonly size: "default" | "sm";
+  readonly size: "default" | "sm" | "lg";
   readonly className: string | undefined;
 }): ReactNode {
   const login = props.actor?.login ?? "";
