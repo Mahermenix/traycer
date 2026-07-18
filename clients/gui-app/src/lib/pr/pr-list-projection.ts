@@ -1,9 +1,8 @@
 /**
  * Pure projection helpers over `PrLightItem[]` for the Pull Requests panel:
- * repo grouping, within-group ordering, staleness, first-open auto-expand
- * pick, and the "fully identified" (persistable / tile-able) test. No React,
- * no store access - keeps the accordion body and the expansion store logic
- * independently testable.
+ * repo grouping, within-group ordering, staleness, and the "fully
+ * identified" (tile-able) test. No React, no store access - keeps the card
+ * list independently testable.
  */
 import type {
   PrBaseCoordinates,
@@ -90,45 +89,11 @@ export function newestObservedAt(items: readonly PrLightItem[]): number | null {
   }, null);
 }
 
-function hasFailingChecks(item: PrLightItem): boolean {
-  return item.checksRollup !== null && item.checksRollup.failure > 0;
-}
-
 /**
- * First-ever-open auto-expand pick (decision #15): open-with-failing-checks
- * > open > most recently updated overall. `null` for an empty list.
- */
-export function pickAutoExpandItem(
-  items: readonly PrLightItem[],
-): PrLightItem | null {
-  if (items.length === 0) return null;
-  const openFailing = items.filter(
-    (item) => item.state === "open" && hasFailingChecks(item),
-  );
-  if (openFailing.length > 0) {
-    return [...openFailing].sort(byMostRecentlyUpdated)[0];
-  }
-  const open = items.filter((item) => item.state === "open");
-  if (open.length > 0) {
-    return [...open].sort(byMostRecentlyUpdated)[0];
-  }
-  return [...items].sort(byMostRecentlyUpdated)[0];
-}
-
-/**
- * Stable identity for a list-only row's TRANSIENT expansion tracking (never
- * persisted - see `fullyIdentifiedPrBase`). Head identity + repo is the best
- * available key: base coordinates don't exist yet by definition.
- */
-export function prListOnlyItemKey(item: PrLightItem): string {
-  return `${item.repoIdentifier.owner}/${item.repoIdentifier.repo}::${item.headRefName ?? ""}::${item.prUrl ?? ""}`;
-}
-
-/**
- * A row is "fully identified" (tile-able, persistable as `expandedPr`) only
- * when BOTH its base coordinates and its `githubHost` are known - the two
- * are derived together from the same parsed `prUrl` (tech plan's unknown-base
- * rule), so a fork PR or absent/unparseable `prUrl` leaves both `null`.
+ * A row is "fully identified" (tile-able) only when BOTH its base
+ * coordinates and its `githubHost` are known - the two are derived together
+ * from the same parsed `prUrl` (tech plan's unknown-base rule), so a fork PR
+ * or absent/unparseable `prUrl` leaves both `null`.
  */
 export function fullyIdentifiedPrBase(
   item: PrLightItem,
@@ -138,9 +103,8 @@ export function fullyIdentifiedPrBase(
 }
 
 /**
- * Stable accordion identity for a list row. Fully identified rows use base
- * coordinates (persistable); unknown-base rows use a head/repo key that is
- * never written to the expansion store.
+ * Stable list identity for a card. Fully identified rows key on base
+ * coordinates; unknown-base rows fall back to a head/repo key.
  */
 export function prListRowKey(item: PrLightItem, hostId: string): string {
   const identified = fullyIdentifiedPrBase(item);
@@ -164,24 +128,7 @@ export function prListRowKey(item: PrLightItem, hostId: string): string {
   ].join("|");
 }
 
-export function expandedPrRowKey(args: {
-  readonly hostId: string;
-  readonly githubHost: string;
-  readonly owner: string;
-  readonly repo: string;
-  readonly prNumber: number;
-}): string {
-  return [
-    "id",
-    args.hostId,
-    args.githubHost,
-    args.owner,
-    args.repo,
-    String(args.prNumber),
-  ].join("|");
-}
-
-/** Collapsed-row primary label: `#number · title` (or head identity when base is unknown). */
+/** Card primary label: `#number · title` (or head identity when base is unknown). */
 export function formatPrRowTitle(item: PrLightItem): string {
   const title =
     item.title !== null && item.title.length > 0

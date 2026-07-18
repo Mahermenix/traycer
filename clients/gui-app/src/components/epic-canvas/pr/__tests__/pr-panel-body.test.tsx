@@ -29,14 +29,7 @@ import {
 } from "@traycer-clients/shared/host-transport/ws-stream-client";
 import { StreamRuntimeContext } from "@/lib/host/stream-runtime-context";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { pickAutoExpandItem } from "@/lib/pr/pr-list-projection";
 import { prDetailTileId } from "@/lib/pr/pr-detail-tile";
-import {
-  PR_PANEL_PERSIST_KEY,
-  migratePrPanelPersistedState,
-  usePrPanelStore,
-  type PrPanelExpandedRow,
-} from "@/stores/epics/pr-panel-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import type { TilePane } from "@/stores/epics/canvas/tile-tree";
 
@@ -44,47 +37,31 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => "host1",
 }));
 
-// `PrListRow` pulls in the per-Epic Y.doc-backed owner-label chain
+// `PrCard` pulls in the per-Epic Y.doc-backed owner-label chain
 // (`useChatById` / `useEpicTerminalAgent`, which need a live
-// `OpenEpicStoreHandle`) that has nothing to do with the expansion/persist
-// semantics under test here. Stub it to a minimal clickable row that still
-// exercises the REAL toggle wiring in `pr-panel-body.tsx` (`handleToggle`
-// calling the real `usePrPanelStore`), keeping the WS transport as the only
-// faked external boundary plus this one unrelated presentational seam. The
-// stub also forwards `onOpenFullView` (T6) as a plain button so the panel's
-// real row-click -> tile-open wiring is exercised without pulling in the
-// real `PrListRow`'s Y.doc dependency.
-vi.mock("@/components/epic-canvas/pr/pr-list-row", () => ({
-  PrListRow: (props: {
+// `OpenEpicStoreHandle`) that has nothing to do with the panel wiring under
+// test here. Stub it to a minimal clickable card that still exercises the
+// REAL card-click -> tile-open wiring in `pr-panel-body.tsx`, keeping the WS
+// transport as the only faked external boundary plus this one unrelated
+// presentational seam.
+vi.mock("@/components/epic-canvas/pr/pr-card", () => ({
+  PrCard: (props: {
     readonly item: PrLightItem;
-    readonly expanded: boolean;
-    readonly onToggle: () => void;
-    readonly onOpenFullView: (() => void) | null;
+    readonly onOpen: (() => void) | null;
   }) => {
     const label =
       props.item.base !== null
         ? `${props.item.base.owner}/${props.item.base.repo}#${props.item.base.prNumber}`
         : (props.item.headRefName ?? "unknown-head");
     return (
-      <div>
-        <button
-          type="button"
-          data-testid={`mock-pr-row-${label}`}
-          data-expanded={props.expanded ? "true" : "false"}
-          onClick={props.onToggle}
-        >
-          {label}
-        </button>
-        {props.expanded && props.onOpenFullView !== null ? (
-          <button
-            type="button"
-            data-testid="pr-open-full-view"
-            onClick={props.onOpenFullView}
-          >
-            Open full view
-          </button>
-        ) : null}
-      </div>
+      <button
+        type="button"
+        data-testid={`mock-pr-card-${label}`}
+        data-openable={props.onOpen !== null ? "true" : "false"}
+        onClick={() => props.onOpen?.()}
+      >
+        {label}
+      </button>
     );
   },
 }));
@@ -207,21 +184,11 @@ function buildPrItem(overrides: Partial<PrLightItem>): PrLightItem {
   };
 }
 
-function resetPrPanelStore(): void {
-  window.localStorage.clear();
-  usePrPanelStore.setState({ stateByEpicId: {} });
-}
-
 function resetCanvas(): void {
   useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
 }
 
-/** Narrows a parsed `zustand/persist` localStorage blob to `{ state }` without an `as` cast. */
-function hasStateField(value: unknown): value is { readonly state: unknown } {
-  return typeof value === "object" && value !== null && "state" in value;
-}
-
-describe("PrPanelBody expansion persistence", () => {
+describe("PrPanelBody card list", () => {
   let queryClient: QueryClient;
   let mockWsStreamClient: MockWsStreamClient;
 
@@ -239,8 +206,29 @@ describe("PrPanelBody expansion persistence", () => {
     );
   };
 
+  const emitSnapshot = async (
+    epicId: string,
+    items: readonly PrLightItem[],
+  ): Promise<MockStreamSession> => {
+    await waitFor(() => {
+      expect(mockWsStreamClient.subscribeCallCount).toBe(1);
+    });
+    const session = mockWsStreamClient.getSession("pr.subscribeListForEpic", {
+      epicId,
+      mode: "foreground",
+    });
+    expect(session).toBeDefined();
+    if (session === undefined) throw new Error("missing list session");
+    session.emitFrame({
+      kind: "snapshot",
+      hasBinaryPayload: false,
+      sourceStatus: "ok",
+      items: [...items],
+    });
+    return session;
+  };
+
   beforeEach(() => {
-    resetPrPanelStore();
     resetCanvas();
     nestedFocusBoundaryMock.navigateNested.mockClear();
     queryClient = new QueryClient({
@@ -251,189 +239,37 @@ describe("PrPanelBody expansion persistence", () => {
 
   afterEach(() => {
     cleanup();
-    resetPrPanelStore();
     resetCanvas();
     queryClient.clear();
   });
 
-  it("expanding an unknown-base (list-only) row stays transient and never persists a non-null row", async () => {
-    const epicId = "epic-c1";
-    // Pre-mark the epic as already visited (nothing expanded yet) so the
-    // first-open auto-expand effect - covered separately below - does not
-    // fire and interfere with this toggle-only assertion. Seeded via
-    // `setState` directly (not the `setExpandedPr` action): that action
-    // bails as a no-op when the epic is unvisited and the target is already
-    // `null` (`expandedRowsEqual(null, null)` short-circuits), which would
-    // never actually create the `stateByEpicId[epicId]` entry.
-    usePrPanelStore.setState({
-      stateByEpicId: { [epicId]: { expandedPr: null } },
-    });
+  it("renders a worktrees-style repo header (label + count) over one always-expanded card per PR", async () => {
+    const epicId = "epic-h1";
+    renderPanel({ epicId, tabId: "tab-h1" });
+    await emitSnapshot(epicId, [
+      buildPrItem({
+        base: { owner: "acme", repo: "widgets", prNumber: 1 },
+        githubHost: "github.com",
+        prUrl: "https://github.com/acme/widgets/pull/1",
+      }),
+      buildPrItem({
+        headRefName: "feature/unknown-base",
+        repoIdentifier: { owner: "acme", repo: "widgets" },
+      }),
+    ]);
 
-    const unknownBaseItem = buildPrItem({
-      base: null,
-      githubHost: null,
-      prUrl: null,
-      headRefName: "unknown/head",
-    });
-
-    renderPanel({ epicId, tabId: "tab-c1" });
-
-    await waitFor(() => {
-      expect(mockWsStreamClient.subscribeCallCount).toBe(1);
-    });
-    const session = mockWsStreamClient.getSession("pr.subscribeListForEpic", {
-      epicId,
-      mode: "foreground",
-    });
-    expect(session).toBeDefined();
-    if (session === undefined) return;
-
-    session.emitFrame({
-      kind: "snapshot",
-      hasBinaryPayload: false,
-      sourceStatus: "ok",
-      items: [unknownBaseItem],
-    });
-
-    const row = await screen.findByTestId("mock-pr-row-unknown/head");
-    expect(row.getAttribute("data-expanded")).toBe("false");
-
-    fireEvent.click(row);
-
-    await waitFor(() => {
-      expect(row.getAttribute("data-expanded")).toBe("true");
-    });
-    // Transient-only: the store's persisted expansion for this epic must
-    // remain null, never a non-null row, for an unknown-base toggle.
+    const header = await screen.findByTestId("pr-repo-group-header");
+    expect(header.textContent).toContain("acme/widgets");
+    expect(header.textContent).toContain("2");
+    // Both cards render directly - no expansion affordance exists anymore.
+    expect(screen.getByTestId("mock-pr-card-acme/widgets#1")).toBeTruthy();
     expect(
-      usePrPanelStore.getState().stateByEpicId[epicId].expandedPr,
-    ).toBeNull();
+      screen.getByTestId("mock-pr-card-feature/unknown-base"),
+    ).toBeTruthy();
   });
 
-  it("expanding a fully-identified row persists into usePrPanelStore, and a fresh read after 'reload' returns the same row", async () => {
-    const epicId = "epic-c2";
-    usePrPanelStore.setState({
-      stateByEpicId: { [epicId]: { expandedPr: null } },
-    });
-
-    const identifiedItem = buildPrItem({
-      base: { owner: "acme", repo: "widgets", prNumber: 42 },
-      githubHost: "github.com",
-      prUrl: "https://github.com/acme/widgets/pull/42",
-      headRefName: "feature/known",
-    });
-
-    renderPanel({ epicId, tabId: "tab-c2" });
-
-    await waitFor(() => {
-      expect(mockWsStreamClient.subscribeCallCount).toBe(1);
-    });
-    const session = mockWsStreamClient.getSession("pr.subscribeListForEpic", {
-      epicId,
-      mode: "foreground",
-    });
-    expect(session).toBeDefined();
-    if (session === undefined) return;
-
-    session.emitFrame({
-      kind: "snapshot",
-      hasBinaryPayload: false,
-      sourceStatus: "ok",
-      items: [identifiedItem],
-    });
-
-    const row = await screen.findByTestId("mock-pr-row-acme/widgets#42");
-    fireEvent.click(row);
-
-    const expectedRow: PrPanelExpandedRow = {
-      hostId: "host1",
-      githubHost: "github.com",
-      owner: "acme",
-      repo: "widgets",
-      prNumber: 42,
-    };
-
-    await waitFor(() => {
-      expect(
-        usePrPanelStore.getState().stateByEpicId[epicId].expandedPr,
-      ).toEqual(expectedRow);
-    });
-
-    // Simulate "restored after reload": read the persisted localStorage
-    // blob and run it through the SAME `migratePrPanelPersistedState` the
-    // persist middleware calls on rehydration, rather than trusting the
-    // live in-memory store.
-    await waitFor(() => {
-      expect(window.localStorage.getItem(PR_PANEL_PERSIST_KEY)).not.toBeNull();
-    });
-    const raw = window.localStorage.getItem(PR_PANEL_PERSIST_KEY);
-    const parsed: unknown = JSON.parse(raw ?? "{}");
-    const parsedState = hasStateField(parsed) ? parsed.state : null;
-    const restored = migratePrPanelPersistedState(parsedState);
-    expect(restored.stateByEpicId[epicId].expandedPr).toEqual(expectedRow);
-  });
-
-  it("first-open auto-expand wiring: the effect picks via pickAutoExpandItem and persists it on first frame, without any click", async () => {
-    const epicId = "epic-c3";
-    // No pre-seed here - the epic is genuinely unvisited, so the first-open
-    // effect in `PrPanelBodyContent` must run.
-    expect(usePrPanelStore.getState().stateByEpicId[epicId]).toBeUndefined();
-
-    const openItem = buildPrItem({
-      base: { owner: "acme", repo: "widgets", prNumber: 7 },
-      githubHost: "github.com",
-      prUrl: "https://github.com/acme/widgets/pull/7",
-      state: "open",
-      updatedAt: 500,
-    });
-    const mergedItem = buildPrItem({
-      base: { owner: "acme", repo: "widgets", prNumber: 6 },
-      githubHost: "github.com",
-      prUrl: "https://github.com/acme/widgets/pull/6",
-      state: "merged",
-      updatedAt: 900,
-    });
-
-    renderPanel({ epicId, tabId: "tab-c3" });
-
-    await waitFor(() => {
-      expect(mockWsStreamClient.subscribeCallCount).toBe(1);
-    });
-    const session = mockWsStreamClient.getSession("pr.subscribeListForEpic", {
-      epicId,
-      mode: "foreground",
-    });
-    expect(session).toBeDefined();
-    if (session === undefined) return;
-
-    session.emitFrame({
-      kind: "snapshot",
-      hasBinaryPayload: false,
-      sourceStatus: "ok",
-      items: [mergedItem, openItem],
-    });
-
-    const expectedRow: PrPanelExpandedRow = {
-      hostId: "host1",
-      githubHost: "github.com",
-      owner: "acme",
-      repo: "widgets",
-      prNumber: 7,
-    };
-
-    await waitFor(() => {
-      expect(
-        usePrPanelStore.getState().stateByEpicId[epicId].expandedPr,
-      ).toEqual(expectedRow);
-    });
-  });
-
-  it("(d) clicking 'Open full view' on an expanded, fully-identified row opens a pr-detail tile via the real canvas store", async () => {
+  it("clicking a fully-identified card opens a pr-detail tile via the real canvas store", async () => {
     const epicId = "epic-d1";
-    usePrPanelStore.setState({
-      stateByEpicId: { [epicId]: { expandedPr: null } },
-    });
-
     const item = buildPrItem({
       base: { owner: "acme", repo: "widgets", prNumber: 55 },
       githubHost: "github.com",
@@ -443,33 +279,11 @@ describe("PrPanelBody expansion persistence", () => {
     });
 
     renderPanel({ epicId, tabId: "tab-d1" });
+    await emitSnapshot(epicId, [item]);
 
-    await waitFor(() => {
-      expect(mockWsStreamClient.subscribeCallCount).toBe(1);
-    });
-    const session = mockWsStreamClient.getSession("pr.subscribeListForEpic", {
-      epicId,
-      mode: "foreground",
-    });
-    expect(session).toBeDefined();
-    if (session === undefined) return;
-
-    session.emitFrame({
-      kind: "snapshot",
-      hasBinaryPayload: false,
-      sourceStatus: "ok",
-      items: [item],
-    });
-
-    const row = await screen.findByTestId("mock-pr-row-acme/widgets#55");
-    fireEvent.click(row);
-
-    await waitFor(() => {
-      expect(row.getAttribute("data-expanded")).toBe("true");
-    });
-
-    const openFullViewButton = await screen.findByTestId("pr-open-full-view");
-    fireEvent.click(openFullViewButton);
+    const card = await screen.findByTestId("mock-pr-card-acme/widgets#55");
+    expect(card.getAttribute("data-openable")).toBe("true");
+    fireEvent.click(card);
 
     const expectedTileId = prDetailTileId({
       hostId: "host1",
@@ -503,90 +317,22 @@ describe("PrPanelBody expansion persistence", () => {
     expect(tile.repo).toBe("widgets");
     expect(tile.prNumber).toBe(55);
   });
-});
 
-describe("pickAutoExpandItem (first-open auto-expand priority)", () => {
-  it("returns null for an empty item list", () => {
-    expect(pickAutoExpandItem([])).toBeNull();
-  });
+  it("an unknown-base card is not openable and clicking it opens no tile", async () => {
+    const epicId = "epic-u1";
+    renderPanel({ epicId, tabId: "tab-u1" });
+    await emitSnapshot(epicId, [
+      buildPrItem({ headRefName: "feature/unknown-base" }),
+    ]);
 
-  it("tier 1: an open PR with failing checks wins over any other open PR", () => {
-    const openClean = buildPrItem({
-      base: { owner: "a", repo: "b", prNumber: 1 },
-      state: "open",
-      checksRollup: { success: 3, failure: 0, pending: 0, total: 3 },
-      updatedAt: 900,
-    });
-    const openFailing = buildPrItem({
-      base: { owner: "a", repo: "b", prNumber: 2 },
-      state: "open",
-      checksRollup: { success: 1, failure: 1, pending: 0, total: 2 },
-      updatedAt: 100,
-    });
-    const merged = buildPrItem({
-      base: { owner: "a", repo: "b", prNumber: 3 },
-      state: "merged",
-      updatedAt: 2_000,
-    });
+    const card = await screen.findByTestId("mock-pr-card-feature/unknown-base");
+    expect(card.getAttribute("data-openable")).toBe("false");
+    fireEvent.click(card);
 
-    const pick = pickAutoExpandItem([openClean, openFailing, merged]);
-    expect(pick).not.toBeNull();
-    expect(pick?.base?.prNumber).toBe(2);
-  });
-
-  it("tier 1 tie-break: among multiple open-failing PRs, the most recently updated wins", () => {
-    const olderFailing = buildPrItem({
-      base: { owner: "a", repo: "b", prNumber: 10 },
-      state: "open",
-      checksRollup: { success: 0, failure: 1, pending: 0, total: 1 },
-      updatedAt: 100,
-    });
-    const newerFailing = buildPrItem({
-      base: { owner: "a", repo: "b", prNumber: 11 },
-      state: "open",
-      checksRollup: { success: 0, failure: 2, pending: 0, total: 2 },
-      updatedAt: 500,
-    });
-
-    const pick = pickAutoExpandItem([olderFailing, newerFailing]);
-    expect(pick?.base?.prNumber).toBe(11);
-  });
-
-  it("tier 2: absent any failing-checks open PR, any open PR wins over merged/closed", () => {
-    const openNoChecks = buildPrItem({
-      base: { owner: "a", repo: "b", prNumber: 20 },
-      state: "open",
-      checksRollup: null,
-      updatedAt: 50,
-    });
-    const mergedRecent = buildPrItem({
-      base: { owner: "a", repo: "b", prNumber: 21 },
-      state: "merged",
-      updatedAt: 9_999,
-    });
-    const closedRecent = buildPrItem({
-      base: { owner: "a", repo: "b", prNumber: 22 },
-      state: "closed",
-      updatedAt: 9_998,
-    });
-
-    const pick = pickAutoExpandItem([mergedRecent, closedRecent, openNoChecks]);
-    expect(pick?.base?.prNumber).toBe(20);
-  });
-
-  it("tier 3: absent any open PR, the most-recently-updated PR overall wins", () => {
-    const olderMerged = buildPrItem({
-      base: { owner: "a", repo: "b", prNumber: 30 },
-      state: "merged",
-      updatedAt: 100,
-    });
-    const newerClosed = buildPrItem({
-      base: { owner: "a", repo: "b", prNumber: 31 },
-      state: "closed",
-      updatedAt: 800,
-    });
-
-    const pick = pickAutoExpandItem([olderMerged, newerClosed]);
-    expect(pick?.base?.prNumber).toBe(31);
+    const canvasState = useEpicCanvasStore.getState();
+    const tabId = Object.keys(canvasState.tabsById).find(
+      (id) => canvasState.tabsById[id]?.epicId === epicId,
+    );
+    expect(tabId).toBeUndefined();
   });
 });
