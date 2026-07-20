@@ -8,6 +8,9 @@ import type { IStreamSession } from "../i-stream-session";
 import type { ParamsOf, StreamMethodSupport } from "../ws-stream-client";
 import type { IRemoteSession } from "./remote-session";
 
+/** Monotonic source for `RemoteStreamClient.instanceId` (log correlation). */
+let nextRemoteStreamClientId = 0;
+
 /**
  * `IHostStreamClient` over the persistent remote session — the streaming
  * sibling of `WsStreamClient`. Because the typed wrappers depend only on
@@ -23,6 +26,7 @@ export class RemoteStreamClient<
   StreamRegistry extends VersionedStreamRpcRegistry,
 > implements IHostStreamClient<StreamRegistry> {
   private readonly session: IRemoteSession<RpcRegistry, StreamRegistry>;
+  readonly instanceId = `remote-stream-client-${nextRemoteStreamClientId++}`;
 
   constructor(session: IRemoteSession<RpcRegistry, StreamRegistry>) {
     this.session = session;
@@ -44,7 +48,22 @@ export class RemoteStreamClient<
     return this.session.isClosed();
   }
 
-  close(): void {
+  /** Always `null`: the mux session exposes no closed-reason to report. */
+  getClosedReason(): string | null {
+    return null;
+  }
+
+  /**
+   * No-op close subscription: a remote session self-heals via its own
+   * resume/backoff loop (Architecture §3) rather than closing underneath the
+   * provider, so there is no underneath-close to notify. The owner-side
+   * liveness guard's `isClosed()` re-check still covers a terminal close.
+   */
+  onClosed(_listener: () => void): () => void {
+    return () => {};
+  }
+
+  close(_reason: string): void {
     this.session.close();
   }
 

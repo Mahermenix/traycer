@@ -12,6 +12,8 @@ import type {
 import type {
   AppResourceSnapshotWire,
   EpicResourceSnapshotWire,
+  HostTreeResourceSnapshotWire,
+  OtherResourceSnapshotWire,
   OwnerResourceSnapshotWire,
   ResourceProcessSnapshotWire,
   ResourceOwnerKindWire,
@@ -39,14 +41,13 @@ export type ResourcesStreamClientFactory = (
 export type OwnerResourceUsage = OwnerResourceSnapshotWire;
 export type EpicResourceUsage = EpicResourceSnapshotWire;
 export type AppResourceUsage = AppResourceSnapshotWire;
+export type HostTreeResourceUsage = HostTreeResourceSnapshotWire;
+export type OtherResourceUsage = OtherResourceSnapshotWire;
 
 export interface TaskResourceSummary {
   readonly cpuPercent: number;
   readonly rssBytes: number;
   readonly trackedProcessCount: number;
-  readonly openTerminalCount: number;
-  readonly tuiAgentCount: number;
-  readonly guiAgentCount: number;
 }
 
 /** Stable map key for one owner within an epic's projection. */
@@ -78,14 +79,13 @@ export interface ResourcesState {
   readonly owners: ReadonlyMap<string, OwnerResourceSnapshotWire>;
   /** Host-app usage sampled alongside the owner projection. */
   readonly app: AppResourceSnapshotWire | null;
+  /** Whole host-process-tree aggregate, available from resources.subscribe@1.2. */
+  readonly hostTree: HostTreeResourceSnapshotWire | null;
+  /** Unattributed host-tree process roots, available from resources.subscribe@1.2. */
+  readonly other: OtherResourceSnapshotWire | null;
   /** `null` when the epic has no tracked owner roots (a valid quiet state). */
   readonly epic: EpicResourceSnapshotWire | null;
   readonly epics: ReadonlyMap<string, EpicResourceSnapshotWire>;
-  /**
-   * Renderer-derived task-level summary for the live owner projection. `null`
-   * means no tracked owner snapshots are present, not zero usage.
-   */
-  readonly taskSummary: TaskResourceSummary | null;
   readonly dispose: () => void;
 }
 
@@ -157,20 +157,6 @@ function epicUsageEqual(
   );
 }
 
-function taskSummaryEqual(
-  a: TaskResourceSummary,
-  b: TaskResourceSummary,
-): boolean {
-  return (
-    a.cpuPercent === b.cpuPercent &&
-    a.rssBytes === b.rssBytes &&
-    a.trackedProcessCount === b.trackedProcessCount &&
-    a.openTerminalCount === b.openTerminalCount &&
-    a.tuiAgentCount === b.tuiAgentCount &&
-    a.guiAgentCount === b.guiAgentCount
-  );
-}
-
 function appUsageEqual(
   a: AppResourceSnapshotWire,
   b: AppResourceSnapshotWire,
@@ -185,6 +171,29 @@ function appUsageEqual(
   }
   if (a.process === null || b.process === null) return a.process === b.process;
   return processEqual(a.process, b.process);
+}
+
+function hostTreeUsageEqual(
+  a: HostTreeResourceSnapshotWire,
+  b: HostTreeResourceSnapshotWire,
+): boolean {
+  return (
+    a.processCount === b.processCount &&
+    a.cpuPercent === b.cpuPercent &&
+    a.rssBytes === b.rssBytes
+  );
+}
+
+function otherUsageEqual(
+  a: OtherResourceSnapshotWire,
+  b: OtherResourceSnapshotWire,
+): boolean {
+  return (
+    a.processCount === b.processCount &&
+    a.cpuPercent === b.cpuPercent &&
+    a.rssBytes === b.rssBytes &&
+    processesEqual(a.processes, b.processes)
+  );
 }
 
 function mergeOwners(
@@ -212,47 +221,6 @@ function mergeOwners(
     );
   }
   return next;
-}
-
-export function deriveTaskResourceSummary(
-  app: AppResourceSnapshotWire | null,
-  owners: readonly OwnerResourceSnapshotWire[],
-): TaskResourceSummary | null {
-  if (app === null && owners.length === 0) return null;
-
-  let cpuPercent = app?.cpuPercent ?? 0;
-  let rssBytes = app?.rssBytes ?? 0;
-  let trackedProcessCount = app?.processCount ?? 0;
-  let openTerminalCount = 0;
-  let tuiAgentCount = 0;
-  let guiAgentCount = 0;
-
-  for (const snapshot of owners) {
-    cpuPercent += snapshot.cpuPercent;
-    rssBytes += snapshot.rssBytes;
-    trackedProcessCount += snapshot.processCount;
-
-    switch (snapshot.owner.kind) {
-      case "terminal":
-        openTerminalCount += 1;
-        break;
-      case "terminal-agent":
-        tuiAgentCount += 1;
-        break;
-      case "chat":
-        guiAgentCount += 1;
-        break;
-    }
-  }
-
-  return {
-    cpuPercent,
-    rssBytes,
-    trackedProcessCount,
-    openTerminalCount,
-    tuiAgentCount,
-    guiAgentCount,
-  };
 }
 
 function mergeEpic(
@@ -294,13 +262,21 @@ function mergeApp(
   return next;
 }
 
-function mergeTaskSummary(
-  previous: TaskResourceSummary | null,
-  payload: ResourcesProjectionPayload,
-): TaskResourceSummary | null {
-  const next = deriveTaskResourceSummary(payload.app, payload.owners);
-  if (next === null) return null;
-  if (previous !== null && taskSummaryEqual(previous, next)) return previous;
+function mergeHostTree(
+  previous: HostTreeResourceSnapshotWire | null,
+  next: HostTreeResourceSnapshotWire | null | undefined,
+): HostTreeResourceSnapshotWire | null {
+  if (next === null || next === undefined) return null;
+  if (previous !== null && hostTreeUsageEqual(previous, next)) return previous;
+  return next;
+}
+
+function mergeOther(
+  previous: OtherResourceSnapshotWire | null,
+  next: OtherResourceSnapshotWire | null | undefined,
+): OtherResourceSnapshotWire | null {
+  if (next === null || next === undefined) return null;
+  if (previous !== null && otherUsageEqual(previous, next)) return previous;
   return next;
 }
 
@@ -319,9 +295,10 @@ export function createResourcesStore(
         sampledAt: payload.sampledAt,
         owners: mergeOwners(state.owners, payload, options.scope),
         app: mergeApp(state.app, payload.app),
+        hostTree: mergeHostTree(state.hostTree, payload.hostTree),
+        other: mergeOther(state.other, payload.other),
         epic: mergeEpic(state.epic, payload.epic),
         epics: mergeEpics(state.epics, payload),
-        taskSummary: mergeTaskSummary(state.taskSummary, payload),
       }));
     };
 
@@ -345,9 +322,10 @@ export function createResourcesStore(
       sampledAt: null,
       owners: EMPTY_OWNERS,
       app: null,
+      hostTree: null,
+      other: null,
       epic: null,
       epics: EMPTY_EPICS,
-      taskSummary: null,
       dispose: () => {
         if (disposed) return;
         disposed = true;

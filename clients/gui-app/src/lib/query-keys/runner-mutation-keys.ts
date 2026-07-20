@@ -9,6 +9,9 @@ export const runnerMutationKeys = {
   serviceEnableLinger: () => ["runner.serviceEnableLinger"] as const,
   traycerShellConfigSet: () => ["runner.traycer.shellConfigSet"] as const,
   traycerShellConfigReset: () => ["runner.traycer.shellConfigReset"] as const,
+  traycerShellConfigAdd: () => ["runner.traycer.shellConfigAdd"] as const,
+  traycerShellConfigRemove: () => ["runner.traycer.shellConfigRemove"] as const,
+  traycerShellRevertArgs: () => ["runner.traycer.shellRevertArgs"] as const,
   traycerEnvOverrideSet: () => ["runner.traycer.envOverrideSet"] as const,
   traycerEnvOverrideDelete: () => ["runner.traycer.envOverrideDelete"] as const,
   traycerCliLogin: () => ["runner.traycer.cliLogin"] as const,
@@ -49,6 +52,8 @@ export const runnerMutationKeys = {
   // Settings → log level (desktop/cli/host). Machine-local config, not
   // host-scoped, so a single static key suffices.
   logLevelsSet: () => ["runner.logLevels.set"] as const,
+  setAllowPrereleaseUpdates: () =>
+    ["runner.appUpdates.setAllowPrerelease"] as const,
 };
 
 export const runnerQueryKeys = {
@@ -66,6 +71,11 @@ export const runnerQueryKeys = {
     ["runner.traycer.shellConfig", traycerCli] as const,
   traycerShellList: (traycerCli: object) =>
     ["runner.traycer.shellList", traycerCli] as const,
+  // Live "Add a shell" validation probe, keyed by the candidate path so each
+  // debounced value caches independently. Scoped to the runner-host instance
+  // like the other traycer queries.
+  traycerShellProbe: (traycerCli: object, path: string) =>
+    ["runner.traycer.shellProbe", traycerCli, path] as const,
   traycerEnvOverrideList: (traycerCli: object) =>
     ["runner.traycer.envOverrideList", traycerCli] as const,
   // Host-management queries are scoped by the `IHostManagement`
@@ -77,8 +87,18 @@ export const runnerQueryKeys = {
       ...runnerQueryKeys.hostAvailableVersionsScope(management),
       includePreReleases,
     ] as const,
-  hostRegistryUpdate: (management: object) =>
+  // Channel-scoped: the registry resolves a different exact target under
+  // stable vs. release-candidate, so a channel switch must not let any window
+  // keep reading (or confirming) the previous channel's cached version. Keying
+  // on `allowPrerelease` retires the old entry the moment main pushes the new
+  // channel snapshot, ahead of the refreshed registry state that follows it.
+  hostRegistryUpdateScope: (management: object) =>
     ["runner.host.registryUpdate", management] as const,
+  hostRegistryUpdate: (management: object, allowPrerelease: boolean) =>
+    [
+      ...runnerQueryKeys.hostRegistryUpdateScope(management),
+      allowPrerelease,
+    ] as const,
   // Canonical cross-surface "is a host mutation running" status (Ticket:
   // host-update-race-conditions). Primed once via `getOperationStatus()` on
   // mount, then pushed by `HostOperationStatusListener` - never refetched by

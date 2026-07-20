@@ -1,5 +1,8 @@
 import { useMemo } from "react";
-import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
+import type {
+  ProviderCliState,
+  ProviderProfile,
+} from "@traycer/protocol/host/provider-schemas";
 import { useHostQueriesWithResponseMap } from "@/hooks/host/use-host-queries";
 import {
   providerRateLimitQueryOptions,
@@ -23,6 +26,7 @@ import {
 export interface ConfiguredRateLimitProvider {
   readonly providerId: RateLimitProviderId;
   readonly lane: RateLimitFetchLane;
+  readonly profiles: ReadonlyArray<ProviderProfile>;
 }
 
 interface RateLimitProviderCandidate extends ConfiguredRateLimitProvider {
@@ -34,14 +38,24 @@ interface ProviderRateLimitCacheState {
   readonly isError: boolean;
 }
 
-const PASSIVE_PROVIDER_RATE_LIMIT_OPTIONS: ProviderRateLimitTanstackOptions = {
-  enabled: false,
-  retry: false,
-  staleTime: PROVIDER_RATE_LIMITS_STALE_TIME_MS,
-  refetchInterval: false,
-  refetchIntervalInBackground: false,
-  refetchOnMount: false,
-};
+/**
+ * Cache-only observation: never `enabled`, so mounting this options object
+ * against a query never initiates its own provider read - it only reflects
+ * whatever the shared serial queue or another lane's active query already
+ * wrote into that exact cache key. Exported for other picker-only surfaces
+ * (`use-profile-usage-comparison.ts`) that need the same "observe, never
+ * fetch" contract this module's own `useVisibleRateLimitProviders` uses.
+ */
+export const PASSIVE_PROVIDER_RATE_LIMIT_OPTIONS: ProviderRateLimitTanstackOptions =
+  {
+    enabled: false,
+    gcTime: Infinity,
+    retry: false,
+    staleTime: PROVIDER_RATE_LIMITS_STALE_TIME_MS,
+    refetchInterval: false,
+    refetchIntervalInBackground: false,
+    refetchOnMount: false,
+  };
 
 function hasProviderRateLimitCacheState(
   query: ProviderRateLimitCacheState | undefined,
@@ -65,6 +79,7 @@ function rateLimitProviderCandidates(
       {
         providerId,
         lane: rateLimitFetchLane(providerId),
+        profiles: state.profiles,
         configured: isRateLimitProviderConfigured(state),
       },
     ];
@@ -94,7 +109,13 @@ export function useConfiguredRateLimitProviders(): ReadonlyArray<ConfiguredRateL
     if (providers === undefined) return [];
     return rateLimitProviderCandidates(providers).flatMap((provider) =>
       provider.configured
-        ? [{ providerId: provider.providerId, lane: provider.lane }]
+        ? [
+            {
+              providerId: provider.providerId,
+              lane: provider.lane,
+              profiles: provider.profiles,
+            },
+          ]
         : [],
     );
   }, [providers]);
@@ -131,9 +152,11 @@ export function useVisibleRateLimitProviders(): ReadonlyArray<ConfiguredRateLimi
     ProviderRateLimitEnvelope
   >({
     client,
+    cacheKeyIdentity: undefined,
     requests: candidates.map((provider) => {
       const { method, params } = providerRateLimitQueryOptions(
         provider.providerId,
+        null,
       );
       return { method, params };
     }),
@@ -146,7 +169,13 @@ export function useVisibleRateLimitProviders(): ReadonlyArray<ConfiguredRateLimi
       candidates.flatMap((provider, index) =>
         provider.configured ||
         hasProviderRateLimitCacheState(cacheQueries[index])
-          ? [{ providerId: provider.providerId, lane: provider.lane }]
+          ? [
+              {
+                providerId: provider.providerId,
+                lane: provider.lane,
+                profiles: provider.profiles,
+              },
+            ]
           : [],
       ),
     [cacheQueries, candidates],

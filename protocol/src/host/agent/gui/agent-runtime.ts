@@ -7,6 +7,10 @@ import {
 import { guiHarnessIdSchema } from "@traycer/protocol/host/agent/shared";
 import { getRecordSchema } from "@traycer/protocol/framework/index";
 import {
+  userMessageSenderSchema,
+  userMessageSenderSchemaPreInReplyTo,
+} from "@traycer/protocol/persistence/epic/senders";
+import {
   interviewAnswerSchema,
   interviewQuestionOptionSchema,
   interviewQuestionSchema,
@@ -183,6 +187,15 @@ export type RuntimeSlashInvocation = z.infer<
   typeof runtimeSlashInvocationSchema
 >;
 
+export const runtimeSkillInvocationSchema = z.object({
+  name: z.string(),
+  path: z.string().nullable(),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+});
+export type RuntimeSkillInvocation = z.infer<
+  typeof runtimeSkillInvocationSchema
+>;
+
 export const runtimeAgentRunInputSchema = z.object({
   harnessId: guiHarnessIdSchema,
   prompt: z.string(),
@@ -201,12 +214,21 @@ export const runtimeAgentRunInputSchema = z.object({
   providerWorkspace: providerWorkspaceSchema,
   systemPrompt: z.string().nullable().default(null),
   slashInvocation: runtimeSlashInvocationSchema.nullable().default(null),
+  // Skills selected as inline composer modifiers. Optional preserves runtime
+  // compatibility with callers created before multi-skill composer support.
+  skillInvocations: z.array(runtimeSkillInvocationSchema).optional(),
   // Billing/account context for the turn, sourced from the turn-bearing frame's
   // `accountContext` (a global app-wide selection), not from per-chat
   // `chatRunSettings`. The Traycer harness threads this to its per-user
   // OpenCode server so the inference call bills the right account; other
   // harnesses ignore it.
   accountContext: accountContextSchema.default(DEFAULT_ACCOUNT_CONTEXT),
+  // Which of the harness's logged-in profiles (subscriptions) to spawn this
+  // turn's adapter with (resolved to a config-dir env override by the host's
+  // ProfileResolver). `null` = the ambient/host login. Distinct from
+  // `accountContext`, which selects Traycer's own billing org, not a
+  // provider-CLI login. See the multi-profile decision log.
+  profileId: z.string().nullable().default(null),
 });
 export type RuntimeAgentRunInput = z.infer<typeof runtimeAgentRunInputSchema>;
 
@@ -520,8 +542,30 @@ export const steerSubmittedEventSchema = z.object({
   messageId: z.string(),
   content: jsonContentSchema,
   mode: chatQueueSteerModeSchema.default("safe_point"),
+  // Who authored the steered message, carried onto the `steer` content block by
+  // the shared accumulator. The steered USER row (`messageId`) is the primary
+  // record, but it and the block have asymmetric durability - so a renderer that
+  // sees only the block must still be able to tell an agent-to-agent message
+  // from a human one. Additive + nullable: a host that predates this field sends
+  // no sender, the block's stays `null`, and the fallback renders a plain user
+  // row exactly as before.
+  sender: userMessageSenderSchema.nullable().default(null),
 });
 export type SteerSubmittedEvent = z.infer<typeof steerSubmittedEventSchema>;
+
+// Wire-freeze copy with the `sender` swapped for its pre-`inReplyTo` freeze,
+// bound (via the frozen runtime unions below) to the `blockDelta` frame on the
+// released `chat.subscribe@1.0–1.3` lines so those lines strip `inReplyTo` from
+// a steer sender too. Hand-frozen; see `agentSenderSchemaPreInReplyTo`.
+export const steerSubmittedEventSchemaPreInReplyTo = z.object({
+  ...baseRuntimeEventFields,
+  type: z.literal("steer.submitted"),
+  queueItemId: z.string(),
+  messageId: z.string(),
+  content: jsonContentSchema,
+  mode: chatQueueSteerModeSchema.default("safe_point"),
+  sender: userMessageSenderSchemaPreInReplyTo.nullable().default(null),
+});
 
 export const interviewRequestedEventSchema = z.object({
   ...baseRuntimeEventFields,
@@ -870,6 +914,22 @@ export const ampUserMessageAnchorResolvedSchema = z.object({
   ampSessionId: z.string().nullable(),
 });
 
+export const devinUserMessageAnchorResolvedSchema = z.object({
+  harnessId: z.literal("devin"),
+  sessionId: z.string(),
+  // The ACP session id the `devin acp` process assigned for this turn.
+  // Null until `session/new` resolves; used to resume the same ACP session.
+  devinSessionId: z.string().nullable(),
+});
+
+export const piUserMessageAnchorResolvedSchema = z.object({
+  harnessId: z.literal("pi"),
+  sessionId: z.string(),
+  // The Pi session id assigned for this turn. Null until the session is
+  // resolved; used to resume the same Pi session on a later turn.
+  piSessionId: z.string().nullable(),
+});
+
 export const userMessageAnchorResolvedEventSchema = z.object({
   ...baseRuntimeEventFields,
   type: z.literal("user_message.anchor_resolved"),
@@ -889,6 +949,8 @@ export const userMessageAnchorResolvedEventSchema = z.object({
     copilotUserMessageAnchorResolvedSchema,
     kilocodeUserMessageAnchorResolvedSchema,
     ampUserMessageAnchorResolvedSchema,
+    devinUserMessageAnchorResolvedSchema,
+    piUserMessageAnchorResolvedSchema,
   ]),
 });
 export type UserMessageAnchorResolvedEvent = z.infer<
@@ -1025,3 +1087,58 @@ export const runtimeEventSchema = z.discriminatedUnion("type", [
   providerNoticeUpsertEventSchema,
 ]);
 export type RuntimeEvent = z.infer<typeof runtimeEventSchema>;
+
+// Wire-freeze copies of the runtime-event unions with `steer.submitted` swapped
+// for its pre-`inReplyTo` freeze — bound to the `blockDelta` frame on the
+// released `chat.subscribe@1.0–1.3` lines. `steer.submitted` is the only runtime
+// event that carries a sender. Explicitly listed (not derived from the live
+// union) so the freeze can't silently absorb a future sender-bearing event, and
+// to keep the discriminated-union typing intact.
+export const runtimeEventSchemaV12PreInReplyTo = z.discriminatedUnion("type", [
+  textDeltaEventSchema,
+  textCompletedEventSchema,
+  reasoningDeltaEventSchema,
+  reasoningCompletedEventSchema,
+  toolCallStartedEventSchema,
+  toolCallCompletedEventSchema,
+  toolCallErroredEventSchema,
+  toolCallProgressEventSchema,
+  approvalRequestedEventSchema,
+  approvalResolvedEventSchema,
+  todoUpdatedEventSchema,
+  planDeltaEventSchema,
+  planUpdatedEventSchema,
+  planCompletedEventSchema,
+  compactionStartedEventSchema,
+  compactionCompletedEventSchema,
+  compactionErroredEventSchema,
+  interviewRequestedEventSchema,
+  interviewResolvedEventSchema,
+  interviewErroredEventSchema,
+  subAgentStartedEventSchema,
+  subAgentProgressEventSchema,
+  subAgentCompletedEventSchema,
+  fileChangeStartedEventSchema,
+  fileChangeCompletedEventSchema,
+  artifactOperationEventSchema,
+  commandStartedEventSchema,
+  commandCompletedEventSchema,
+  sessionCreatedEventSchema,
+  sessionResumedEventSchema,
+  turnStartedEventSchema,
+  userMessageAnchorResolvedEventSchema,
+  turnCompletedEventSchema,
+  turnStoppedEventSchema,
+  turnInterruptedEventSchema,
+  steerSubmittedEventSchemaPreInReplyTo,
+  usageUpdatedEventSchema,
+  errorEventSchema,
+]);
+
+export const runtimeEventSchemaPreInReplyTo = z.discriminatedUnion("type", [
+  ...runtimeEventSchemaV12PreInReplyTo.def.options,
+  workflowStartedEventSchema,
+  workflowProgressEventSchema,
+  workflowCompletedEventSchema,
+  providerNoticeUpsertEventSchema,
+]);

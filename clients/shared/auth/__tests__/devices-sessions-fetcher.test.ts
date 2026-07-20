@@ -43,7 +43,9 @@ afterEach(() => {
 
 describe("devices/sessions authn fetcher", () => {
   it("GETs /api/v3/user/sessions with the user bearer and parses the session list", async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(200, sessionListBody()));
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse(200, sessionListBody()),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await listUserSessionsViaHttp(AUTHN, "jwt-abc");
@@ -63,7 +65,9 @@ describe("devices/sessions authn fetcher", () => {
   it("maps per-session 401 step_up_required to step-up-required", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(401, { reason: "step_up_required" })),
+      vi.fn<typeof fetch>(async () =>
+        jsonResponse(401, { reason: "step_up_required" }),
+      ),
     );
 
     const result = await revokeUserSessionViaHttp(AUTHN, "jwt", "family-1");
@@ -74,7 +78,9 @@ describe("devices/sessions authn fetcher", () => {
   it("maps global revoke 401 step_up_required to step-up-required", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(401, { reason: "step_up_required" })),
+      vi.fn<typeof fetch>(async () =>
+        jsonResponse(401, { reason: "step_up_required" }),
+      ),
     );
 
     const result = await revokeAllSessionsViaHttp(AUTHN, "jwt");
@@ -85,7 +91,9 @@ describe("devices/sessions authn fetcher", () => {
   it("maps invalid OTP verify responses to invalid", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(400, { error: "invalid code" })),
+      vi.fn<typeof fetch>(async () =>
+        jsonResponse(400, { error: "invalid code" }),
+      ),
     );
 
     const result = await verifyStepUpChallengeViaHttp(AUTHN, "jwt", "123456");
@@ -96,7 +104,9 @@ describe("devices/sessions authn fetcher", () => {
   it("fails closed on a contract-violating verify success body", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(200, { access_token: "step-up" })),
+      vi.fn<typeof fetch>(async () =>
+        jsonResponse(200, { access_token: "step-up" }),
+      ),
     );
 
     const result = await verifyStepUpChallengeViaHttp(AUTHN, "jwt", "123456");

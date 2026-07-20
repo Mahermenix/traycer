@@ -12,12 +12,14 @@ import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-di
 import { Switch } from "@/components/ui/switch";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import { useRunnerUninstallTraycer } from "@/hooks/runner/use-runner-uninstall-traycer-mutation";
+import { useDesktopAppUpdates } from "@/hooks/runner/use-desktop-app-updates";
 import { requestAppQuit } from "@/lib/desktop-app-lifecycle";
 import { useHostQuery, useHostMutation } from "@/hooks/host/use-host-query";
 import type { HostRpcRegistry } from "@/lib/host";
 import {
   hostQueryKeys,
   runnerMutationKeys,
+  runnerQueryKeys,
   snapshotsMutationKeys,
 } from "@/lib/query-keys";
 import { clearAllPersistedStores } from "@/lib/persist";
@@ -41,6 +43,7 @@ import { useLocalSnapshotClearStore } from "@/stores/settings/local-snapshot-cle
 import { useOnboardingStore } from "@/stores/onboarding/onboarding-store";
 import { SettingsHostSelect } from "./settings-host-select";
 import { useSettingsHostScope } from "./use-settings-host-scope";
+import { trackSettingChanged, type AnalyticsSetting } from "@/lib/analytics";
 
 const MIGRATION_PROGRESS_LABEL = "Migrating tasks";
 const SNAPSHOTS_LOCAL_STORAGE_PARAMS = {};
@@ -57,6 +60,10 @@ function formatMigrationProgress(state: MigrationRunState): string | null {
   const tasks = `${taskChainsSeen(state.counts)}/${totalTaskChains}`;
   const epics = `${epicsSeen(state.counts)}/${totalLocalEpics}`;
   return `${MIGRATION_PROGRESS_LABEL} - tasks ${tasks}, epics ${epics}`;
+}
+
+function trackGeneralSetting(setting: AnalyticsSetting): void {
+  trackSettingChanged("general", setting);
 }
 
 export function GeneralSettingsPanel() {
@@ -79,12 +86,6 @@ export function GeneralSettingsPanel() {
   );
   const setPreventSleepWhileRunning = useSettingsStore(
     (s) => s.setPreventSleepWhileRunning,
-  );
-  const notifyOnChatTurnComplete = useSettingsStore(
-    (s) => s.notifyOnChatTurnComplete,
-  );
-  const setNotifyOnChatTurnComplete = useSettingsStore(
-    (s) => s.setNotifyOnChatTurnComplete,
   );
   const showGlobalResourceMonitor = useSettingsStore(
     (s) => s.showGlobalResourceMonitor,
@@ -109,24 +110,17 @@ export function GeneralSettingsPanel() {
 
   return (
     <SettingsPanelShell title="General">
-      <SettingsRow
-        label="Notify on chat turn completion"
-        description="Show a system notification when an agent finishes responding and Traycer isn't focused."
-        control={
-          <Switch
-            checked={notifyOnChatTurnComplete}
-            onCheckedChange={setNotifyOnChatTurnComplete}
-            aria-label="Notify on chat turn completion"
-          />
-        }
-      />
+      <PrereleaseUpdatesRow />
       <SettingsRow
         label="Prevent sleep while running"
         description="Keep the computer awake while a chat or terminal agent is running, so work continues when you step away."
         control={
           <Switch
             checked={preventSleepWhileRunning}
-            onCheckedChange={setPreventSleepWhileRunning}
+            onCheckedChange={(value) => {
+              trackGeneralSetting("preventSleepWhileRunning");
+              setPreventSleepWhileRunning(value);
+            }}
             aria-label="Prevent sleep while running"
           />
         }
@@ -137,7 +131,10 @@ export function GeneralSettingsPanel() {
         control={
           <Switch
             checked={showGlobalResourceMonitor}
-            onCheckedChange={setShowGlobalResourceMonitor}
+            onCheckedChange={(value) => {
+              trackGeneralSetting("showGlobalResourceMonitor");
+              setShowGlobalResourceMonitor(value);
+            }}
             aria-label="Show global resources button"
           />
         }
@@ -148,7 +145,10 @@ export function GeneralSettingsPanel() {
         control={
           <Switch
             checked={showNavigatorResourceStats}
-            onCheckedChange={setShowNavigatorResourceStats}
+            onCheckedChange={(value) => {
+              trackGeneralSetting("showNavigatorResourceStats");
+              setShowNavigatorResourceStats(value);
+            }}
             aria-label="Show navigator resource stats"
           />
         }
@@ -159,7 +159,10 @@ export function GeneralSettingsPanel() {
         control={
           <Switch
             checked={pinContextUsageBreakdown}
-            onCheckedChange={setPinContextUsageBreakdown}
+            onCheckedChange={(value) => {
+              trackGeneralSetting("pinContextUsageBreakdown");
+              setPinContextUsageBreakdown(value);
+            }}
             aria-label="Pin context usage breakdown"
           />
         }
@@ -170,7 +173,10 @@ export function GeneralSettingsPanel() {
         control={
           <Switch
             checked={quoteReplyEnabled}
-            onCheckedChange={setQuoteReplyEnabled}
+            onCheckedChange={(value) => {
+              trackGeneralSetting("quoteReplyEnabled");
+              setQuoteReplyEnabled(value);
+            }}
             aria-label="Quote reply on text selection"
           />
         }
@@ -227,6 +233,68 @@ export function GeneralSettingsPanel() {
       />
       <DangerZoneSection />
     </SettingsPanelShell>
+  );
+}
+
+function PrereleaseUpdatesRow() {
+  const runnerHost = useRunnerHost();
+  const management = runnerHost.hostManagement;
+  const queryClient = useQueryClient();
+  const { bridge, snapshot } = useDesktopAppUpdates();
+  const preferenceMutation = useMutation({
+    mutationKey: runnerMutationKeys.setAllowPrereleaseUpdates(),
+    mutationFn: (allowPrerelease: boolean) => {
+      if (bridge === null) {
+        return Promise.reject(new Error("Desktop updates are unavailable"));
+      }
+      return bridge.setAllowPrerelease(allowPrerelease);
+    },
+    // Only a durably-persisted change reaches here - main raises a mutation
+    // error when it refuses the switch (an update already downloading/staged),
+    // so a refusal never tracks analytics or invalidates Host state.
+    //
+    // Main has already force-refreshed the Host registry and broadcast the new
+    // channel's state to *every* window and the native menu/tray before this
+    // resolves; these invalidations only nudge this window's channel-scoped
+    // caches, which is why renderer-local invalidation alone was insufficient.
+    onSuccess: () => {
+      trackGeneralSetting("allowPrereleaseUpdates");
+      if (management === null) return;
+      void queryClient.invalidateQueries({
+        queryKey: runnerQueryKeys.hostAvailableVersionsScope(management),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: runnerQueryKeys.hostRegistryUpdateScope(management),
+      });
+    },
+    onError: (error) =>
+      toastFromRunnerError(error, "Couldn't update the release channel."),
+  });
+
+  if (bridge === null) return null;
+
+  return (
+    <SettingsRow
+      label="Release candidate updates"
+      description="Allow Traycer Desktop and Host update checks to install RC releases. Stable releases remain eligible."
+      control={
+        <div className="flex items-center gap-2">
+          {preferenceMutation.isPending ? (
+            <AgentSpinningDots
+              className="size-3"
+              testId="release-channel-pending-indicator"
+              variant={undefined}
+            />
+          ) : null}
+          <Switch
+            checked={snapshot.allowPrerelease}
+            disabled={preferenceMutation.isPending}
+            onCheckedChange={(value) => preferenceMutation.mutate(value)}
+            aria-label="Allow release candidate updates"
+          />
+        </div>
+      }
+    />
   );
 }
 

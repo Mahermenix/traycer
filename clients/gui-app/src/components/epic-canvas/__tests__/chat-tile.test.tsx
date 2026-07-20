@@ -12,10 +12,35 @@ import {
 } from "@testing-library/react";
 import { VirtuosoMessageListTestingContext } from "@virtuoso.dev/message-list";
 
+interface ForkCreateRequest {
+  readonly forkSource: {
+    readonly interviewBlockId: string | null;
+  };
+}
+
+const loadingSurfaceTestState = vi.hoisted(() => ({
+  unresolvedWorkspaceRenderCount: 0,
+}));
+const forkCreateTestState = vi.hoisted(() => ({
+  mutate: vi.fn<(input: ForkCreateRequest, options: object) => void>(),
+}));
+
 vi.mock(
   "@/components/home/host-workspace-selector/host-workspace-selector",
   () => ({
-    HostWorkspaceSelector: () => null,
+    HostWorkspaceSelector: (props: {
+      readonly surface: { readonly bindingResolved: boolean };
+    }) => {
+      if (!props.surface.bindingResolved) {
+        loadingSurfaceTestState.unresolvedWorkspaceRenderCount += 1;
+      }
+      return (
+        <div
+          data-testid="host-workspace-selector"
+          data-binding-resolved={String(props.surface.bindingResolved)}
+        />
+      );
+    },
     ActiveHostWorkspaceControls: () => null,
   }),
 );
@@ -54,6 +79,29 @@ vi.mock("@/lib/host", () => ({
 // having to replicate the full @/lib/host/runtime export surface.
 vi.mock("@/hooks/host/use-tab-host-client", () => ({
   useTabHostClient: () => MOCK_HOST_CLIENT,
+}));
+
+vi.mock("@/hooks/epic/use-epic-chat-mutations", async (importActual) => ({
+  ...(await importActual<
+    typeof import("@/hooks/epic/use-epic-chat-mutations")
+  >()),
+  useEpicCreateChatForHost: () => ({
+    mutate: forkCreateTestState.mutate,
+    isPending: false,
+  }),
+}));
+
+// HarnessModelPickerImpl (mounted inside the tile tree via the composer
+// toolbar) resolves the create-profile gate's client through
+// useHostClientForHostId, which unconditionally calls useHostClientFor,
+// which calls useHostClient from @/lib/host/runtime directly (same barrel
+// bypass as useTabHostClient above). Stub the hook directly, mirroring
+// harness-model-picker.test.tsx's convention for this exact hook - null is a
+// production-legitimate value (useProvidersListForClient/useHostQuery own the
+// client === null disabled gate) so no consumer downstream needs a real
+// client here.
+vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
+  useHostClientForHostId: () => null,
 }));
 
 // The chat registry now OWNS its transport (built in its factory) and drives
@@ -157,6 +205,7 @@ const QUEUED_SETTINGS: ChatRunSettings = {
   reasoningEffort: "medium",
   serviceTier: null,
   agentMode: "epic",
+  profileId: null,
 };
 const UPDATED_QUEUE_SETTINGS: ChatRunSettings = {
   harnessId: "claude",
@@ -165,6 +214,7 @@ const UPDATED_QUEUE_SETTINGS: ChatRunSettings = {
   reasoningEffort: "low",
   serviceTier: null,
   agentMode: "epic",
+  profileId: null,
 };
 const INITIAL_HANDOFF_CONTENT: JsonContent = {
   type: "doc",
@@ -182,6 +232,7 @@ const INITIAL_HANDOFF_SETTINGS: ChatRunSettings = {
   reasoningEffort: "high",
   serviceTier: null,
   agentMode: "epic",
+  profileId: null,
 };
 const SESSION_SETTINGS: ChatRunSettings = {
   harnessId: "claude",
@@ -190,6 +241,7 @@ const SESSION_SETTINGS: ChatRunSettings = {
   reasoningEffort: "low",
   serviceTier: null,
   agentMode: "epic",
+  profileId: null,
 };
 
 interface ChatHarness {
@@ -203,6 +255,8 @@ interface ChatHarness {
     queueItems: ReadonlyArray<ChatQueuedItem>,
     settings: ChatRunSettings | null,
   ): void;
+  installDeferred(): void;
+  streamCreations(): number;
   callbacks(): ChatStreamCallbacks;
   teardown(): void;
 }
@@ -237,17 +291,28 @@ function seedDocWithChat(doc: Y.Doc): void {
 function createChatHarness(): ChatHarness {
   const sent: ChatSubscribeClientFrame[] = [];
   let callbacks: ChatStreamCallbacks | null = null;
-  const installWithSettings = (
-    access: "owner" | "viewer",
-    queueItems: ReadonlyArray<ChatQueuedItem>,
-    settings: ChatRunSettings | null,
+  let streamCreations = 0;
+  const installStream = (
+    snapshot: {
+      readonly access: "owner" | "viewer";
+      readonly queueItems: ReadonlyArray<ChatQueuedItem>;
+      readonly settings: ChatRunSettings | null;
+    } | null,
   ): void => {
     __setChatStreamClientFactoryForTests((_epicId, _chatId, nextCallbacks) => {
       callbacks = nextCallbacks;
-      setTimeout(() => {
-        nextCallbacks.onConnectionStatus("open", null);
-        emitChatSnapshot(nextCallbacks, access, queueItems, settings);
-      }, 0);
+      streamCreations += 1;
+      if (snapshot !== null) {
+        setTimeout(() => {
+          nextCallbacks.onConnectionStatus("open", null);
+          emitChatSnapshot(
+            nextCallbacks,
+            snapshot.access,
+            snapshot.queueItems,
+            snapshot.settings,
+          );
+        }, 0);
+      }
       const client: Pick<ChatStreamClient, "sendAction" | "close"> = {
         sendAction: (frame) => {
           sent.push(frame);
@@ -257,12 +322,25 @@ function createChatHarness(): ChatHarness {
       return client;
     });
   };
+  const installWithSettings = (
+    access: "owner" | "viewer",
+    queueItems: ReadonlyArray<ChatQueuedItem>,
+    settings: ChatRunSettings | null,
+  ): void => {
+    installStream({
+      access,
+      queueItems,
+      settings,
+    });
+  };
   return {
     sent,
     install: (access, queueItems) => {
       installWithSettings(access, queueItems, null);
     },
     installWithSettings,
+    installDeferred: () => installStream(null),
+    streamCreations: () => streamCreations,
     callbacks: () => {
       if (callbacks === null) throw new Error("expected chat callbacks");
       return callbacks;
@@ -272,6 +350,7 @@ function createChatHarness(): ChatHarness {
       __getChatSessionRegistryForTests().disposeAll();
       sent.length = 0;
       callbacks = null;
+      streamCreations = 0;
     },
   };
 }
@@ -403,6 +482,7 @@ function nextStepsAssistantMessage(): Message {
       agentId: "codex",
       displayName: "Codex",
       reply: { expectsReply: false },
+      inReplyTo: null,
     },
     blocks: [
       {
@@ -439,6 +519,7 @@ function streamingInterviewAssistantMessage(): Message {
       agentId: "claude",
       displayName: "Claude",
       reply: { expectsReply: false },
+      inReplyTo: null,
     },
     blocks: [
       {
@@ -474,6 +555,71 @@ function streamingInterviewAssistantMessage(): Message {
   };
 }
 
+function answeredInterviewAssistantMessage(): Message {
+  const message = streamingInterviewAssistantMessage();
+  if (message.role !== "assistant") {
+    throw new Error("expected assistant interview fixture");
+  }
+  return {
+    ...message,
+    blocks: [
+      {
+        type: "interview",
+        blockId: "question-1",
+        status: "completed",
+        timestamp: 4,
+        toolName: "AskUserQuestion",
+        title: "Need input",
+        description: "One decision is required.",
+        questions: [
+          {
+            questionId: null,
+            question: "Which path should we take?",
+            header: null,
+            options: [
+              { label: "Option A", description: null, preview: null },
+              { label: "Option B", description: null, preview: null },
+            ],
+            multiSelect: false,
+          },
+        ],
+        answers: [
+          {
+            questionId: null,
+            question: "Which path should we take?",
+            values: ["Option A"],
+            notes: null,
+          },
+        ],
+        error: null,
+        metadata: null,
+      },
+    ],
+    timestamp: 4,
+    turnId: "turn-active",
+  };
+}
+
+function skippedInterviewAssistantMessage(): Message {
+  const message = answeredInterviewAssistantMessage();
+  if (message.role !== "assistant") {
+    throw new Error("expected assistant interview fixture");
+  }
+  return {
+    ...message,
+    blocks: message.blocks.map((block) =>
+      block.type === "interview"
+        ? {
+            ...block,
+            status: "errored" as const,
+            answers: [],
+            error: "Skipped by user",
+          }
+        : block,
+    ),
+  };
+}
+
 function runningActiveTurn(): ChatActiveTurn {
   return {
     turnId: "turn-active",
@@ -481,6 +627,7 @@ function runningActiveTurn(): ChatActiveTurn {
     harnessId: "codex",
     model: "gpt-live",
     agentMode: "regular",
+    profileId: null,
     userMessageId: "message-1",
     startedAt: 3,
     updatedAt: 3,
@@ -516,7 +663,24 @@ function renderChatTile() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
-  return render(
+  return render(chatTileTestTree(queryClient, true));
+}
+
+function renderSwitchableChatTile() {
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  const rendered = render(chatTileTestTree(queryClient, true));
+  return {
+    ...rendered,
+    setChatVisible: (visible: boolean) => {
+      rendered.rerender(chatTileTestTree(queryClient, visible));
+    },
+  };
+}
+
+function chatTileTestTree(queryClient: QueryClient, chatVisible: boolean) {
+  return (
     <TestRouterProvider>
       <VirtuosoMessageListTestingContext.Provider
         value={{ itemHeight: 120, viewportHeight: 900 }}
@@ -538,18 +702,20 @@ function renderChatTile() {
             <TooltipProvider>
               <TestEpicSessionWrapper epicId={EPIC_ID}>
                 <TabHostProvider hostId={CHAT_ARTIFACT.hostId}>
-                  <ChatTile
-                    node={CHAT_ARTIFACT}
-                    viewTabId="tab-test"
-                    isActive
-                  />
+                  {chatVisible ? (
+                    <ChatTile
+                      node={CHAT_ARTIFACT}
+                      viewTabId="tab-test"
+                      isActive
+                    />
+                  ) : null}
                 </TabHostProvider>
               </TestEpicSessionWrapper>
             </TooltipProvider>
           </RunnerHostProvider>
         </QueryClientProvider>
       </VirtuosoMessageListTestingContext.Provider>
-    </TestRouterProvider>,
+    </TestRouterProvider>
   );
 }
 
@@ -632,11 +798,17 @@ describe("<ChatTile />", () => {
     });
     useComposerRunSettingsStore.getState().resetForTests();
     useComposerHarnessMemoryStore.getState().resetForTests();
+    loadingSurfaceTestState.unresolvedWorkspaceRenderCount = 0;
+    forkCreateTestState.mutate.mockReset();
     // The composer gates Send on a resolved (non-empty) model slug. Without a
     // host binding the catalog never resolves the empty default, so seed a
     // concrete default model so the composer reaches a sendable state.
     useSettingsStore.setState({
-      defaultSelection: { harnessId: "codex", modelSlug: "gpt-5-codex" },
+      defaultSelection: {
+        harnessId: "codex",
+        modelSlug: "gpt-5-codex",
+        profileId: null,
+      },
     });
     harness.install(seedDocWithChat, "editor");
     chatHarness.install("owner", []);
@@ -683,6 +855,53 @@ describe("<ChatTile />", () => {
 
     expect(chatStreamSpy).not.toHaveBeenCalled();
     expect(screen.queryByTestId("chat-tile-loading")).not.toBeNull();
+  });
+
+  it("keeps a cold sidebar-opened chat in one loading state until its first snapshot", async () => {
+    chatHarness.teardown();
+    chatHarness.installDeferred();
+
+    renderChatTile();
+
+    await waitFor(() => {
+      expect(chatHarness.streamCreations()).toBe(1);
+    });
+    expect(screen.getByRole("status", { name: "Loading chat" })).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Send" })).toBeNull();
+    expect(screen.queryByTestId("host-workspace-selector")).toBeNull();
+    expect(loadingSurfaceTestState.unresolvedWorkspaceRenderCount).toBe(0);
+
+    act(() => {
+      emitChatSnapshot(chatHarness.callbacks(), "owner", [], SESSION_SETTINGS);
+    });
+
+    await waitForChatTileLoaded();
+    expect(screen.getByRole("button", { name: "Send" })).not.toBeNull();
+    expect(
+      screen
+        .getByTestId("host-workspace-selector")
+        .getAttribute("data-binding-resolved"),
+    ).toBe("true");
+  });
+
+  it("does not mount unresolved controls when switching back to a warm chat", async () => {
+    const rendered = renderSwitchableChatTile();
+    await waitForChatTileLoaded();
+    expect(chatHarness.streamCreations()).toBe(1);
+
+    rendered.setChatVisible(false);
+    loadingSurfaceTestState.unresolvedWorkspaceRenderCount = 0;
+    rendered.setChatVisible(true);
+
+    await waitForChatTileLoaded();
+    expect(chatHarness.streamCreations()).toBe(1);
+    expect(loadingSurfaceTestState.unresolvedWorkspaceRenderCount).toBe(0);
+    expect(screen.queryByRole("status", { name: "Loading chat" })).toBeNull();
+    expect(
+      screen
+        .getByTestId("host-workspace-selector")
+        .getAttribute("data-binding-resolved"),
+    ).toBe("true");
   });
 
   it("renders host chat content and sends through chat.subscribe", async () => {
@@ -742,6 +961,7 @@ describe("<ChatTile />", () => {
           harnessId: "claude",
           model: "haiku",
           agentMode: "regular",
+          profileId: null,
           userMessageId: "message-1",
           startedAt: 2,
           updatedAt: 2,
@@ -900,6 +1120,7 @@ describe("<ChatTile />", () => {
           harnessId: "codex",
           model: "gpt-live",
           agentMode: "regular",
+          profileId: null,
           userMessageId: "message-1",
           startedAt: 2,
           updatedAt: 2,
@@ -1012,6 +1233,7 @@ describe("<ChatTile />", () => {
           harnessId: "codex",
           model: "gpt-live",
           agentMode: "regular",
+          profileId: null,
           userMessageId: "message-1",
           startedAt: 2,
           updatedAt: 2,
@@ -1193,6 +1415,63 @@ describe("<ChatTile />", () => {
     });
   });
 
+  it("shows resolved Q&A fork actions while the assistant turn continues", async () => {
+    renderChatTile();
+
+    await waitForChatTileLoaded();
+
+    act(() => {
+      emitChatSnapshotWithMessages({
+        callbacks: chatHarness.callbacks(),
+        access: "owner",
+        queueItems: [],
+        settings: SESSION_SETTINGS,
+        messages: [hostUserMessage(), answeredInterviewAssistantMessage()],
+        activeTurn: runningActiveTurn(),
+      });
+    });
+
+    expect(
+      await screen.findByRole("button", { name: "Cross Question" }),
+    ).not.toBeNull();
+    expect(screen.getByRole("button", { name: "A/B Fork" })).not.toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cross Question" }));
+
+    const titleInput = await screen.findByLabelText("Fork chat title");
+    if (!(titleInput instanceof HTMLInputElement)) {
+      throw new Error("expected fork title input");
+    }
+    expect(titleInput.value).toBe("Cross Question - Chat 1");
+
+    fireEvent.click(screen.getByRole("button", { name: "Fork" }));
+
+    const [forkCall] = forkCreateTestState.mutate.mock.calls;
+    expect(forkCall[0].forkSource.interviewBlockId).toBe("question-1");
+  });
+
+  it("shows Q&A fork actions after the question is skipped", async () => {
+    renderChatTile();
+
+    await waitForChatTileLoaded();
+
+    act(() => {
+      emitChatSnapshotWithMessages({
+        callbacks: chatHarness.callbacks(),
+        access: "owner",
+        queueItems: [],
+        settings: SESSION_SETTINGS,
+        messages: [hostUserMessage(), skippedInterviewAssistantMessage()],
+        activeTurn: runningActiveTurn(),
+      });
+    });
+
+    expect(
+      await screen.findByRole("button", { name: "Cross Question" }),
+    ).not.toBeNull();
+    expect(screen.getByRole("button", { name: "A/B Fork" })).not.toBeNull();
+  });
+
   it("falls back to client-local last-used settings when the chat has no session settings", async () => {
     useComposerRunSettingsStore.setState({
       globalLastRunSettings: UPDATED_QUEUE_SETTINGS,
@@ -1291,6 +1570,57 @@ describe("<ChatTile />", () => {
     renderChatTile();
 
     await waitForChatTileLoaded();
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const frame = chatHarness.sent[0];
+    if (frame.kind !== "send") throw new Error("expected send frame");
+    expect(frame.settings).toEqual(SESSION_SETTINGS);
+  });
+
+  it("updates composer settings when the host publishes a changed settings snapshot", async () => {
+    chatHarness.teardown();
+    chatHarness.installWithSettings("owner", [], QUEUED_SETTINGS);
+
+    renderChatTile();
+
+    await waitForChatTileLoaded();
+
+    act(() => {
+      emitChatSnapshot(chatHarness.callbacks(), "owner", [], SESSION_SETTINGS);
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+
+    const frame = chatHarness.sent[0];
+    if (frame.kind !== "send") throw new Error("expected send frame");
+    expect(frame.settings).toEqual(SESSION_SETTINGS);
+  });
+
+  it("keeps local composer settings when a host snapshot leaves persisted settings unchanged", async () => {
+    chatHarness.teardown();
+    chatHarness.installWithSettings("owner", [], QUEUED_SETTINGS);
+
+    renderChatTile();
+
+    await waitForChatTileLoaded();
+
+    const focusedComposer = getFocusedComposerControls();
+    if (focusedComposer === null) {
+      throw new Error("expected focused composer controls");
+    }
+
+    act(() => {
+      focusedComposer.controls.selectModel(
+        SESSION_SETTINGS.harnessId,
+        SESSION_SETTINGS.model,
+      );
+      focusedComposer.controls.setPermission(SESSION_SETTINGS.permissionMode);
+      focusedComposer.controls.setReasoning(
+        SESSION_SETTINGS.reasoningEffort ?? "",
+      );
+      emitChatSnapshot(chatHarness.callbacks(), "owner", [], QUEUED_SETTINGS);
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
@@ -1864,6 +2194,7 @@ describe("<ChatTile />", () => {
           harnessId: QUEUED_SETTINGS.harnessId,
           model: QUEUED_SETTINGS.model,
           agentMode: QUEUED_SETTINGS.agentMode,
+          profileId: null,
           userMessageId: "message-active",
           startedAt: 4,
           updatedAt: 4,

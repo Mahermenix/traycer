@@ -365,7 +365,7 @@ export function useHostStreamClientBindingFor(
     });
 
     return () => {
-      client.close();
+      client.close("transient-host-client-teardown");
     };
   }, [
     auth,

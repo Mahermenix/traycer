@@ -35,6 +35,7 @@ import type { AuthService } from "@/lib/auth/auth-service";
 import { AuthSessionExpiredToastBridge } from "@/providers/auth-session-expired-toast-bridge";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 
 function buildHost(): MockRunnerHost {
   return new MockRunnerHost({
@@ -262,6 +263,12 @@ describe("<SignInButton />", () => {
 
   beforeEach(() => {
     useAuthStore.getState().setSignedOut();
+    useDesktopDialogStore.setState({
+      activeDialog: null,
+      reportIssueAvailable: false,
+      reportIssueContext: null,
+      reportIssueDraftId: 0,
+    });
     vi.clearAllMocks();
     // Default profile fetch is unused by these tests; install a benign 401
     // so any stray call does not accidentally sign the user in.
@@ -273,6 +280,12 @@ describe("<SignInButton />", () => {
   afterEach(() => {
     cleanup();
     useAuthStore.getState().setSignedOut();
+    useDesktopDialogStore.setState({
+      activeDialog: null,
+      reportIssueAvailable: false,
+      reportIssueContext: null,
+      reportIssueDraftId: 0,
+    });
     restoreFetch();
   });
 
@@ -303,6 +316,21 @@ describe("<SignInButton />", () => {
     });
     const detail = screen.getByTestId("signin-error-detail");
     expect(detail.textContent).toBe("sign-in-failed");
+
+    expect(screen.queryByRole("button", { name: "Report issue" })).toBeNull();
+    act(() => {
+      useDesktopDialogStore.setState({ reportIssueAvailable: true });
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Report issue" }));
+    expect(useDesktopDialogStore.getState()).toMatchObject({
+      activeDialog: "report-issue",
+      reportIssueContext: {
+        title: "Sign in failed",
+        message: null,
+        code: null,
+        source: "Sign in",
+      },
+    });
     result.cleanupClient();
   });
 
@@ -321,10 +349,12 @@ describe("<SignInButton />", () => {
     });
 
     expect(screen.queryByRole("button", { name: "Signing in" })).toBeNull();
-    expect(
-      screen.getByRole<HTMLButtonElement>("button", { name: "Sign in" })
-        .disabled,
-    ).toBe(true);
+    await waitFor(() => {
+      expect(
+        screen.getByRole<HTMLButtonElement>("button", { name: "Sign in" })
+          .disabled,
+      ).toBe(true);
+    });
     const retry = await screen.findByTestId("signin-retry-link");
     // `signIn()` restarts the device flow and re-opens the verification page, so
     // a stalled attempt has an immediate escape hatch. Capturing the count
@@ -360,7 +390,7 @@ describe("<SignInButton />", () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
         "Session expired - sign in again.",
-        { id: "auth-session:expired" },
+        { id: "auth-session:expired", cancel: null },
       );
     });
     expect(screen.queryByTestId("signin-error")).toBeNull();
@@ -380,7 +410,7 @@ describe("<SignInButton />", () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
         "Session expired - sign in again.",
-        { id: "auth-session:expired" },
+        { id: "auth-session:expired", cancel: null },
       );
     });
     expect(await host.tokenStore.get()).toBeNull();
@@ -421,7 +451,7 @@ describe("<SignInButton />", () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
         "Session expired - sign in again.",
-        { id: "auth-session:expired" },
+        { id: "auth-session:expired", cancel: null },
       );
     });
     expect(useAuthStore.getState().status).toBe("signed-out");
@@ -449,7 +479,11 @@ describe("<SignInButton />", () => {
     });
     await screen.findByRole("heading", { name: "Approve in your browser" });
     expect(screen.queryByRole("button", { name: "Signing in" })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Use code instead" }));
+    expect(
+      screen
+        .getByRole("button", { name: "Use code instead" })
+        .getAttribute("aria-expanded"),
+    ).toBe("true");
     const code = await screen.findByText("ABCDE-FGHIJ");
     expect(code.textContent).toBe("ABCDE-FGHIJ");
     expect(screen.getByText("https://app.traycer.ai/device").textContent).toBe(

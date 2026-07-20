@@ -62,6 +62,7 @@ export const CLI_ERROR_CODES = {
   // rollback to the previous version (or, with nothing to roll back to on
   // a first-ever install, left the marker as `failed` without one).
   HOST_UPDATE_HEALTH_CHECK_FAILED: "E_HOST_UPDATE_HEALTH_CHECK_FAILED",
+  HOST_UPDATE_NOT_NEWER: "E_HOST_UPDATE_NOT_NEWER",
   REGISTRY_UNAVAILABLE: "E_REGISTRY_UNAVAILABLE",
   REGISTRY_VERSION_NOT_FOUND: "E_REGISTRY_VERSION_NOT_FOUND",
   REGISTRY_NOT_IMPLEMENTED: "E_REGISTRY_NOT_IMPLEMENTED",

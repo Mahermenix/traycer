@@ -10,7 +10,7 @@ import { useReactiveActiveHostId } from "@/hooks/host/use-reactive-active-host-i
 import { useTerminalList } from "@/hooks/terminal/use-terminal-list-query";
 import { useHostClient } from "@/lib/host";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
-import { isVisibleRawTerminalSession } from "@/lib/terminals/terminal-session-filters";
+import { isVisibleEpicTerminalSession } from "@/lib/terminals/terminal-session-filters";
 import {
   deriveTitleSourceFromSessionTitle,
   terminalSessionTitle,
@@ -27,7 +27,8 @@ export function useTerminalsOpenerItems(
 ): ReadonlyArray<CommandItem> {
   const defaultHostId = useReactiveActiveHostId() ?? UNKNOWN_HOST_PLACEHOLDER;
   const hostClient = useHostClient();
-  const terminals = useTerminalList(ctx.activeEpicId ?? "", hostClient);
+  const scope = { kind: "epic" as const, epicId: ctx.activeEpicId ?? "" };
+  const terminals = useTerminalList(scope, hostClient);
   const sessionsData = terminals.data;
 
   return useMemo<ReadonlyArray<CommandItem>>(() => {
@@ -35,8 +36,8 @@ export function useTerminalsOpenerItems(
     // to the "TUI agents" category, so filter to raw terminals only (shared
     // predicate with the sidebar) - otherwise an agent double-lists here as a
     // plain terminal and, worse, opens as a raw terminal tile on its PTY.
-    const sessions = (sessionsData?.sessions ?? []).filter(
-      isVisibleRawTerminalSession,
+    const sessions = (sessionsData?.sessions ?? []).filter((session) =>
+      isVisibleEpicTerminalSession(session, scope.epicId),
     );
     const newTerminal = openerActionLeaf({
       id: "open:terminals:new",
@@ -79,5 +80,5 @@ export function useTerminalsOpenerItems(
       ),
     );
     return [newTerminal, ...existing];
-  }, [ctx, sessionsData, defaultHostId]);
+  }, [ctx, defaultHostId, scope.epicId, sessionsData]);
 }

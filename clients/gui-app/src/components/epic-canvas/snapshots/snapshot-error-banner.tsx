@@ -1,9 +1,11 @@
 import { AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ReportIssueAction } from "@/components/report-issue/report-issue-action";
 import { useEpicRequestFreshSnapshot } from "@/lib/epic-selectors";
 import { getClientAppVersion } from "@/lib/app-version";
 import { describeVersionSkew } from "@/lib/host/version-skew-copy";
 import { cn } from "@/lib/utils";
+import { createReportIssueContext } from "@/lib/report-issue-context";
 import type { SnapshotFetchError } from "@/stores/epics/open-epic/store";
 
 interface SnapshotErrorBannerProps {
@@ -43,15 +45,27 @@ export function SnapshotErrorBanner(props: SnapshotErrorBannerProps) {
         <p className="text-ui-xs text-muted-foreground">
           {props.error.message}
         </p>
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          data-testid="snapshot-error-retry"
-          onClick={() => requestFreshSnapshot()}
-        >
-          Retry
-        </Button>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            data-testid="snapshot-error-retry"
+            onClick={() => requestFreshSnapshot()}
+          >
+            Retry
+          </Button>
+          <ReportIssueAction
+            context={createReportIssueContext({
+              title: "Failed to load epic",
+              message: "The Epic snapshot could not be loaded.",
+              code: props.error.code,
+              source: "Epic snapshot",
+            })}
+            presentation="text"
+            className={undefined}
+          />
+        </div>
       </div>
     </div>
   );

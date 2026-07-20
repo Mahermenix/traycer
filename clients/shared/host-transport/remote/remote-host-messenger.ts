@@ -33,4 +33,18 @@ export class RemoteHostMessenger<
   ): Promise<ResponseOfMethod<RpcRegistry, Method>> {
     return this.session.sendUnary(method, params);
   }
+
+  /**
+   * The remote mux session owns its own response-wait semantics (its
+   * resume/backoff loop, not a per-frame timer), so the extended timeout is a
+   * no-op here - the call delegates to the same single-flight `sendUnary` as
+   * {@link request}. Present for `IHostMessenger` parity.
+   */
+  requestWithResponseTimeout<Method extends keyof RpcRegistry & string>(
+    method: Method,
+    params: RequestOfMethod<RpcRegistry, Method>,
+    _responseTimeoutMs: number,
+  ): Promise<ResponseOfMethod<RpcRegistry, Method>> {
+    return this.session.sendUnary(method, params);
+  }
 }

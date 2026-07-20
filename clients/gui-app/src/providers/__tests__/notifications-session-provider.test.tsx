@@ -11,6 +11,21 @@ import {
   type NotificationRoomEntryMap,
 } from "@traycer/protocol/notifications/notification-room";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import type { ReactNode } from "react";
+
+const testQueryClient = new QueryClient();
+function QueryWrapper({
+  children,
+}: {
+  readonly children: ReactNode;
+}): ReactNode {
+  return (
+    <QueryClientProvider client={testQueryClient}>
+      {children}
+    </QueryClientProvider>
+  );
+}
 
 const hostState = vi.hoisted((): { local: HostDirectoryEntry | null } => ({
   local: {
@@ -39,6 +54,21 @@ const mockAuth = {
 vi.mock("@/lib/host", () => ({
   useHostBinding: () => null,
   useAuthService: () => mockAuth,
+}));
+
+vi.mock("@/hooks/notifications/use-notifications", () => ({
+  useNotificationShow: () => () => Promise.resolve(),
+}));
+
+vi.mock(
+  "@/hooks/notifications/use-notification-mark-entity-read-mutation",
+  () => ({
+    useNotificationMarkEntityRead: () => ({ mutate: () => undefined }),
+  }),
+);
+
+vi.mock("@/providers/windows-bridge-context", () => ({
+  useWindowsBridge: () => null,
 }));
 
 vi.mock("@/hooks/host/use-reactive-local-host-entry", () => ({
@@ -174,6 +204,7 @@ describe("<NotificationsSessionProvider />", () => {
       <NotificationsSessionProvider>
         <div />
       </NotificationsSessionProvider>,
+      { wrapper: QueryWrapper },
     );
 
     act(() => {
@@ -220,6 +251,7 @@ describe("<NotificationsSessionProvider />", () => {
       <NotificationsSessionProvider>
         <div />
       </NotificationsSessionProvider>,
+      { wrapper: QueryWrapper },
     );
 
     act(() => {
@@ -278,6 +310,7 @@ describe("<NotificationsSessionProvider />", () => {
       <NotificationsSessionProvider>
         <div />
       </NotificationsSessionProvider>,
+      { wrapper: QueryWrapper },
     );
 
     act(() => {
@@ -323,6 +356,7 @@ describe("<NotificationsSessionProvider />", () => {
       <NotificationsSessionProvider>
         <div data-testid="child" />
       </NotificationsSessionProvider>,
+      { wrapper: QueryWrapper },
     );
 
     act(() => {

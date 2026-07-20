@@ -40,6 +40,7 @@ import {
 } from "@/stores/home/landing-draft-store";
 import { landingComposerLiveImageHashes } from "@/stores/composer/landing-composer-store";
 import { appLogger, describeLogError } from "@/lib/logger";
+import { reportableErrorToast } from "@/lib/reportable-error-toast";
 
 /**
  * Per-partition byte budget for stored landing images. Flagged TUNABLE — shipped
@@ -102,10 +103,9 @@ function imageHashesOf(content: JsonContent): Set<string> {
 }
 
 /**
- * Every hash that must NOT be collected: union of all persisted drafts' content
- * and the live editor mirror. The session cache is handled separately (it
- * protects the paste→insert window but its entries are reclaimed once a hash
- * leaves the live roots).
+ * Every hash that must NOT be collected: union of all persisted drafts'
+ * content and the live editor mirror. The session cache is handled separately
+ * to protect the normal paste-to-insert window.
  */
 function computeLiveRoots(): Set<string> {
   const roots = new Set<string>();
@@ -212,9 +212,18 @@ export function reserveLandingImageBudget(incomingBytes: number): boolean {
   // would destroy unrelated in-progress drafts to make room for it. Block the
   // paste instead — we never evict user drafts for an unattributed paste.
   if (activeDraftId === null) {
-    toast.error("Couldn't add the image.", {
-      description: "It would exceed this window's image storage budget.",
-    });
+    reportableErrorToast(
+      "Couldn't add the image.",
+      {
+        description: "It would exceed this window's image storage budget.",
+      },
+      {
+        title: "Could not add image",
+        message: "The image storage budget was exceeded.",
+        code: null,
+        source: "Chat composer",
+      },
+    );
     return false;
   }
 
@@ -231,9 +240,18 @@ export function reserveLandingImageBudget(incomingBytes: number): boolean {
 
   if (referenced + incomingBytes <= LANDING_IMAGE_BUDGET_BYTES) return true;
 
-  toast.error("Couldn't add the image.", {
-    description: "It would exceed this window's image storage budget.",
-  });
+  reportableErrorToast(
+    "Couldn't add the image.",
+    {
+      description: "It would exceed this window's image storage budget.",
+    },
+    {
+      title: "Could not add image",
+      message: "The image storage budget was exceeded.",
+      code: null,
+      source: "Chat composer",
+    },
+  );
   return false;
 }
 

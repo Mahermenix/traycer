@@ -62,7 +62,7 @@ export function openOneShotStreamTransport(params: {
   return {
     wsStreamClient,
     close: () => {
-      wsStreamClient.close();
+      wsStreamClient.close("one-shot-transport-closed");
     },
   };
 }

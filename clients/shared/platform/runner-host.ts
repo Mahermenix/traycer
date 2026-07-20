@@ -386,15 +386,20 @@ export type MicrophoneAccessStatus = "granted" | "denied";
 export interface IFileDropHost {
   resolveDroppedFilePaths(files: readonly File[]): Promise<readonly string[]>;
   /**
-   * Copy dropped source paths into a stable, app-managed temp file and return
-   * the copied paths. Used for drops that expose only a `file://` URL with no
-   * `File` object (e.g. the macOS screenshot thumbnail), whose source file is
-   * ephemeral - the OS may reclaim it before the terminal program reads the
-   * pasted path. Copying at drop time, while the source still exists, yields a
-   * durable path. Implementations that cannot copy (or whose source is gone)
-   * return the original path so the caller is never worse off.
+   * Return durable paths for drops that expose only a `file://` URL with no
+   * `File` object. Stable workspace paths pass through unchanged. Known
+   * ephemeral sources (e.g. the macOS screenshot thumbnail staging path) are
+   * copied into an app-managed temp location before the OS can reclaim them.
+   * Implementations that cannot copy return the original path so the caller is
+   * never worse off.
    */
   copyDroppedFilePaths(paths: readonly string[]): Promise<readonly string[]>;
+  /**
+   * Reads file paths from the native clipboard formats that Chromium does not
+   * surface through `ClipboardEvent`. Callers only use this from a direct
+   * paste event whose DOM clipboard has no usable content.
+   */
+  readNativeClipboardFilePaths(): Promise<readonly string[]>;
 }
 
 /**
@@ -481,15 +486,32 @@ export interface TraycerShellConfig {
 }
 
 /**
- * A shell binary detected on the machine, offered as a quick-pick in the
- * Settings → Shell combobox. `path` is absolute (except an OS default that may
- * be a bare command name, e.g. Windows `powershell.exe`); `isDefault` marks
- * the OS-default shell.
+ * An entry in the Settings → Shell picker list: a detected shell binary or a
+ * user-added program. `path` is absolute (except an OS default that may be a
+ * bare command name, e.g. Windows `powershell.exe`); `isDefault` marks the
+ * OS-default shell; `source` tells the UI which rows the user may remove
+ * (`"added"`) versus which are detected and permanent. `missing` is `true` only
+ * for an `"added"` row whose file is gone (a list-time probe, never persisted),
+ * so the UI can flag a customised-but-uninstalled shell while keeping its ✕;
+ * detected rows are always `false`.
  */
 export interface TraycerDetectedShell {
   readonly name: string;
   readonly path: string;
   readonly isDefault: boolean;
+  readonly source: "detected" | "added";
+  readonly missing: boolean;
+}
+
+/**
+ * Result of probing a candidate shell path (Settings → Shell "Add a shell"
+ * live validation). `exists` is `F_OK`; `executable` is `X_OK`. The desktop
+ * shell answers this natively (fs access in Electron main), mirroring the
+ * protocol's detection check rather than spawning the CLI per keystroke.
+ */
+export interface TraycerShellProbeResult {
+  readonly exists: boolean;
+  readonly executable: boolean;
 }
 
 // Host-process env overrides (Settings → Shell), applied to the local host
@@ -517,6 +539,38 @@ export interface ITraycerCli {
   shellConfigGet(): Promise<TraycerShellConfig>;
   shellConfigSet(input: TraycerShellConfigSetInput): Promise<void>;
   shellConfigReset(): Promise<void>;
+  /**
+   * Remembers a program in `shell.entries` and selects it (`config shell add`).
+   * The backend re-validates it is absolute + executable and rejects otherwise,
+   * so callers should gate on {@link shellProbe} first for a clean UX.
+   */
+  shellConfigAdd(input: { readonly path: string }): Promise<void>;
+  /**
+   * Forgets a previously-added program (`config shell remove`). If it was the
+   * selected shell, the selection falls back to the OS default. Removing a path
+   * that was never added is a no-op success.
+   */
+  shellConfigRemove(input: { readonly path: string }): Promise<void>;
+  /**
+   * Restores a remembered shell's flags to its family default
+   * (`config shell revert-args`) by clearing its stored deviation while keeping
+   * the shell remembered. A no-op when the shell has no entry.
+   */
+  shellRevertArgs(input: { readonly path: string }): Promise<void>;
+  /**
+   * Native (non-subprocess) existence + executability probe backing the picker's
+   * live "Add a shell" validation. Implemented with fs access in the shell's
+   * privileged process so it can run debounced per keystroke.
+   */
+  shellProbe(input: {
+    readonly path: string;
+  }): Promise<TraycerShellProbeResult>;
+  /**
+   * Opens the shell's native "choose a program file" dialog, resolving the
+   * chosen absolute path or `null` on cancel. `null` (not a method) on shells
+   * with no native file dialog - the picker hides its Browse affordance then.
+   */
+  readonly pickShellProgramFile: (() => Promise<string | null>) | null;
   shellListDetected(): Promise<readonly TraycerDetectedShell[]>;
   envOverrideList(): Promise<readonly TraycerEnvOverride[]>;
   envOverrideSet(input: {
@@ -724,7 +778,13 @@ export interface ITokenStore {
 }
 
 export interface INotificationHost {
-  show(title: string, body: string, payload: unknown): Promise<void>;
+  show(
+    title: string,
+    body: string,
+    payload: unknown,
+    replaceKey: string | null,
+    deliveryKey: string | null,
+  ): Promise<void>;
   onClick(handler: (payload: unknown) => void): Disposable;
 }
 
@@ -804,7 +864,12 @@ export interface HostProgressEvent {
 }
 
 export type HostOperationKind =
-  "install" | "update" | "register-service" | "ensure";
+  | "install"
+  | "update"
+  | "register-service"
+  | "ensure"
+  | "restart"
+  | "free-port-and-restart";
 
 /**
  * Canonical cross-surface snapshot of the single host mutation currently
@@ -842,7 +907,8 @@ export interface HostInstallResult {
   readonly sizeBytes: number;
   readonly previousVersion: string | null;
   readonly serviceLifecycle: {
-    readonly priorServiceState: "running" | "stopped" | "not-installed";
+    readonly priorServiceState:
+      "running" | "stopped" | "not-installed" | "externally-managed";
     readonly stoppedBeforeSwap: boolean;
     readonly postSwapAction: "install" | "restart" | "start" | "none";
     readonly postSwapError: string | null;
@@ -924,6 +990,102 @@ export interface HostAvailableSnapshot {
   readonly versions: readonly HostAvailableVersionEntry[];
 }
 
+/**
+ * Desktop's user-facing Host update channel intentionally admits only stable
+ * SemVer releases and the project's exact `rc.N` form. The CLI keeps its
+ * broader operator-facing prerelease inspection surface.
+ */
+const SEMVER_NUMERIC_IDENTIFIER = "(?:0|[1-9]\\d*)";
+const SEMVER_CORE = `${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}\\.${SEMVER_NUMERIC_IDENTIFIER}`;
+const SEMVER_BUILD_METADATA = "(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?";
+const CONSENTED_HOST_CHANNEL_VERSION = new RegExp(
+  `^${SEMVER_CORE}(?:-rc\\.${SEMVER_NUMERIC_IDENTIFIER})?${SEMVER_BUILD_METADATA}$`,
+);
+const RELEASE_CANDIDATE_HOST_VERSION = new RegExp(
+  `^${SEMVER_CORE}-rc\\.${SEMVER_NUMERIC_IDENTIFIER}${SEMVER_BUILD_METADATA}$`,
+);
+
+export function isConsentedHostChannelVersion(version: string): boolean {
+  return CONSENTED_HOST_CHANNEL_VERSION.test(version);
+}
+
+export function isReleaseCandidateHostVersion(version: string): boolean {
+  return RELEASE_CANDIDATE_HOST_VERSION.test(version);
+}
+
+interface HostSemanticVersion {
+  readonly core: readonly number[];
+  readonly prerelease: readonly string[];
+}
+
+const SEMVER_IDENTIFIER = "(?:0|[1-9]\\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)";
+const HOST_SEMVER = new RegExp(
+  `^${SEMVER_CORE}(?:-(${SEMVER_IDENTIFIER}(?:\\.${SEMVER_IDENTIFIER})*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`,
+);
+
+function parseHostSemanticVersion(version: string): HostSemanticVersion | null {
+  const match = HOST_SEMVER.exec(version);
+  if (match === null) return null;
+  const coreEnd = version.search(/[-+]/);
+  const core = (coreEnd === -1 ? version : version.slice(0, coreEnd))
+    .split(".")
+    .map((identifier) => Number.parseInt(identifier, 10));
+  const prerelease = match[1]?.split(".") ?? [];
+  return { core, prerelease };
+}
+
+/**
+ * Whether a version is a complete SemVer identifier. This is intentionally
+ * broader than the app-facing stable/RC consent policy: CLI operator commands
+ * may address other valid prerelease labels.
+ */
+export function isHostSemanticVersion(version: string): boolean {
+  return parseHostSemanticVersion(version) !== null;
+}
+
+/**
+ * Full SemVer precedence comparison (spec §11), including prereleases and
+ * excluding build metadata. Invalid input returns 0 so discovery callers do
+ * not advertise an update they cannot justify; callers that need validation
+ * should pair this with {@link isHostSemanticVersion}.
+ */
+export function compareHostVersions(a: string, b: string): number {
+  const left = parseHostSemanticVersion(a);
+  const right = parseHostSemanticVersion(b);
+  if (left === null || right === null) return 0;
+  for (let index = 0; index < left.core.length; index += 1) {
+    if (left.core[index] !== right.core[index]) {
+      return left.core[index] > right.core[index] ? 1 : -1;
+    }
+  }
+  if (left.prerelease.length === 0 && right.prerelease.length === 0) return 0;
+  if (left.prerelease.length === 0) return 1;
+  if (right.prerelease.length === 0) return -1;
+  const length = Math.max(left.prerelease.length, right.prerelease.length);
+  for (let index = 0; index < length; index += 1) {
+    if (index >= left.prerelease.length) return -1;
+    if (index >= right.prerelease.length) return 1;
+    const leftIdentifier = left.prerelease[index];
+    const rightIdentifier = right.prerelease[index];
+    const leftNumeric = /^\d+$/.test(leftIdentifier);
+    const rightNumeric = /^\d+$/.test(rightIdentifier);
+    if (leftNumeric && rightNumeric) {
+      const leftNumber = Number.parseInt(leftIdentifier, 10);
+      const rightNumber = Number.parseInt(rightIdentifier, 10);
+      if (leftNumber !== rightNumber) {
+        return leftNumber > rightNumber ? 1 : -1;
+      }
+    } else if (leftNumeric) {
+      return -1;
+    } else if (rightNumeric) {
+      return 1;
+    } else if (leftIdentifier !== rightIdentifier) {
+      return leftIdentifier > rightIdentifier ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
 export interface HostAvailableVersionsInput {
   readonly includePreReleases: boolean;
 }
@@ -952,6 +1114,13 @@ export interface HostRegistryUpdateState {
   readonly updateAvailable: boolean;
   readonly reachable: boolean;
   readonly errorMessage: string | null;
+  // The release channel this state was resolved under. A push-based consumer
+  // must file the state against the channel that *produced* it rather than
+  // whichever channel the consumer currently believes is active - the two
+  // broadcasts that follow a channel change (the app-update snapshot, then
+  // this) are separate events, so a consumer can observe this one before it
+  // has re-rendered with the new channel.
+  readonly includePreReleases: boolean;
 }
 
 export interface HostUninstallResult {
@@ -1037,7 +1206,14 @@ export interface IHostManagement {
     readonly version: string | null;
     readonly onProgress: ((event: HostProgressEvent) => void) | null;
   }) => Promise<HostInstallResult>;
+  // `expectedVersion` is the exact host version the surface that triggered
+  // this update was showing the user ("Update to 1.4.2", the Updates row's
+  // `v1.4.2`, the banner). The shell re-resolves the registry target under the
+  // *current* release channel and refuses when the two disagree, so a channel
+  // switch racing the click can never install a version the user never
+  // confirmed. `null` only for callers with no version on screen.
   readonly updateHost: (input: {
+    readonly expectedVersion: string | null;
     readonly onProgress: ((event: HostProgressEvent) => void) | null;
   }) => Promise<HostInstallResult>;
   readonly uninstallHost: (input: {

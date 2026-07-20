@@ -74,6 +74,7 @@ function agent(id: string, title: string): TuiAgentProjection {
     model: null,
     reasoningEffort: null,
     agentMode: "regular",
+    profileId: null,
     harnessSessionId: null,
     terminalAgentArgs: null,
     terminalShellCommand: null,
@@ -85,6 +86,7 @@ function artifact(id: string, title: string): ArtifactProjection {
     id,
     kind: "spec",
     title,
+    folderName: "",
     parentId: null,
     artifactRoomId: null,
     createdAt: 0,
@@ -171,6 +173,7 @@ vi.mock("@/hooks/terminal/use-terminal-list-query", () => ({
       sessions: [
         {
           sessionId: "term-1",
+          scope: { kind: "epic", epicId: "epic-1" },
           sessionKind: "terminal",
           status: "running",
           title: "shell one",

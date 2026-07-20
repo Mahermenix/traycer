@@ -11,6 +11,7 @@ import type {
 } from "@traycer-clients/shared/platform/runner-host";
 import type { Disposable } from "@traycer-clients/shared/platform/uri-callback";
 import { appLogger, describeLogError } from "@/lib/logger";
+import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { lastSelectedHostKey } from "@/lib/persist";
 
 const HOST_DIRECTORY_REFRESH_POLL_MS = 15_000;
@@ -208,6 +209,12 @@ export class HostDirectoryService implements IHostDirectoryService {
     }
     persistHostSelection(hostId);
     const entry = this.findById(hostId);
+    if (entry !== null) {
+      Analytics.getInstance().track(AnalyticsEvent.HostSelected, {
+        source: "direct_ui",
+        host_kind: entry.kind === "remote" ? "remote" : "local",
+      });
+    }
     this.setSelected(entry);
   }
 

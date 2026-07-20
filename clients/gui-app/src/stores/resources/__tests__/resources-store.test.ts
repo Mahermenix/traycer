@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import type {
   AppResourceSnapshotWire,
   EpicResourceSnapshotWire,
+  HostTreeResourceSnapshotWire,
+  OtherResourceSnapshotWire,
   OwnerResourceSnapshotWire,
   ResourceProcessSnapshotWire,
   ResourceOwnerKindWire,
@@ -86,6 +88,32 @@ function makeApp(
   };
 }
 
+function makeHostTree(
+  over: Partial<HostTreeResourceSnapshotWire>,
+): HostTreeResourceSnapshotWire {
+  return {
+    sampledAt: 1_000,
+    processCount: 4,
+    cpuPercent: 25,
+    rssBytes: 2_500,
+    ...over,
+  };
+}
+
+function makeOther(
+  over: Partial<OtherResourceSnapshotWire>,
+): OtherResourceSnapshotWire {
+  return {
+    sampledAt: 1_000,
+    rootPids: [20],
+    processCount: 1,
+    cpuPercent: 5,
+    rssBytes: 400,
+    processes: [makeProcess({ pid: 20, rootPid: 20 })],
+    ...over,
+  };
+}
+
 function projection(
   over: Partial<ResourcesProjectionPayload>,
 ): ResourcesProjectionPayload {
@@ -96,6 +124,8 @@ function projection(
     owners: [],
     epic: null,
     epics: [],
+    hostTree: undefined,
+    other: undefined,
     ...over,
   };
 }
@@ -151,7 +181,6 @@ describe("createResourcesStore", () => {
       state.owners.get(resourceOwnerKey("terminal", "s1"))?.processes[0].name,
     ).toBe("bash");
     expect(state.epic?.cpuPercent).toBe(12);
-    expect(state.taskSummary?.cpuPercent).toBe(12);
     handle.dispose();
   });
 
@@ -173,60 +202,10 @@ describe("createResourcesStore", () => {
       state.owners.get(resourceOwnerKey("terminal", "s1")),
     ).toBeUndefined();
     expect(state.owners.size).toBe(0);
-    expect(state.taskSummary).toBeNull();
     handle.dispose();
   });
 
-  it("derives a task summary from the live owner projection", () => {
-    const fake = makeFakeClient();
-    const handle = createResourcesStore({
-      scope: { kind: "epic", epicId: "epic-1" },
-      streamClientFactory: fake.factory,
-    });
-
-    fake.callbacks().onSnapshot(
-      projection({
-        owners: [
-          makeOwner("terminal", "term-1", {
-            rootPids: [101],
-            processCount: 3,
-            cpuPercent: 10,
-            rssBytes: 100,
-          }),
-          makeOwner("terminal", "term-2", {
-            rootPids: [201],
-            processCount: 1,
-            cpuPercent: 5,
-            rssBytes: 200,
-          }),
-          makeOwner("terminal-agent", "agent-1", {
-            rootPids: [301, 302],
-            processCount: 4,
-            cpuPercent: 7,
-            rssBytes: 300,
-          }),
-          makeOwner("chat", "chat-1", {
-            rootPids: [401],
-            processCount: 2,
-            cpuPercent: 3,
-            rssBytes: 400,
-          }),
-        ],
-      }),
-    );
-
-    expect(handle.store.getState().taskSummary).toEqual({
-      cpuPercent: 25,
-      rssBytes: 1_000,
-      trackedProcessCount: 10,
-      openTerminalCount: 2,
-      tuiAgentCount: 1,
-      guiAgentCount: 1,
-    });
-    handle.dispose();
-  });
-
-  it("includes host app usage in the task summary totals", () => {
+  it("includes host app usage in the epic aggregate totals", () => {
     const fake = makeFakeClient();
     const handle = createResourcesStore({
       scope: { kind: "epic", epicId: "epic-1" },
@@ -248,12 +227,6 @@ describe("createResourcesStore", () => {
     );
 
     expect(handle.store.getState().app?.process?.name).toBe("traycer-host");
-    expect(handle.store.getState().taskSummary).toMatchObject({
-      cpuPercent: 12,
-      rssBytes: 600,
-      trackedProcessCount: 3,
-      openTerminalCount: 1,
-    });
     handle.dispose();
   });
 
@@ -274,6 +247,41 @@ describe("createResourcesStore", () => {
       );
 
     expect(handle.store.getState().epic?.cpuPercent).toBe(80);
+    handle.dispose();
+  });
+
+  it("merges 1.2 host-tree and Other snapshots without churning unchanged identities", () => {
+    const fake = makeFakeClient();
+    const handle = createResourcesStore({
+      scope: { kind: "global" },
+      streamClientFactory: fake.factory,
+    });
+    const hostTree = makeHostTree({});
+    const other = makeOther({});
+
+    fake.callbacks().onSnapshot(projection({ hostTree, other }));
+    expect(handle.store.getState().hostTree).toBe(hostTree);
+    expect(handle.store.getState().other).toBe(other);
+
+    fake.callbacks().onUpdate(
+      projection({
+        sampledAt: 2_000,
+        hostTree: makeHostTree({ sampledAt: 2_000 }),
+        other: makeOther({ sampledAt: 2_000 }),
+      }),
+    );
+    expect(handle.store.getState().hostTree).toBe(hostTree);
+    expect(handle.store.getState().other).toBe(other);
+
+    fake.callbacks().onUpdate(
+      projection({
+        sampledAt: 3_000,
+        hostTree: makeHostTree({ sampledAt: 3_000, cpuPercent: 30 }),
+        other: makeOther({ sampledAt: 3_000, rssBytes: 500 }),
+      }),
+    );
+    expect(handle.store.getState().hostTree?.cpuPercent).toBe(30);
+    expect(handle.store.getState().other?.rssBytes).toBe(500);
     handle.dispose();
   });
 
@@ -427,14 +435,8 @@ describe("resourcesRegistry", () => {
 
     const global = resourcesRegistry.getGlobalProjection();
     expect(global.entries).toHaveLength(2);
+    // Only the latest app snapshot is exposed (charged once, not summed per epic).
     expect(global.app?.sampledAt).toBe(2_000);
-    expect(global.summary).toMatchObject({
-      cpuPercent: 20,
-      rssBytes: 1_100,
-      trackedProcessCount: 5,
-      openTerminalCount: 1,
-      tuiAgentCount: 0,
-      guiAgentCount: 1,
-    });
+    expect(global.owners).toHaveLength(2);
   });
 });

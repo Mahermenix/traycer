@@ -30,6 +30,15 @@ export interface ArtifactProjection {
   readonly id: string;
   readonly kind: EpicArtifactKind;
   readonly title: string;
+  /**
+   * On-disk folder name for this artifact's `index.md` (its own directory
+   * under `epics/<epicId>/artifacts/...`, distinct from `title`, which the
+   * user can rename freely afterward). Empty string for a legacy/malformed
+   * entry that predates the field. Root-to-leaf folder names walked via
+   * `parentId` reconstruct an artifact-shaped path for a relative markdown
+   * link authored inside this artifact - see `artifact-folder-chain.ts`.
+   */
+  readonly folderName: string;
   readonly parentId: string | null;
   readonly artifactRoomId: string | null;
   readonly createdAt: number;
@@ -113,6 +122,12 @@ export interface TuiAgentProjection {
   readonly model: string | null;
   readonly reasoningEffort: string | null;
   readonly agentMode: AgentMode;
+  /**
+   * Which of the harness's logged-in profiles (subscriptions) this agent runs
+   * on. `null` = the ambient/host login, so agents persisted before profiles
+   * existed still project cleanly. See the multi-profile decision log.
+   */
+  readonly profileId: string | null;
   /**
    * Upstream harness's CLI-resumable id. Always non-null for Claude/OpenCode;
    * `null` for Codex until `thread/started` back-fills the saved-session id.

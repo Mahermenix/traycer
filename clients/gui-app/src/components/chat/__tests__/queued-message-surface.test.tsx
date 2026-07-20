@@ -128,6 +128,7 @@ const SETTINGS: ChatRunSettings = {
   reasoningEffort: "medium",
   serviceTier: null,
   agentMode: "epic",
+  profileId: null,
 };
 
 const onAbortSteerSpy = vi.fn();
@@ -721,6 +722,7 @@ function agentQueuedItem(queueItemId: string, text: string): ChatQueuedItem {
       agentId: "agent-1",
       displayName: null,
       reply: { expectsReply: false },
+      inReplyTo: null,
     },
     // Received A2A responses are enqueued as `same_turn` so they steer into the
     // running turn (matches the host delivery path).

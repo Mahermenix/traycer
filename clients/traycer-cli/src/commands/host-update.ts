@@ -3,6 +3,10 @@ import {
   rollbackToVersionedDir,
   type InstallHostResult,
 } from "../installer";
+import {
+  compareHostVersions,
+  isHostSemanticVersion,
+} from "@traycer-clients/shared/platform/runner-host";
 import { assertHostNotBusy } from "../host/busy-check";
 import { readHostInstallRecord } from "../manifest/host-install";
 import {
@@ -47,10 +51,11 @@ import { errorFromUnknown } from "../logger";
 //      binary, rewrite the marker as `failed`, and surface the failure via
 //      a thrown CliError.
 export interface HostUpdateArgs {
-  // Target registry version. The daemon always passes an explicit value;
-  // interactive/manual use defaults to "latest" when omitted (see
-  // src/index.ts's `--version` wiring).
-  readonly version: string;
+  // Target registry version request. The daemon passes an explicit value via
+  // `--version`; Desktop passes an exact prerelease via `--release`;
+  // interactive/manual use defaults to "latest" (the stable manifest pointer).
+  // See src/index.ts's flag wiring.
+  readonly versionRequest: string;
   // Skip the busy check and update a running host unconditionally.
   // Surfaced as `--force`, matching `host ensure`'s flag. Does NOT skip
   // the post-swap health probe / rollback - those are independent of how
@@ -64,7 +69,7 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
     ctx.runtime.logger.info("Host update command started", {
       environment,
       force: args.force,
-      versionRequest: args.version,
+      versionRequest: args.versionRequest,
     });
     return withCliLock(
       {
@@ -87,6 +92,39 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
             exitCode: 1,
           });
         }
+        if (
+          args.versionRequest !== "latest" &&
+          isHostSemanticVersion(args.versionRequest) &&
+          isHostSemanticVersion(previous.version)
+        ) {
+          const targetComparison = compareHostVersions(
+            args.versionRequest,
+            previous.version,
+          );
+          if (targetComparison < 0) {
+            throw cliError({
+              code: CLI_ERROR_CODES.HOST_UPDATE_NOT_NEWER,
+              message: `host update: refusing to downgrade ${previous.version} to ${args.versionRequest}; use 'traycer host install --release ${args.versionRequest}' for a deliberate operator downgrade`,
+              details: {
+                installedVersion: previous.version,
+                requestedVersion: args.versionRequest,
+              },
+              exitCode: 1,
+            });
+          }
+          if (targetComparison === 0) {
+            return {
+              data: {
+                version: previous.version,
+                previousVersion: previous.version,
+                installedAt: previous.installedAt,
+                source: previous.source,
+              },
+              human: `host already at ${previous.version} (no-op)`,
+              exitCode: 0,
+            };
+          }
+        }
 
         // Independent re-verification of busy state for THIS invocation -
         // see the module doc comment above. `assertHostNotBusy` is the
@@ -104,7 +142,7 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
         await writeUpdateProgressMarker(environment, {
           state: "updating",
           error: null,
-          targetVersion: args.version,
+          targetVersion: args.versionRequest,
           updatedAt: new Date().toISOString(),
         });
 
@@ -124,7 +162,7 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
         try {
           result = await installHost({
             environment,
-            source: { kind: "registry", versionRequest: args.version },
+            source: { kind: "registry", versionRequest: args.versionRequest },
             onProgress: (info) => ctx.progress(info),
             lifecycle: handle.lifecycle,
             // Registry update records the registry version; nothing to
@@ -143,7 +181,7 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
             await writeUpdateProgressMarker(environment, {
               state: "failed",
               error: shortErrorDetail(cause),
-              targetVersion: args.version,
+              targetVersion: args.versionRequest,
               updatedAt: new Date().toISOString(),
             });
           } catch (markerErr) {
@@ -158,7 +196,7 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
           }
           ctx.runtime.logger.error(
             "Host update install failed before health probe",
-            { environment, targetVersion: args.version },
+            { environment, targetVersion: args.versionRequest },
             cause instanceof Error ? cause : null,
           );
           throw cause;
@@ -216,7 +254,7 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
           "Host update health probe failed; rolling back",
           {
             environment,
-            targetVersion: args.version,
+            targetVersion: args.versionRequest,
             newVersion: result.record.version,
             previousVersion: previous.version,
             hasPreviousVersionedDir: result.previousVersionedDir !== null,
@@ -249,7 +287,7 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
             rollbackErrorDetail = shortErrorDetail(rollbackCause);
             ctx.runtime.logger.error(
               "Host update rollback failed after health probe failure",
-              { environment, targetVersion: args.version },
+              { environment, targetVersion: args.versionRequest },
               rollbackCause instanceof Error ? rollbackCause : null,
             );
           }
@@ -267,7 +305,7 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
           await writeUpdateProgressMarker(environment, {
             state: "failed",
             error: failureDetail,
-            targetVersion: args.version,
+            targetVersion: args.versionRequest,
             updatedAt: new Date().toISOString(),
           });
         } catch (markerErr) {
@@ -289,7 +327,7 @@ export function buildHostUpdateCommand(args: HostUpdateArgs): CommandFn {
               ? `host update: new host ${result.record.version} failed its post-update health check and was rolled back to ${previous.version}: ${failureDetail}`
               : `host update: new host ${result.record.version} failed its post-update health check and rollback to ${previous.version} also failed: ${failureDetail}`,
           details: {
-            targetVersion: args.version,
+            targetVersion: args.versionRequest,
             attemptedVersion: result.record.version,
             previousVersion: previous.version,
             rolledBack,

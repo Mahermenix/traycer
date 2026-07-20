@@ -11,6 +11,7 @@ import { DevicesSessionsPanel } from "@/components/settings/panels/devices-sessi
 import { DiagnosticsSettingsPanel } from "@/components/settings/panels/diagnostics-settings-panel";
 import { ProvidersSettingsPanel } from "@/components/settings/panels/providers-settings-panel";
 import { AgentsSettingsPanel } from "@/components/settings/panels/agents-settings-panel";
+import { NotificationsSettingsPanel } from "@/components/settings/panels/notifications-settings-panel";
 import { useSystemTabModalActions } from "@/stores/tabs/use-system-tab-modal";
 
 export interface SettingsModalContentProps {
@@ -53,6 +54,8 @@ function SettingsPanelForSection(props: {
       return <AppearanceSettingsPanel />;
     case "providers":
       return <ProvidersSettingsPanel />;
+    case "notifications":
+      return <NotificationsSettingsPanel />;
     case "agents":
       return <AgentsSettingsPanel />;
     case "keybindings":

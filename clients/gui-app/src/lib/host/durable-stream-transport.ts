@@ -113,7 +113,7 @@ export function openDurableStreamTransport(params: {
     // Roll back every subscription wired so far, then close the socket, so a
     // throw mid-wiring leaves nothing dangling.
     disposers.forEach((dispose) => dispose());
-    wsStreamClient.close();
+    wsStreamClient.close("durable-transport-wiring-failed");
     throw cause;
   }
   return {
@@ -122,7 +122,7 @@ export function openDurableStreamTransport(params: {
     // fire `reconnectAll` on a socket that is being torn down.
     close: () => {
       disposers.forEach((dispose) => dispose());
-      wsStreamClient.close();
+      wsStreamClient.close("durable-transport-closed");
     },
   };
 }

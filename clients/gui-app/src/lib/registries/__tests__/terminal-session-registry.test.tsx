@@ -136,6 +136,9 @@ function fakeWsStreamClient(): IHostStreamClient<HostStreamRpcRegistry> {
     getMethodSupport: () => "unknown",
     subscribeMethodSupport: () => () => undefined,
     getMethodSchemaVersion: () => null,
+    getClosedReason: () => null,
+    onClosed: () => () => undefined,
+    instanceId: "fake-stream-client",
   };
 }
 
@@ -194,7 +197,7 @@ describe("useTerminalSessionHandle owner identity (R-1)", () => {
       () =>
         useTerminalSessionHandle({
           hostId: REMOTE_HOST_ID,
-          epicId: "epic-1",
+          scope: { kind: "epic", epicId: "epic-1" },
           sessionId: "terminal-1",
           instanceId: "inst-1",
           cols: 80,

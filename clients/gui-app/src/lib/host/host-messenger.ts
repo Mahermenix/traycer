@@ -196,6 +196,40 @@ class RuntimeHostMessenger<
     return remoteMessenger.request(method, params);
   }
 
+  requestWithResponseTimeout<Method extends keyof Registry & string>(
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    responseTimeoutMs: number,
+  ): Promise<ResponseOfMethod<Registry, Method>> {
+    const target = this.endpoint();
+    if (target === null || target.kind !== "remote") {
+      this.closeRemoteTransport();
+      return this.localMessenger.requestWithResponseTimeout(
+        method,
+        params,
+        responseTimeoutMs,
+      );
+    }
+
+    const remoteMessenger = this.remoteMessengerFor(target);
+    if (remoteMessenger === null) {
+      return Promise.reject(
+        new HostRpcError({
+          code: "RPC_ERROR",
+          message: `Remote host '${target.hostId}' does not expose a valid remote transport`,
+          requestId: this.requestId(),
+          method,
+          fatalDetails: null,
+        }),
+      );
+    }
+    return remoteMessenger.requestWithResponseTimeout(
+      method,
+      params,
+      responseTimeoutMs,
+    );
+  }
+
   dispose(): void {
     this.closeRemoteTransport();
   }

@@ -15,10 +15,11 @@ import {
   vi,
   type Mock,
 } from "vitest";
+import { DEFAULT_ACCOUNT_CONTEXT } from "@traycer/protocol/common/schemas";
 import type { ProviderRateLimits } from "@traycer/protocol/host";
 import type { ProviderRateLimitEnvelope } from "@/lib/rate-limits/rate-limit-envelope";
 import { envelopeFromRateLimits } from "@/lib/rate-limits/__tests__/rate-limit-envelope-fixtures";
-import { formatResetDateTime } from "@/lib/relative-time";
+import { formatResetFullDateTime } from "@/lib/relative-time";
 
 type TurnRefreshCall = {
   readonly providerId: string | null;
@@ -36,6 +37,9 @@ const mocks = vi.hoisted(
     enqueue: Mock<(...args: unknown[]) => Promise<unknown>>;
     hostId: string;
     turnRefreshCalls: TurnRefreshCall[];
+    queueScope: { hostId: string };
+    refreshProviders: Mock<() => Promise<void>>;
+    refreshOnMount: Mock<(...args: unknown[]) => void>;
   } => ({
     data: undefined,
     isPending: false,
@@ -46,6 +50,9 @@ const mocks = vi.hoisted(
     enqueue: vi.fn((..._args: unknown[]) => Promise.resolve()),
     hostId: "host-1",
     turnRefreshCalls: [],
+    queueScope: { hostId: "host-b" },
+    refreshProviders: vi.fn(() => Promise.resolve()),
+    refreshOnMount: vi.fn(),
   }),
 );
 
@@ -74,7 +81,9 @@ vi.mock("@/hooks/host/use-refresh-provider-rate-limits-on-turn", () => ({
   },
 }));
 vi.mock("@/hooks/host/use-refresh-provider-rate-limits-on-mount", () => ({
-  useRefreshProviderRateLimitsOnMount: () => {},
+  useRefreshProviderRateLimitsOnMount: (...args: unknown[]) => {
+    mocks.refreshOnMount(...args);
+  },
 }));
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => mocks.hostId,
@@ -82,11 +91,21 @@ vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
 vi.mock("@/hooks/rate-limits/use-is-rate-limit-queue-draining", () => ({
   useIsRateLimitQueueDraining: () => mocks.draining,
 }));
+vi.mock("@/hooks/rate-limits/use-rate-limit-queue-scope", () => ({
+  useRateLimitQueueScope: () => mocks.queueScope,
+}));
 vi.mock("@/lib/rate-limits/ephemeral-fetch-queue", () => ({
-  enqueueRateLimitFetch: (...args: unknown[]) => mocks.enqueue(...args),
+  enqueueRateLimitFetchForScope: (...args: unknown[]) => mocks.enqueue(...args),
+}));
+vi.mock("@/hooks/providers/use-refresh-providers", () => ({
+  useRefreshProviders: () => mocks.refreshProviders,
 }));
 
-import { ProviderRateLimitForProvider } from "../provider-rate-limit-section";
+import {
+  EmbeddedProviderRateLimitForProvider,
+  ProviderProfilesRefreshButton,
+  ProviderRateLimitForProvider,
+} from "../provider-rate-limit-section";
 
 const CLAUDE_FIVE_HOUR_RESETS_AT = Date.now() + 60 * 60 * 1000;
 const CLAUDE_SEVEN_DAY_RESETS_AT = Date.now() + 2 * 24 * 60 * 60 * 1000;
@@ -162,15 +181,42 @@ describe("ProviderRateLimitForProvider", () => {
     mocks.enqueue = vi.fn((..._args: unknown[]) => Promise.resolve());
     mocks.hostId = "host-1";
     mocks.turnRefreshCalls = [];
+    mocks.refreshProviders.mockClear();
+    mocks.refreshOnMount.mockClear();
   });
 
   afterEach(() => {
     cleanup();
   });
 
+  it("renders the embedded variant as an integrated section without a nested card border", () => {
+    const { container } = render(
+      <EmbeddedProviderRateLimitForProvider
+        providerId="codex"
+        profileId="work-profile"
+        usageUpdatedAt={123}
+      />,
+    );
+
+    expect(container.firstElementChild?.className).toContain("border-t");
+    expect(container.firstElementChild?.className).not.toContain("rounded-lg");
+    expect(
+      screen.queryByRole("button", { name: "Refresh usage limits" }),
+    ).toBeNull();
+    expect(mocks.refreshOnMount).toHaveBeenCalledWith(
+      "codex",
+      "work-profile",
+      123,
+    );
+  });
+
   it("renders nothing for a provider without native usage limits", () => {
     const { container } = render(
-      <ProviderRateLimitForProvider providerId="traycer" />,
+      <ProviderRateLimitForProvider
+        providerId="traycer"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
     );
     expect(container.firstChild).toBe(null);
   });
@@ -178,19 +224,29 @@ describe("ProviderRateLimitForProvider", () => {
   it("renders the card with a loading state before data arrives", () => {
     mocks.isPending = true;
     mocks.isFetching = true;
-    render(<ProviderRateLimitForProvider providerId="claude-code" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="claude-code"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
     expect(screen.getByText("Usage limits")).toBeTruthy();
     expect(screen.getByText("Loading usage limits")).toBeTruthy();
   });
 
-  it("routes turn-completion refreshes through the current scoped host id", () => {
-    mocks.hostId = "scoped-host";
-
-    render(<ProviderRateLimitForProvider providerId="codex" />);
+  it("routes turn-completion refreshes through the current profile id", () => {
+    render(
+      <ProviderRateLimitForProvider
+        providerId="codex"
+        profileId="work-profile"
+        usageUpdatedAt={null}
+      />,
+    );
 
     expect(mocks.turnRefreshCalls).toContainEqual({
       providerId: "codex",
-      hostId: "scoped-host",
+      hostId: "work-profile",
     });
   });
 
@@ -200,14 +256,26 @@ describe("ProviderRateLimitForProvider", () => {
     // show a permanent loading spinner for that state.
     mocks.isPending = true;
     mocks.isFetching = false;
-    render(<ProviderRateLimitForProvider providerId="claude-code" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="claude-code"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
     expect(screen.getByText("Usage limits")).toBeTruthy();
     expect(screen.queryByText("Loading usage limits")).toBeNull();
   });
 
   it("renders the Claude Code rate-limit detail once loaded", () => {
     mocks.data = envelope(CLAUDE_RATE_LIMITS);
-    render(<ProviderRateLimitForProvider providerId="claude-code" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="claude-code"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
 
     expect(screen.getByText("Current session")).toBeTruthy();
     expect(screen.getByText("12% used")).toBeTruthy();
@@ -217,23 +285,35 @@ describe("ProviderRateLimitForProvider", () => {
 
   it("does not show a subscription-plan badge (the provider auth badge above already shows it)", () => {
     mocks.data = envelope(CLAUDE_RATE_LIMITS);
-    render(<ProviderRateLimitForProvider providerId="claude-code" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="claude-code"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
     expect(screen.queryByText("Max")).toBeNull();
   });
 
   it("shows an exact reset date/time for the weekly window, and a relative countdown for the 5-hour one", () => {
     mocks.data = envelope(CLAUDE_RATE_LIMITS);
-    render(<ProviderRateLimitForProvider providerId="claude-code" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="claude-code"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
 
     expect(
       screen.getByText(
-        `Resets ${formatResetDateTime(CLAUDE_SEVEN_DAY_RESETS_AT)}`,
+        `Resets ${formatResetFullDateTime(CLAUDE_SEVEN_DAY_RESETS_AT)}`,
       ),
     ).toBeTruthy();
     expect(screen.getByText(/^Resets in /)).toBeTruthy();
   });
 
-  it("keeps usage blue through 85% and red above 85% used", () => {
+  it("uses duration-aware Healthy, Running low, and Limited tones", () => {
     mocks.data = envelope({
       ...CLAUDE_RATE_LIMITS,
       fiveHour: {
@@ -246,25 +326,40 @@ describe("ProviderRateLimitForProvider", () => {
         resetsAt: CLAUDE_SEVEN_DAY_RESETS_AT,
         durationMinutes: 10080,
       },
+      sevenDayOpus: {
+        usedPercent: 100,
+        resetsAt: CLAUDE_SEVEN_DAY_RESETS_AT,
+        durationMinutes: 10080,
+      },
     });
     const { container } = render(
-      <ProviderRateLimitForProvider providerId="claude-code" />,
+      <ProviderRateLimitForProvider
+        providerId="claude-code"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
     );
 
-    expect(container.querySelectorAll(".bg-yellow-500").length).toBe(0);
     expect(container.querySelectorAll(".bg-blue-500").length).toBeGreaterThan(
+      0,
+    );
+    expect(container.querySelectorAll(".bg-amber-500").length).toBeGreaterThan(
       0,
     );
     expect(container.querySelectorAll(".bg-red-500").length).toBeGreaterThan(0);
   });
 
-  it("keeps the bar blue below the red threshold", () => {
+  it("keeps bars Healthy below their duration-aware warning thresholds", () => {
     mocks.data = envelope(CLAUDE_RATE_LIMITS);
     const { container } = render(
-      <ProviderRateLimitForProvider providerId="claude-code" />,
+      <ProviderRateLimitForProvider
+        providerId="claude-code"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
     );
 
-    expect(container.querySelectorAll(".bg-yellow-500").length).toBe(0);
+    expect(container.querySelectorAll(".bg-amber-500").length).toBe(0);
     expect(container.querySelectorAll(".bg-red-500").length).toBe(0);
     expect(container.querySelectorAll(".bg-blue-500").length).toBeGreaterThan(
       0,
@@ -273,7 +368,13 @@ describe("ProviderRateLimitForProvider", () => {
 
   it("renders the Codex rate-limit detail once loaded", () => {
     mocks.data = envelope(CODEX_RATE_LIMITS);
-    render(<ProviderRateLimitForProvider providerId="codex" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="codex"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
 
     expect(screen.getByText("Current session")).toBeTruthy();
     expect(screen.getByText("42% used")).toBeTruthy();
@@ -283,21 +384,39 @@ describe("ProviderRateLimitForProvider", () => {
 
   it("maps a rateLimitReachedType token to a destructive badge", () => {
     mocks.data = envelope(CODEX_RATE_LIMITS);
-    render(<ProviderRateLimitForProvider providerId="codex" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="codex"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
 
     expect(screen.getByText("Usage limit reached")).toBeTruthy();
   });
 
   it("does not show a plan badge (the provider auth badge above already shows it)", () => {
     mocks.data = envelope(CODEX_RATE_LIMITS);
-    render(<ProviderRateLimitForProvider providerId="codex" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="codex"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
 
     expect(screen.queryByText("Plus")).toBeNull();
   });
 
   it("renders the credits row", () => {
     mocks.data = envelope(CODEX_RATE_LIMITS);
-    render(<ProviderRateLimitForProvider providerId="codex" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="codex"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
 
     expect(screen.getByText("Credits")).toBeTruthy();
     expect(screen.getByText("$12.50")).toBeTruthy();
@@ -305,7 +424,13 @@ describe("ProviderRateLimitForProvider", () => {
 
   it("renders the spend-control row with used/limit and an absolute reset time", () => {
     mocks.data = envelope(CODEX_RATE_LIMITS);
-    render(<ProviderRateLimitForProvider providerId="codex" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="codex"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
 
     // Scoped to the spend-limit row's own container: the current-session
     // window above it also renders a reset line, so an unscoped query would
@@ -319,32 +444,80 @@ describe("ProviderRateLimitForProvider", () => {
     // Regression: `CodexSpendControlRow` used to hardcode `weekly={false}`,
     // always forcing a relative countdown regardless of the real reset time.
     // `CODEX_SPEND_LIMIT_RESETS_AT` is 5 days out, so the reset line now
-    // correctly reads as an absolute weekday/time, not "Resets in ...".
+    // correctly reads as an absolute calendar date/time, not "Resets in ...".
     expect(
-      spendLimitScope.getByText(/^Resets [A-Za-z]{3} \d{1,2}:\d{2}\s?[AP]M$/i),
+      spendLimitScope.getByText(
+        `Resets ${formatResetFullDateTime(CODEX_SPEND_LIMIT_RESETS_AT)}`,
+      ),
     ).toBeTruthy();
     expect(spendLimitScope.queryByText(/^Resets in /)).toBeNull();
   });
 
   it("routes a Codex (ephemeralProcess) manual refresh through the shared queue with force:true, not a bare query.refetch()", () => {
     mocks.data = envelope(CODEX_RATE_LIMITS);
-    render(<ProviderRateLimitForProvider providerId="codex" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="codex"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
 
     fireEvent.click(
       screen.getByRole("button", { name: "Refresh usage limits" }),
     );
 
-    expect(mocks.enqueue).toHaveBeenCalledWith("codex", expect.anything(), {
-      force: true,
-    });
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      mocks.queueScope,
+      "codex",
+      DEFAULT_ACCOUNT_CONTEXT,
+      {
+        force: true,
+        profileId: null,
+      },
+    );
     expect(mocks.refetch).not.toHaveBeenCalled();
+  });
+
+  it("combines the selected host's profile-status and managed-profile usage refresh", () => {
+    mocks.data = envelope(CODEX_RATE_LIMITS);
+    render(
+      <ProviderProfilesRefreshButton
+        providerId="codex"
+        profileId="work-profile"
+        usageUpdatedAt={null}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Refresh profile statuses and usage limits",
+      }),
+    );
+
+    expect(mocks.refreshProviders).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue).toHaveBeenCalledWith(
+      mocks.queueScope,
+      "codex",
+      DEFAULT_ACCOUNT_CONTEXT,
+      {
+        force: true,
+        profileId: "work-profile",
+      },
+    );
   });
 
   it("keeps the refresh button disabled while the shared queue is draining, even once this provider's own isFetching has settled", () => {
     mocks.data = envelope(CODEX_RATE_LIMITS);
     mocks.isFetching = false;
     mocks.draining = true;
-    render(<ProviderRateLimitForProvider providerId="codex" />);
+    render(
+      <ProviderRateLimitForProvider
+        providerId="codex"
+        profileId={null}
+        usageUpdatedAt={null}
+      />,
+    );
 
     expect(
       screen.getByRole("button", { name: "Refresh usage limits" }),

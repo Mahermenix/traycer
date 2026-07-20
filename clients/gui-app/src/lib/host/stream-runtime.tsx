@@ -68,6 +68,15 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
   );
   const requestContextUserId = readiness.requestContextUserId;
   const [value, setValue] = useState<StreamRuntimeBinding | null>(null);
+  // Liveness escape hatch: bumped when the served client turns out to be
+  // closed (see the guard effect below), forcing the build effect to mint a
+  // fresh client even though the identity never changed.
+  const [rebuildNonce, setRebuildNonce] = useState(0);
+  // Set while the build effect's cleanup is intentionally closing the client
+  // to rebuild it, so the liveness guard's `onClosed` handler can tell that
+  // teardown-close apart from a genuine underneath-close and skip a redundant
+  // (and otherwise infinitely-looping) rebuild.
+  const teardownInProgressRef = useRef(false);
 
   // Builds AND owns the client's lifecycle inside this ONE effect, rather
   // than a `useMemo` (as this provider did before S1's session cache) - see
@@ -116,12 +125,15 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
     }
     appLogger.debug("[stream] app stream client created", {
       hostId: readiness.hostId,
+      client: wsStreamClient.instanceId,
       hasTransport: true,
     });
     setValue({ wsStreamClient });
 
     return () => {
-      wsStreamClient.close();
+      teardownInProgressRef.current = true;
+      wsStreamClient.close("app-stream-provider-teardown");
+      teardownInProgressRef.current = false;
     };
   }, [
     binding,
@@ -130,7 +142,36 @@ export function HostStreamProvider(props: HostStreamProviderProps): ReactNode {
     identityKey,
     requestContextUserId,
     readiness.hostId,
+    rebuildNonce,
   ]);
+  // Liveness guard: a CLOSED client must be replaced, not left unavailable
+  // until the window reloads. Legitimate closes (identity change / unmount)
+  // are always paired with a value change or teardown, so this effect's
+  // subscription is gone before they fire; anything else closing the served
+  // client lands here and forces a rebuild via `rebuildNonce`. The build
+  // effect owns the close, and `useWsStreamClient` hides the dead instance
+  // during the handoff; the `isClosed()` re-check covers closes that happened
+  // while this effect itself was disconnected.
+  useEffect(() => {
+    if (value === null) return;
+    const client = value.wsStreamClient;
+    const rebuild = (): void => {
+      if (teardownInProgressRef.current) return;
+      appLogger.warn(
+        "[stream] app stream client closed underneath the provider - rebuilding",
+        {
+          client: client.instanceId,
+          closedReason: client.getClosedReason(),
+        },
+      );
+      setRebuildNonce((nonce) => nonce + 1);
+    };
+    if (client.isClosed()) {
+      rebuild();
+      return;
+    }
+    return client.onClosed(rebuild);
+  }, [value]);
   useStreamWakeReconnect(value?.wsStreamClient ?? null);
   useReconnectStreamOnEndpointChange(
     value?.wsStreamClient ?? null,

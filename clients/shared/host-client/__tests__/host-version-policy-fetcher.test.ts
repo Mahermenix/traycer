@@ -35,7 +35,9 @@ afterEach(() => {
 
 describe("updateHostVersionPolicyViaHttp", () => {
   it("PATCHes /api/v3/hosts/:hostId with the user bearer and returns the applied policy", async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(200, okBody()));
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse(200, okBody()),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await updateHostVersionPolicyViaHttp(
@@ -62,7 +64,7 @@ describe("updateHostVersionPolicyViaHttp", () => {
   it("maps 404 to not-found (host doesn't exist or isn't owned by the caller)", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(404, {})),
+      vi.fn<typeof fetch>(async () => jsonResponse(404, {})),
     );
     const result = await updateHostVersionPolicyViaHttp(
       AUTHN,
@@ -76,7 +78,7 @@ describe("updateHostVersionPolicyViaHttp", () => {
   it("maps 400 to invalid", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(400, {})),
+      vi.fn<typeof fetch>(async () => jsonResponse(400, {})),
     );
     const result = await updateHostVersionPolicyViaHttp(
       AUTHN,
@@ -91,7 +93,7 @@ describe("updateHostVersionPolicyViaHttp", () => {
     for (const status of [401, 403]) {
       vi.stubGlobal(
         "fetch",
-        vi.fn(async () => jsonResponse(status, {})),
+        vi.fn<typeof fetch>(async () => jsonResponse(status, {})),
       );
       const result = await updateHostVersionPolicyViaHttp(
         AUTHN,
@@ -106,7 +108,7 @@ describe("updateHostVersionPolicyViaHttp", () => {
   it("maps a 5xx to network-error", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(503, {})),
+      vi.fn<typeof fetch>(async () => jsonResponse(503, {})),
     );
     const result = await updateHostVersionPolicyViaHttp(
       AUTHN,
@@ -120,7 +122,7 @@ describe("updateHostVersionPolicyViaHttp", () => {
   it("maps a thrown fetch (transport/timeout) to network-error", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => {
+      vi.fn<typeof fetch>(async () => {
         throw new Error("boom");
       }),
     );
@@ -136,7 +138,7 @@ describe("updateHostVersionPolicyViaHttp", () => {
   it("fails closed on a contract-violating 2xx body", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(200, { host_id: "host-1" })),
+      vi.fn<typeof fetch>(async () => jsonResponse(200, { host_id: "host-1" })),
     );
     const result = await updateHostVersionPolicyViaHttp(
       AUTHN,

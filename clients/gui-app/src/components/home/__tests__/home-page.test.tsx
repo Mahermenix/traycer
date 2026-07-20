@@ -109,7 +109,11 @@ vi.mock("@/components/home/composer/landing-composer", () => ({
       actions.submit({
         editor: editorHandleForPrompt("Plan the GUI migration"),
         toolbar: {
-          selection: { harnessId: "codex", modelSlug: "gpt-5-codex" },
+          selection: {
+            harnessId: "codex",
+            modelSlug: "gpt-5-codex",
+            profileId: null,
+          },
           reasoning: "high",
           serviceTier: "",
           permission: "supervised",
@@ -162,6 +166,10 @@ vi.mock("@/components/home/host-update-banner", () => ({
 
 vi.mock("@/components/epics/epics-list-panel", () => ({
   EpicsListPanel: () => <div data-testid="epics-list-panel" />,
+}));
+
+vi.mock("@/components/home/terminal-panel/landing-terminal-panel", () => ({
+  LandingTerminalPanel: () => <div data-testid="landing-terminal-panel-slot" />,
 }));
 import { HomePage } from "@/components/home/home-page";
 
@@ -498,6 +506,7 @@ function editorHandleForPrompt(prompt: string): ComposerPromptEditorHandle {
     clear: () => undefined,
     setContent: () => undefined,
     insertImageAttachments: () => undefined,
+    beginPathInsertion: () => null,
     removeImageAttachmentById: () => undefined,
     insertDictatedText: () => undefined,
     dismissActiveSuggestion: () => false,

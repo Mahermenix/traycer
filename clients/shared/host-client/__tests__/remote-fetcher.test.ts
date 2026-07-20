@@ -55,7 +55,9 @@ afterEach(() => {
 
 describe("fetchRegisteredHostsViaHttp", () => {
   it("GETs /api/v3/hosts with the user bearer and returns the parsed envelope", async () => {
-    const fetchMock = vi.fn(async () => jsonResponse(200, envelope()));
+    const fetchMock = vi.fn<typeof fetch>(async () =>
+      jsonResponse(200, envelope()),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const result = await fetchRegisteredHostsViaHttp(AUTHN, "jwt-abc");
@@ -77,7 +79,7 @@ describe("fetchRegisteredHostsViaHttp", () => {
   it("maps 401 to unauthorized (never destructive)", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(401, {})),
+      vi.fn<typeof fetch>(async () => jsonResponse(401, {})),
     );
     expect((await fetchRegisteredHostsViaHttp(AUTHN, "x")).kind).toBe(
       "unauthorized",
@@ -87,7 +89,7 @@ describe("fetchRegisteredHostsViaHttp", () => {
   it("maps a 5xx to network-error", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(503, {})),
+      vi.fn<typeof fetch>(async () => jsonResponse(503, {})),
     );
     expect((await fetchRegisteredHostsViaHttp(AUTHN, "x")).kind).toBe(
       "network-error",
@@ -97,7 +99,7 @@ describe("fetchRegisteredHostsViaHttp", () => {
   it("maps a thrown fetch (transport/timeout) to network-error", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => {
+      vi.fn<typeof fetch>(async () => {
         throw new Error("boom");
       }),
     );
@@ -119,7 +121,7 @@ describe("fetchRegisteredHostsViaHttp", () => {
     };
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse(200, bad)),
+      vi.fn<typeof fetch>(async () => jsonResponse(200, bad)),
     );
     expect((await fetchRegisteredHostsViaHttp(AUTHN, "x")).kind).toBe(
       "network-error",

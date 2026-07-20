@@ -25,8 +25,8 @@ import {
   digitFromCode,
   modifierMaskFromEvent,
   modifierMaskMatches,
-  parseModifierChord,
   type ChordString,
+  type ModifierMask,
 } from "@/lib/keybindings/chord";
 import {
   LEADER_SCOPE_CANVAS_TABS,
@@ -180,23 +180,35 @@ export function matchDigitAction(
   return null;
 }
 
+// The exact mask each hint dimension matches - `"mod"` is mod-only (no shift,
+// no alt), `"alt"` is alt-only, `"modShift"` is mod+shift-only (no alt) - so a
+// scope binding one dimension (e.g. the model picker's `⌘⇧` profile digit)
+// never bleeds into another's hint pass (`⌘` rail, `⌥` reasoning).
+const EXACT_LEADER_MASKS: Readonly<
+  Record<"mod" | "alt" | "modShift", ModifierMask>
+> = {
+  mod: { mod: true, shift: false, alt: false },
+  alt: { mod: false, shift: false, alt: true },
+  modShift: { mod: true, shift: true, alt: false },
+};
+
 /**
  * The scope id that currently OWNS `modifier` for visual hints, or null when no
  * active scope binds it. Mirrors `matchDigitAction`'s top-down walk but keys off
  * the modifier-only chord, so consumer badges can scope themselves to their own
  * scope (e.g. header-tab badges only light up when the header scope owns `alt`).
  */
-export function resolveLeaderOwner(modifier: "mod" | "alt"): string | null {
+export function resolveLeaderOwner(
+  modifier: "mod" | "alt" | "modShift",
+): string | null {
+  const targetMask = EXACT_LEADER_MASKS[modifier];
   const bindings = useKeybindingStore.getState().bindings;
   for (const scope of getLeaderScopesTopDown()) {
     for (const action of scope.actions) {
       if (!action.isActive()) continue;
       const chord = bindings[action.actionId];
       if (chord === null) continue;
-      const parts = parseModifierChord(chord);
-      if (parts === null || parts.shift) continue;
-      if (modifier === "mod" && parts.mod && !parts.alt) return scope.id;
-      if (modifier === "alt" && parts.alt && !parts.mod) return scope.id;
+      if (modifierMaskMatches(chord, targetMask)) return scope.id;
     }
   }
   return null;
@@ -377,11 +389,19 @@ export function isExternallyHandled(id: ActionId): boolean {
 }
 
 // Actions whose chord must fire once per physical press, never on OS key-repeat.
-// A toggle (e.g. the model picker) would otherwise flip open/closed rapidly
-// while the chord is held. The provider still reserves the chord on repeat
-// (preventDefault) but skips re-dispatch.
+// A toggle (the model picker, the terminal panel's open and maximize states)
+// would otherwise flip rapidly while the chord is held and settle in a
+// timing-dependent state; a spawner (new terminal) would open one shell per
+// repeat event. The provider still reserves the chord on repeat
+// (preventDefault) but skips re-dispatch. `tab.new` is repeat-safe on the epic
+// canvas (the store reuses an active blank tab), but on the landing page it
+// shares the new-terminal handler, so it needs the same protection.
 const REPEAT_SENSITIVE_ACTIONS: ReadonlySet<ActionId> = new Set([
   "composer.model-picker.toggle",
+  "app.terminal.toggle",
+  "app.terminal.new",
+  "app.terminal.maximize",
+  "tab.new",
 ]);
 
 export function isRepeatSensitiveAction(id: ActionId): boolean {

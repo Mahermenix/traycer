@@ -21,8 +21,23 @@ import type { StreamMethodSupport } from "./ws-stream-client";
 export interface IHostStreamClient<
   Registry extends VersionedStreamRpcRegistry,
 > extends IStreamClient<Registry> {
-  close(): void;
+  close(reason: string): void;
   isClosed(): boolean;
+  /** The reason recorded at close, or `null` while still open. */
+  getClosedReason(): string | null;
+  /**
+   * Subscribes to the client's terminal `close()`; returns an unsubscribe.
+   * Fires once when the client closes. NOT retro-fired for an already-closed
+   * client - late attachers must check `isClosed()` first (the owner-side
+   * liveness guard does both).
+   */
+  onClosed(listener: () => void): () => void;
+  /**
+   * Stable per-instance tag carried in lifecycle log lines and used as the
+   * identity key for per-client caches (e.g. the git-status shared
+   * subscription map).
+   */
+  readonly instanceId: string;
   notifyBearerRotated(): void;
   /**
    * Nudges every open session to reconnect immediately (skip backoff) - used

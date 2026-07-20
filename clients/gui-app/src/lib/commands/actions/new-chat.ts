@@ -17,6 +17,7 @@
  * resolves it at send time via the chat tile's create / import picker.
  */
 import type { CreateChatResponse } from "@traycer/protocol/host/epic/unary-schemas";
+import type { ChatRunSettings } from "@traycer/protocol/host/agent/gui/subscribe";
 import type { WorktreeIntent } from "@traycer/protocol/host/worktree-schemas";
 import { v4 as uuidv4 } from "uuid";
 import { displayTitle } from "@/lib/display-title";
@@ -25,6 +26,12 @@ import { getOpenEpicRegistry } from "@/lib/registries/epic-session-registry";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { deriveWorkspaceMode } from "@/lib/worktree/workspace-mode";
 import type { NavigateNestedFocus } from "@/lib/epic-nested-focus-navigation";
+import type { NestedFocusTarget } from "@/lib/epic-nested-focus-route";
+import {
+  Analytics,
+  AnalyticsEvent,
+  type AnalyticsSource,
+} from "@/lib/analytics";
 
 const CHAT_PROJECTION_WAIT_MS = 30_000;
 
@@ -48,6 +55,7 @@ export type CreatedChatOpenIntent =
       readonly tabId: string;
       readonly chatId: string;
       readonly hostId: string;
+      readonly source: AnalyticsSource;
     }
   | {
       readonly kind: "split";
@@ -57,6 +65,7 @@ export type CreatedChatOpenIntent =
       readonly targetGroupId: string;
       readonly position: NewChatSplitPosition;
       readonly hostId: string;
+      readonly source: AnalyticsSource;
     }
   | {
       // Opener path: drop a fresh instance into an explicit target group
@@ -68,6 +77,7 @@ export type CreatedChatOpenIntent =
       readonly chatId: string;
       readonly groupId: string;
       readonly hostId: string;
+      readonly source: AnalyticsSource;
     };
 
 /**
@@ -90,6 +100,11 @@ export interface OpenNewChatInActiveTileArgs {
   readonly tabId: string;
   readonly hostId: string;
   readonly worktreeIntent: WorktreeIntent | null;
+  /** Per-chat run settings to stamp on the new chat - `null` starts the chat
+   *  with host defaults (today's behavior for every caller but the clone
+   *  flow, which carries the source chat's own settings forward). */
+  readonly settings: ChatRunSettings | null;
+  readonly source: AnalyticsSource;
   readonly createChat: CreateChatCommand;
   readonly openWhenProjected: OpenWhenProjected;
 }
@@ -101,18 +116,22 @@ export function openNewChatInActiveTile(
 ): CancelFn {
   let cancelled = false;
   let projectionCancel: CancelFn | null = null;
-  args.createChat(buildCreateChatRequest(args.epicId, args.worktreeIntent), {
-    onSuccess: (result) => {
-      if (cancelled) return;
-      projectionCancel = args.openWhenProjected({
-        kind: "active-tile",
-        epicId: args.epicId,
-        tabId: args.tabId,
-        chatId: result.chatId,
-        hostId: args.hostId,
-      });
+  args.createChat(
+    buildCreateChatRequest(args.epicId, args.worktreeIntent, args.settings),
+    {
+      onSuccess: (result) => {
+        if (cancelled) return;
+        projectionCancel = args.openWhenProjected({
+          kind: "active-tile",
+          epicId: args.epicId,
+          tabId: args.tabId,
+          chatId: result.chatId,
+          hostId: args.hostId,
+          source: args.source,
+        });
+      },
     },
-  });
+  );
   return () => {
     if (cancelled) return;
     cancelled = true;
@@ -149,7 +168,12 @@ function openCreatedChatWhenProjectedInternal(
   intent: CreatedChatOpenIntent,
   navigateNestedFocus: NavigateNestedFocus,
 ): CancelFn {
-  if (openProjectedChat(intent, navigateNestedFocus)) return noop;
+  // Any attempted open (successful or with a vanished target) is terminal;
+  // only "chat not yet projected" keeps the wait alive - matching the
+  // pre-analytics behavior of attempting the open exactly once.
+  if (openProjectedChat(intent, navigateNestedFocus) !== "not_projected") {
+    return noop;
+  }
   const handle = getOpenEpicRegistry().get(intent.epicId);
   if (handle === null) return noop;
 
@@ -166,7 +190,9 @@ function openCreatedChatWhenProjectedInternal(
   };
   const unsubscribe = handle.store.subscribe(() => {
     if (cancelled) return;
-    if (!openProjectedChat(intent, navigateNestedFocus)) return;
+    if (openProjectedChat(intent, navigateNestedFocus) === "not_projected") {
+      return;
+    }
     cleanup();
   });
   timeoutId = window.setTimeout(cleanup, CHAT_PROJECTION_WAIT_MS);
@@ -179,6 +205,7 @@ const rawNestedFocus: NavigateNestedFocus = (_epicId, _tabId, prepare) =>
 function buildCreateChatRequest(
   epicId: string,
   worktreeIntent: WorktreeIntent | null,
+  settings: ChatRunSettings | null,
 ): CreateChatMutationInput {
   return {
     epicId,
@@ -191,17 +218,23 @@ function buildCreateChatRequest(
     chatId: uuidv4(),
     workspaceMode: deriveWorkspaceMode(1, worktreeIntent),
     worktreeIntent,
+    settings,
   };
 }
+
+type ProjectedChatOpenResult =
+  "not_projected" | "opened" | "target_unavailable";
 
 function openProjectedChat(
   intent: CreatedChatOpenIntent,
   navigateNestedFocus: NavigateNestedFocus,
-): boolean {
+): ProjectedChatOpenResult {
   const handle = getOpenEpicRegistry().get(intent.epicId);
-  if (handle === null) return false;
+  if (handle === null) return "not_projected";
   const state = handle.store.getState();
-  if (!Object.hasOwn(state.chats.byId, intent.chatId)) return false;
+  if (!Object.hasOwn(state.chats.byId, intent.chatId)) {
+    return "not_projected";
+  }
   const chat = state.chats.byId[intent.chatId];
   const node = {
     id: chat.id,
@@ -213,29 +246,35 @@ function openProjectedChat(
     hostId: intent.hostId,
   };
   const canvas = useEpicCanvasStore.getState();
+  let opened: NestedFocusTarget | null = null;
   if (intent.kind === "active-tile") {
-    navigateNestedFocus(intent.epicId, intent.tabId, () =>
+    opened = navigateNestedFocus(intent.epicId, intent.tabId, () =>
       canvas.prepareOpenTileInTabFocusTarget(intent.tabId, node),
     );
-    return true;
-  }
-  if (intent.kind === "target-group") {
-    navigateNestedFocus(intent.epicId, intent.tabId, () =>
+  } else if (intent.kind === "target-group") {
+    opened = navigateNestedFocus(intent.epicId, intent.tabId, () =>
       canvas.prepareOpenTileInPaneFocusTarget(
         intent.tabId,
         intent.groupId,
         node,
       ),
     );
-    return true;
+  } else {
+    opened = navigateNestedFocus(intent.epicId, intent.tabId, () =>
+      canvas.prepareSplitPaneWithNodeFocusTarget(
+        intent.tabId,
+        intent.targetGroupId,
+        intent.position,
+        node,
+      ),
+    );
   }
-  navigateNestedFocus(intent.epicId, intent.tabId, () =>
-    canvas.prepareSplitPaneWithNodeFocusTarget(
-      intent.tabId,
-      intent.targetGroupId,
-      intent.position,
-      node,
-    ),
-  );
-  return true;
+  // A pane can disappear while host creation is in flight. The open is then
+  // abandoned exactly as it was before analytics existed - no fallback pane,
+  // no retry - and the only difference is that no `chat_opened` is emitted.
+  if (opened === null) return "target_unavailable";
+  Analytics.getInstance().track(AnalyticsEvent.ChatOpened, {
+    source: intent.source,
+  });
+  return "opened";
 }

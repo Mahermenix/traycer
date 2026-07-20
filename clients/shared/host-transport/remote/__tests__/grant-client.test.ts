@@ -22,7 +22,7 @@ afterEach(() => {
 
 describe("mintAttachGrantViaHttp", () => {
   it("parses T9's { grant, role, expires_in } shape and carries the TTL in seconds", async () => {
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn<typeof fetch>(async () =>
       jsonResponse({ grant: "jws-abc", role: "client", expires_in: 120 }, 200),
     );
     vi.stubGlobal("fetch", fetchMock);
@@ -47,7 +47,7 @@ describe("mintAttachGrantViaHttp", () => {
   it("maps 401/403 to unauthorized", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({ error: "nope" }, 403)),
+      vi.fn<typeof fetch>(async () => jsonResponse({ error: "nope" }, 403)),
     );
     expect(await mintAttachGrantViaHttp(AUTHN, HOST_ID, BEARER)).toEqual({
       kind: "unauthorized",
@@ -57,7 +57,7 @@ describe("mintAttachGrantViaHttp", () => {
   it("maps a 5xx to network-error", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => jsonResponse({}, 503)),
+      vi.fn<typeof fetch>(async () => jsonResponse({}, 503)),
     );
     expect(await mintAttachGrantViaHttp(AUTHN, HOST_ID, BEARER)).toEqual({
       kind: "network-error",
@@ -67,7 +67,7 @@ describe("mintAttachGrantViaHttp", () => {
   it("fails closed on a body missing expires_in (old ISO shape)", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
+      vi.fn<typeof fetch>(async () =>
         jsonResponse({ grant: "jws", expiresAt: "2026-01-01" }, 200),
       ),
     );
@@ -79,7 +79,7 @@ describe("mintAttachGrantViaHttp", () => {
   it("maps a thrown fetch (transport/timeout) to network-error", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () => {
+      vi.fn<typeof fetch>(async () => {
         throw new Error("boom");
       }),
     );
@@ -102,7 +102,7 @@ describe("createAttachGrantProvider", () => {
   it("returns the minted grant on success", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
+      vi.fn<typeof fetch>(async () =>
         jsonResponse(
           { grant: "jws-xyz", role: "client", expires_in: 300 },
           200,

@@ -12,6 +12,9 @@ import { useChatQueueActions } from "./use-chat-queue-actions";
 import type { ChatForkMode } from "@/components/chat/chat-message";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
+import { toast } from "sonner";
+import { useTabProvidersList } from "@/hooks/providers/use-tab-providers-list-query";
+import { TombstonedProfileProvider } from "@/components/chat/tombstoned-profile-provider";
 import type {
   InterviewAnswer,
   Message,
@@ -70,6 +73,7 @@ import {
 import type { EpicNodeRef } from "@/stores/epics/canvas/types";
 import {
   mentionRootsFromWorktreeBinding,
+  mentionRootsFromWorktreeBindingAndIntent,
   useWorkspaceMentionRoots,
   worktreeBindingIsFolderless,
 } from "@/hooks/composer/use-workspace-mention-roots";
@@ -93,10 +97,14 @@ import { useAuthStore } from "@/stores/auth/auth-store";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { useHostClient, useHostBinding } from "@/lib/host";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
-import { useEpicCreateChat } from "@/hooks/epic/use-epic-chat-mutations";
+import {
+  useEpicCreateChat,
+  useEpicUpdateChatRunSettings,
+} from "@/hooks/epic/use-epic-chat-mutations";
 import { useEpicNestedFocusNavigation } from "@/hooks/epic/use-epic-nested-focus-navigation";
 import { cloneChatOnHostSwitch } from "@/lib/commands/actions/clone-chat-on-host-switch";
-import { ChatDeadTileBanner } from "./dead-tile-banner";
+import { enqueuePersistChatRunSettings } from "@/lib/chats/chat-run-settings-write-queue";
+import { ChatDeadTileBanner, ChatHostStartingBanner } from "./dead-tile-banner";
 import { useHostQuery } from "@/hooks/host/use-host-query";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
 import { flattenCollaborators } from "@/hooks/epics/use-epic-collaborators-query";
@@ -109,6 +117,7 @@ import { useChatActions } from "@/hooks/chats/use-chat-actions";
 import { useChatSetupFailureRestoreDriver } from "@/hooks/chats/use-chat-setup-failure-restore-driver";
 import { useSetupTerminalListRefreshDriver } from "@/hooks/chats/use-setup-terminal-list-refresh-driver";
 import { useSetupTerminalTabRegisterDriver } from "@/hooks/chats/use-setup-terminal-tab-register-driver";
+import { emitChatStreamErrorNotification } from "@/stores/notifications/app-local-notifications-store";
 import { type InitialChatHandoffScope } from "@/stores/epics/initial-chat-handoff-store";
 import { contentBlocksText } from "@/lib/chat/content-block-text";
 import { buildSubmittedChatJSONContent } from "@/lib/composer/tiptap-json-content";
@@ -157,10 +166,7 @@ import { ChatTileErrorNoticeToasts } from "./chat-tile-error-notice-toasts";
 import { HostWorkspaceSelector } from "@/components/home/host-workspace-selector/host-workspace-selector";
 import type { FatalErrorDetails } from "@traycer/protocol/framework/ws-protocol";
 import type { TraycerNextStepOption } from "@/markdown/traycer-next-steps";
-import {
-  ChatLowerInteractionSurfaces,
-  InertChatComposer,
-} from "./chat-tile-lower-surfaces";
+import { ChatLowerInteractionSurfaces } from "./chat-tile-lower-surfaces";
 import { composerHasBlockingApprovals } from "./chat-approval-visibility";
 import {
   chatTileUiReducer,
@@ -179,7 +185,6 @@ import {
 import { ChatTileLoading, ChatTileError } from "./chat-tile-runtime-gate";
 import { SurfaceActivityProvider } from "@/components/home/composer/surface-activity-context";
 
-const EMPTY_MENTION_ROOTS: ReadonlyArray<string> = [];
 const EMPTY_WORKSPACE_PATH_SET: ReadonlySet<string> = new Set();
 const EMPTY_BACKGROUND_STOP_TASK_IDS: ReadonlySet<string> = new Set();
 
@@ -249,20 +254,44 @@ export function ChatTile(props: ChatTileProps) {
   const tabHostId = useTabHostId();
   const handle = useChatSessionHandle(node.id, tabHostId, chatRecord !== null);
   const reachability = useHostReachability(tabHostId);
+  // Feeds `TombstonedProfileProvider` below - "ran on <label> (removed)" for
+  // a message anchored to a since-tombstoned profile. Shares the same
+  // tab-scoped query the reauth gate/rate-limit prompt already read, so this
+  // costs no extra host RPC.
+  const providersList = useTabProvidersList({
+    enabled: true,
+    subscribed: false,
+  });
   // The clone-offer hook runs `useEpicCreateChat`, which subscribes to
   // the host runtime. Mount it only when the banner is actually
   // shown so the live render path does not pay the subscription cost
   // (and tests that omit the host runtime provider stay green).
-  const deadTileBanner =
-    reachability.status === "unreachable" ? (
-      <ChatDeadTileBannerContainer
-        epicId={epicId}
-        tabId={viewTabId}
-        sourceHostId={tabHostId}
-        hostLabel={reachability.hostLabel}
-        testId={`chat-dead-tile-${node.id}`}
-      />
-    ) : null;
+  const deadTileBanner = (() => {
+    if (reachability.status === "unreachable") {
+      return (
+        <ChatDeadTileBannerContainer
+          epicId={epicId}
+          tabId={viewTabId}
+          chatId={node.id}
+          sourceHostId={tabHostId}
+          hostLabel={reachability.hostLabel}
+          testId={`chat-dead-tile-${node.id}`}
+        />
+      );
+    }
+    if (reachability.status === "host-starting") {
+      // The local host hasn't published yet (boot/ensure/wake). Never offer
+      // Clone here - the bound host is most likely this machine, seconds
+      // from converging; cloning would fork a healthy thread.
+      return (
+        <ChatHostStartingBanner
+          className={undefined}
+          testId={`chat-host-starting-${node.id}`}
+        />
+      );
+    }
+    return null;
+  })();
 
   if (handle === null) {
     return (
@@ -273,12 +302,6 @@ export function ChatTile(props: ChatTileProps) {
       >
         {deadTileBanner}
         <ChatTileLoading />
-        <ChatTileFallbackComposer
-          node={node}
-          viewTabId={viewTabId}
-          isActive={isActive}
-          currentEpicId={epicId}
-        />
       </div>
     );
   }
@@ -286,62 +309,25 @@ export function ChatTile(props: ChatTileProps) {
   return (
     <div className="flex h-full min-h-0 flex-col" data-node-id={node.id}>
       {deadTileBanner}
-      <ChatTileSessionView
-        handle={handle}
-        node={node}
-        viewTabId={viewTabId}
-        isActive={isActive}
-        currentEpicId={epicId}
-      />
+      <TombstonedProfileProvider
+        providers={providersList.data?.providers ?? []}
+      >
+        <ChatTileSessionView
+          handle={handle}
+          node={node}
+          viewTabId={viewTabId}
+          isActive={isActive}
+          currentEpicId={epicId}
+        />
+      </TombstonedProfileProvider>
     </div>
-  );
-}
-
-function ChatTileFallbackComposer(props: {
-  readonly node: EpicNodeRef;
-  readonly viewTabId: string;
-  readonly isActive: boolean;
-  readonly currentEpicId: string;
-}): ReactNode {
-  const hostId = useTabHostId();
-  const workspaceControls = useMemo(
-    () => (
-      <HostWorkspaceSelector
-        surface={{
-          kind: "chat",
-          hostId,
-          epicId: props.currentEpicId,
-          tabId: props.viewTabId,
-          ownerId: props.node.id,
-          binding: null,
-          isOwnerActive: false,
-          hasActiveTurn: false,
-          // Pre-subscribe setup state: no binding resolved yet, so the chip shows
-          // its loading affordance (never a "no folders" terminal state).
-          missingWorktreePaths: [],
-          bindingResolved: false,
-          onBindingCommitted: null,
-        }}
-      />
-    ),
-    [hostId, props.currentEpicId, props.node.id, props.viewTabId],
-  );
-  return (
-    <InertChatComposer
-      taskId={props.node.id}
-      isActive={props.isActive}
-      mentionRoots={EMPTY_MENTION_ROOTS}
-      fallbackToGlobalMentionRoots
-      currentEpicId={props.currentEpicId}
-      workspaceControls={workspaceControls}
-      topSpacing="normal"
-    />
   );
 }
 
 interface ChatDeadTileBannerContainerProps {
   readonly epicId: string;
   readonly tabId: string;
+  readonly chatId: string;
   readonly sourceHostId: string;
   readonly hostLabel: string;
   readonly testId: string;
@@ -350,10 +336,12 @@ interface ChatDeadTileBannerContainerProps {
 function ChatDeadTileBannerContainer(
   props: ChatDeadTileBannerContainerProps,
 ): ReactNode {
+  const chatRecord = useChatById(props.chatId);
   const offer = useChatCloneOnHostSwitch({
     epicId: props.epicId,
     tabId: props.tabId,
     sourceHostId: props.sourceHostId,
+    sourceSettings: chatRecord?.settings ?? null,
   });
   return (
     <ChatDeadTileBanner
@@ -370,6 +358,7 @@ interface UseChatCloneOnHostSwitchArgs {
   readonly epicId: string;
   readonly tabId: string;
   readonly sourceHostId: string;
+  readonly sourceSettings: ChatRunSettings | null;
 }
 
 /**
@@ -409,8 +398,16 @@ function useChatCloneOnHostSwitch(args: UseChatCloneOnHostSwitchArgs): {
     cancelRef.current = cloneChatOnHostSwitch({
       epicId: args.epicId,
       tabId: args.tabId,
+      sourceHostId: args.sourceHostId,
       targetHostId: target.hostId,
       directory: binding.directory,
+      sourceSettings: args.sourceSettings,
+      globalClient: binding.hostClient,
+      onProfileFallbackToAmbient: () => {
+        toast(
+          "Continuing on the Terminal account - your profile isn't available on this host.",
+        );
+      },
       navigateNestedFocus,
       createChat: (request, callbacks) => {
         createChat.mutate(request, { onSuccess: callbacks.onSuccess });
@@ -423,6 +420,7 @@ function useChatCloneOnHostSwitch(args: UseChatCloneOnHostSwitchArgs): {
     args.epicId,
     args.tabId,
     args.sourceHostId,
+    args.sourceSettings,
   ]);
 
   return { clone, cloning };
@@ -652,6 +650,8 @@ function ChatTileSessionView(props: ChatTileSessionViewProps) {
         <div
           data-testid="chat-tile"
           data-node-id={view.node.id}
+          data-chat-keyboard-scroll-scope=""
+          data-active={props.isActive ? "true" : "false"}
           className="flex h-full min-h-0 flex-col"
         >
           <ChatSessionMessagesSurface
@@ -660,6 +660,7 @@ function ChatTileSessionView(props: ChatTileSessionViewProps) {
             onRetry={view.onChatRetry}
             restoreContext={view.restoreContext}
             node={view.node}
+            epicId={view.currentEpicId}
             viewTabId={view.viewTabId}
             tabHostId={view.tabHostId}
             workspaceRoots={view.linkResolutionRoots}
@@ -684,27 +685,29 @@ function ChatTileSessionView(props: ChatTileSessionViewProps) {
            * return. Providers compose by narrowing only — the context can never
            * widen past the parent.
            */}
-          <SurfaceActivityProvider active={view.surfaceVisible}>
-            <ChatLowerInteractionSurfaces
-              epicId={view.currentEpicId}
-              chatId={view.node.id}
-              runtime={view.lower.runtime}
-              access={view.lower.access}
-              turn={view.lower.turn}
-              interview={view.lower.interview}
-              approvals={view.lower.approvals}
-              queue={view.lower.queue}
-              composer={view.lower.composer}
-              todo={view.todo}
-              restoreContext={view.restoreContext}
-              backgroundItems={view.lower.backgroundItems}
-              backgroundStopPendingTaskIds={
-                view.lower.backgroundStopPendingTaskIds
-              }
-              backgroundStopAllPending={view.lower.backgroundStopAllPending}
-              onBackgroundItemClick={scrollToBackgroundItem}
-            />
-          </SurfaceActivityProvider>
+          {view.snapshotLoaded ? (
+            <SurfaceActivityProvider active={view.surfaceVisible}>
+              <ChatLowerInteractionSurfaces
+                epicId={view.currentEpicId}
+                chatId={view.node.id}
+                runtime={view.lower.runtime}
+                access={view.lower.access}
+                turn={view.lower.turn}
+                interview={view.lower.interview}
+                approvals={view.lower.approvals}
+                queue={view.lower.queue}
+                composer={view.lower.composer}
+                todo={view.todo}
+                restoreContext={view.restoreContext}
+                backgroundItems={view.lower.backgroundItems}
+                backgroundStopPendingTaskIds={
+                  view.lower.backgroundStopPendingTaskIds
+                }
+                backgroundStopAllPending={view.lower.backgroundStopAllPending}
+                onBackgroundItemClick={scrollToBackgroundItem}
+              />
+            </SurfaceActivityProvider>
+          ) : null}
           <RevertOnEditDialog
             open={view.revertOnEdit.open}
             onOpenChange={view.revertOnEdit.onOpenChange}
@@ -913,6 +916,22 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
   const mentionRoots = useMemo(
     () => mentionRootsFromWorktreeBinding(state.worktreeBinding),
     [state.worktreeBinding],
+  );
+  // Composer-scoped roots: the staged worktree intent layers over the binding
+  // (`stagedEntry ?? bindingEntry`), matching what the send path will
+  // materialize. Next-message surfaces - the composer's mention search and
+  // slash-command discovery, and the inline-edit composer whose resend also
+  // carries the staged intent - read these, so a staged replacement stops
+  // discovery from probing the superseded (possibly deleted) worktree path.
+  // History-scoped link resolution below intentionally stays on the committed
+  // binding: existing messages ran in the old workspace.
+  const composerMentionRoots = useMemo(
+    () =>
+      mentionRootsFromWorktreeBindingAndIntent(
+        state.worktreeBinding,
+        stagedChatWorktreeIntent ?? null,
+      ),
+    [state.worktreeBinding, stagedChatWorktreeIntent],
   );
   const isFolderlessWorkspace = worktreeBindingIsFolderless(
     state.worktreeBinding,
@@ -1207,6 +1226,25 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
       ),
     [hostPendingInterviewIds, renderedMessages],
   );
+  // Block IDs whose answer/skip action is still in flight or accepted-but-
+  // unresolved. Recomputes only when actions change (not per streaming token),
+  // and yields a stable `false` whenever no interview is pending, so the
+  // composer memo below never churns during normal streaming.
+  const interviewActionBlockIds = useMemo(
+    () =>
+      new Set(
+        [
+          ...Object.values(state.pendingActions),
+          ...Object.values(state.acceptedActions),
+        ]
+          .map((action) => action.interviewBlockId)
+          .filter((blockId): blockId is string => blockId !== null),
+      ),
+    [state.pendingActions, state.acceptedActions],
+  );
+  const interviewBusy =
+    pendingInterview !== null &&
+    interviewActionBlockIds.has(pendingInterview.blockId);
   const showCompletedRestoreToast = useCallback(() => {
     if (state.restore === null || state.restore.kind !== "completed") return;
     showRestoreResultToast(state.restore.results);
@@ -1248,7 +1286,8 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
       canAct,
       currentComposerSettings,
       editSettings,
-      mentionRoots,
+      mentionRoots: composerMentionRoots,
+      fallbackToGlobalMentionRoots: !isFolderlessWorkspace,
       currentEpicId,
       node,
       chatTitle: projectedChatTitle ?? state.chat?.title ?? null,
@@ -1375,6 +1414,26 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
       sendImplementPlanMessage,
     ],
   );
+  // Durable settings sync: mirror composer selection changes onto the host's
+  // per-chat record so headless turns (incoming A2A messages) run on the
+  // freshly picked profile. Best-effort - an old host rejects the optional
+  // method with E_HOST_UNSUPPORTED and behavior degrades to persist-on-send.
+  // Routed through the module-scoped `enqueuePersistChatRunSettings` (not a
+  // local chain) so a task-wide switch's sibling writes
+  // (`useTaskProfileRateLimitSwitch`) serialize against THIS chat's own
+  // composer writes too, not just against each other.
+  const updateChatRunSettings = useEpicUpdateChatRunSettings();
+  const updateChatRunSettingsMutateAsync = updateChatRunSettings.mutateAsync;
+  const persistChatRunSettings = useCallback(
+    (settings: ChatRunSettings): void => {
+      enqueuePersistChatRunSettings(updateChatRunSettingsMutateAsync, {
+        epicId: currentEpicId,
+        chatId: node.id,
+        settings,
+      });
+    },
+    [currentEpicId, node.id, updateChatRunSettingsMutateAsync],
+  );
   const {
     editQueuedItem,
     cancelQueuedItem,
@@ -1396,6 +1455,7 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
     activeEditingQueueItemId,
     dispatchUi,
     setEpicRunSettings,
+    persistChatRunSettings,
   });
   const handleForkOpenChange = useCallback((open: boolean): void => {
     if (!open) setForkTarget(null);
@@ -1496,18 +1556,25 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
             forkAtAssistantMessage(
               forkPendingInterviewAssistantMessageId,
               mode,
+              pendingInterview?.blockId ?? null,
             ),
-    [forkPendingInterviewAssistantMessageId, forkAtAssistantMessage],
+    [
+      forkPendingInterviewAssistantMessageId,
+      forkAtAssistantMessage,
+      pendingInterview?.blockId,
+    ],
   );
   const lowerInterview = useMemo(
     () => ({
       pending: pendingInterview,
+      isBusy: interviewBusy,
       onAnswer: handleInterviewAnswer,
       onError: handleInterviewError,
       onFork: forkFromPendingInterview,
     }),
     [
       pendingInterview,
+      interviewBusy,
       handleInterviewAnswer,
       handleInterviewError,
       forkFromPendingInterview,
@@ -1568,7 +1635,7 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
       fallbackSettingsSeed: composerFallbackSettingsSeed,
       nodeId: node.id,
       isActive,
-      mentionRoots,
+      mentionRoots: composerMentionRoots,
       fallbackToGlobalMentionRoots: !isFolderlessWorkspace,
       currentEpicId,
       onSubmitMessage: submitMessage,
@@ -1582,7 +1649,7 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
       composerFallbackSettingsSeed,
       node.id,
       isActive,
-      mentionRoots,
+      composerMentionRoots,
       isFolderlessWorkspace,
       currentEpicId,
       submitMessage,
@@ -1608,7 +1675,6 @@ function useChatTileSessionViewModel(props: ChatTileSessionViewProps) {
     node,
     viewTabId,
     tabHostId: activeHostId,
-    mentionRoots,
     linkResolutionRoots,
     currentEpicId,
     snapshotLoaded: state.snapshotLoaded,
@@ -1653,6 +1719,7 @@ interface ChatSessionMessagesSurfaceProps {
   readonly onRetry: () => void;
   readonly restoreContext: ChatRestoreContextValue;
   readonly node: EpicNodeRef;
+  readonly epicId: string;
   readonly viewTabId: string;
   readonly tabHostId: string | null;
   readonly workspaceRoots: ReadonlyArray<string>;
@@ -1705,6 +1772,15 @@ function ContextUsageChipForChat(props: {
 function ChatSessionMessagesSurface(
   props: ChatSessionMessagesSurfaceProps,
 ): ReactNode {
+  useEffect(() => {
+    if (props.fatalClose === null) return;
+    emitChatStreamErrorNotification({
+      epicId: props.epicId,
+      chatId: props.node.id,
+      details: props.fatalClose,
+    });
+  }, [props.fatalClose, props.epicId, props.node.id]);
+
   // A fatal close before any snapshot (CHAT_INVALID, CHAT_NOT_VISIBLE, …) means
   // the host will never send one. Surface the reason + a retry instead of an
   // indefinite spinner.
