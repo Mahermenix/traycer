@@ -23,21 +23,7 @@ import type {
 export function formatClaimRoleResponse(
   response: ClaimAgentRoleResponse,
 ): string {
-  const lines = [
-    response.created
-      ? `Claimed role ${claimLabel(response.claim)}.`
-      : `You already hold this role - existing claim returned unchanged (safe retry).`,
-    `claimId: ${response.claim.claimId}`,
-  ];
-  if (response.overlapping.length > 0) {
-    lines.push(
-      `Overlap: ${response.overlapping
-        .map((claim) => `${claimLabel(claim)} held by agent ${claim.agentId}`)
-        .join(
-          "; ",
-        )}. Overlaps are allowed, but check whether this duplication is intentional.`,
-    );
-  }
+  const lines = formatClaimLines(response);
   lines.push(formatAwarenessSummary(response.awareness));
   return lines.join("\n");
 }
@@ -75,6 +61,43 @@ function claimLabel(claim: RoleClaimWire): string {
   return `\`${claim.role}\` over \`${claim.scope}\``;
 }
 
+function formatClaimLines(response: {
+  readonly created: boolean;
+  readonly claim: RoleClaimWire;
+  readonly overlapping: RoleClaimWire[];
+}): string[] {
+  const lines = [
+    response.created
+      ? `Claimed role ${claimLabel(response.claim)}.`
+      : `You already hold this role - existing claim returned unchanged (safe retry).`,
+    `claimId: ${response.claim.claimId}`,
+  ];
+  if (response.overlapping.length > 0) {
+    lines.push(
+      `Overlap: ${response.overlapping
+        .map((claim) => `${claimLabel(claim)} held by agent ${claim.agentId}`)
+        .join(
+          "; ",
+        )}. Overlaps are allowed, but check whether this duplication is intentional.`,
+    );
+  }
+  return lines;
+}
+
+function appendFailureSummary(
+  parts: string[],
+  failed: RoleAwarenessDelivery["failed"],
+): void {
+  if (failed.length === 0) {
+    parts.push("failed 0");
+    return;
+  }
+  const reasons = failed
+    .map((entry) => `${entry.agentId}: ${entry.reason}`)
+    .join(", ");
+  parts.push(`failed ${failed.length} (${reasons})`);
+}
+
 /**
  * Partial delivery is explicit without implying registry failure: the claim
  * or release is durable by the time this is computed, and this line only
@@ -85,14 +108,7 @@ function formatAwarenessSummary(delivery: RoleAwarenessDelivery): string {
     `delivered ${delivery.deliveredTo.length}`,
     `unreachable ${delivery.unreachable.length}`,
   ];
-  if (delivery.failed.length > 0) {
-    const reasons = delivery.failed
-      .map((entry) => `${entry.agentId}: ${entry.reason}`)
-      .join(", ");
-    parts.push(`failed ${delivery.failed.length} (${reasons})`);
-  } else {
-    parts.push("failed 0");
-  }
+  appendFailureSummary(parts, delivery.failed);
   return `Awareness: ${parts.join(" · ")}. The registry update is durable regardless.`;
 }
 
@@ -118,35 +134,14 @@ function formatAwarenessSummaryV11(delivery: RoleAwarenessDeliveryV11): string {
     `${PROMPT_PENDING_LABEL} ${delivery.deferredToPrompt.length}`,
     `unreachable ${delivery.unreachable.length}`,
   ];
-  if (delivery.failed.length > 0) {
-    const reasons = delivery.failed
-      .map((entry) => `${entry.agentId}: ${entry.reason}`)
-      .join(", ");
-    parts.push(`failed ${delivery.failed.length} (${reasons})`);
-  } else {
-    parts.push("failed 0");
-  }
+  appendFailureSummary(parts, delivery.failed);
   return `Awareness: ${parts.join(" · ")}. The registry update is durable regardless.`;
 }
 
 export function formatClaimRoleResponseV11(
   response: ClaimAgentRoleResponseV11,
 ): string {
-  const lines = [
-    response.created
-      ? `Claimed role ${claimLabel(response.claim)}.`
-      : `You already hold this role - existing claim returned unchanged (safe retry).`,
-    `claimId: ${response.claim.claimId}`,
-  ];
-  if (response.overlapping.length > 0) {
-    lines.push(
-      `Overlap: ${response.overlapping
-        .map((claim) => `${claimLabel(claim)} held by agent ${claim.agentId}`)
-        .join(
-          "; ",
-        )}. Overlaps are allowed, but check whether this duplication is intentional.`,
-    );
-  }
+  const lines = formatClaimLines(response);
   lines.push(formatAwarenessSummaryV11(response.awareness));
   return lines.join("\n");
 }

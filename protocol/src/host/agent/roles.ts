@@ -97,21 +97,23 @@ export type RoleAwarenessEvent = z.infer<typeof roleAwarenessEventSchema>;
  * responsibility; a broadcast is a courtesy to whoever happened to be
  * listening.
  */
+const roleAwarenessFailureReasonSchema = z.enum([
+  "sink-closed",
+  "timeout",
+  "delivery-error",
+  "reserved-id-collision",
+  "no-active-turn",
+]);
+
+const roleAwarenessFailureSchema = z.object({
+  agentId: z.string(),
+  reason: roleAwarenessFailureReasonSchema,
+});
+
 export const roleAwarenessDeliverySchema = z.object({
   deliveredTo: z.array(z.string()),
   unreachable: z.array(z.string()),
-  failed: z.array(
-    z.object({
-      agentId: z.string(),
-      reason: z.enum([
-        "sink-closed",
-        "timeout",
-        "delivery-error",
-        "reserved-id-collision",
-        "no-active-turn",
-      ]),
-    }),
-  ),
+  failed: z.array(roleAwarenessFailureSchema),
 });
 export type RoleAwarenessDelivery = z.infer<typeof roleAwarenessDeliverySchema>;
 
@@ -186,18 +188,7 @@ export const roleAwarenessDeliverySchemaV11 = z.object({
   deliveredTo: z.array(z.string()),
   deferredToPrompt: z.array(z.string()),
   unreachable: z.array(z.string()),
-  failed: z.array(
-    z.object({
-      agentId: z.string(),
-      reason: z.enum([
-        "sink-closed",
-        "timeout",
-        "delivery-error",
-        "reserved-id-collision",
-        "no-active-turn",
-      ]),
-    }),
-  ),
+  failed: z.array(roleAwarenessFailureSchema),
 });
 export type RoleAwarenessDeliveryV11 = z.infer<
   typeof roleAwarenessDeliverySchemaV11
