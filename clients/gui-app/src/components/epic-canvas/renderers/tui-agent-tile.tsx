@@ -46,6 +46,7 @@ import {
   peekPreparedTerminalAgentLaunch,
 } from "@/stores/terminals/prepared-terminal-agent-launch-store";
 import { TerminalLoadingSkeleton } from "./terminal-loading-skeleton";
+import { TerminalGridMeasureProbe } from "./terminal-grid-measure-probe";
 import { TerminalDeadTileBanner } from "./dead-tile-banner";
 import { TerminalConnectionOverlay } from "./terminal-connection-overlay";
 import { resolveTerminalOverlayState } from "./terminal-connection-overlay-state";
@@ -65,7 +66,6 @@ import { useTuiSetupTerminalListRefreshDriver } from "@/hooks/agent/use-tui-setu
 import { useTuiSetupTerminalTabRegisterDriver } from "@/hooks/agent/use-tui-setup-terminal-tab-register-driver";
 import { SetupCardSegment } from "@/components/chat/segments/setup-card-segment";
 import { buildTuiAgentSetupCardModel } from "@/stores/chats/tui-agent-setup-card-model";
-import type { WorktreeBinding } from "@traycer/protocol/host/worktree-schemas";
 import { AgentModeReadonlyLabel } from "@/components/home/pickers/agent-mode-toggle";
 import type { AgentMode } from "@/components/home/data/landing-options";
 import { useAgentStopControls } from "@/hooks/agent/use-agent-stop-controls";
@@ -86,25 +86,6 @@ import { useCloseCanvasTileWithNestedFocus } from "./use-close-canvas-tile-with-
 import { ReportIssueAction } from "@/components/report-issue/report-issue-action";
 import { createReportIssueContext } from "@/lib/report-issue-context";
 import { reportableErrorToast } from "@/lib/reportable-error-toast";
-
-// Poll cadence for the setup card's binding while a worktree setup script is
-// still in flight. The script runs in a background PTY server-side and only
-// mutates the binding, so without polling a completion/failure would not
-// surface until the next window refocus - the card would stay "setting up".
-const SETUP_BINDING_POLL_INTERVAL_MS = 2_000;
-
-// A created worktree whose setup script has neither settled nor failed yet.
-// `pending`/`running` are the only non-terminal setup states; every other
-// state (succeeded / not_required / failed / cancelled) is final, so polling
-// stops once no entry is in flight.
-function hasInFlightWorktreeSetup(binding: WorktreeBinding | null): boolean {
-  if (binding === null) return false;
-  return binding.entries.some(
-    (entry) =>
-      entry.mode === "worktree" &&
-      (entry.setupState === "pending" || entry.setupState === "running"),
-  );
-}
 
 /**
  * A bound worktree/folder is gone from disk. The host's prepare-launch
@@ -147,22 +128,46 @@ export function TuiAgentTile(props: TuiAgentTileProps) {
     crashReportedRef.current = true;
     emitTerminalCrashedNotification({
       instanceId: props.node.instanceId,
-      epicId,
-      chatId: props.node.id,
+      target: {
+        kind: "terminal",
+        epicId,
+        terminalId: props.node.id,
+        tabId: props.viewTabId,
+        paneId: props.tileId,
+        tileInstanceId: props.node.instanceId,
+      },
       cause: "exit",
     });
-  }, [epicId, props.node.id, props.node.instanceId]);
+  }, [
+    epicId,
+    props.node.id,
+    props.node.instanceId,
+    props.tileId,
+    props.viewTabId,
+  ]);
   const reportRecoveryExhausted = useCallback(() => {
     // Whichever path observes this terminal death first owns its notification.
     if (crashReportedRef.current) return;
     crashReportedRef.current = true;
     emitTerminalCrashedNotification({
       instanceId: props.node.instanceId,
-      epicId,
-      chatId: props.node.id,
+      target: {
+        kind: "terminal",
+        epicId,
+        terminalId: props.node.id,
+        tabId: props.viewTabId,
+        paneId: props.tileId,
+        tileInstanceId: props.node.instanceId,
+      },
       cause: "recovery-exhausted",
     });
-  }, [epicId, props.node.id, props.node.instanceId]);
+  }, [
+    epicId,
+    props.node.id,
+    props.node.instanceId,
+    props.tileId,
+    props.viewTabId,
+  ]);
   const closeCanvasTile = useCloseCanvasTileWithNestedFocus(
     props.viewTabId,
     props.tileId,
@@ -189,8 +194,14 @@ export function TuiAgentTile(props: TuiAgentTileProps) {
     emitTerminalClosedNotification({
       instanceId: props.node.instanceId,
       hostLabel: reachability.hostLabel,
-      epicId,
-      chatId: props.node.id,
+      target: {
+        kind: "terminal",
+        epicId,
+        terminalId: props.node.id,
+        tabId: props.viewTabId,
+        paneId: props.tileId,
+        tileInstanceId: props.node.instanceId,
+      },
     });
   }, [
     reachability.status,
@@ -198,11 +209,14 @@ export function TuiAgentTile(props: TuiAgentTileProps) {
     epicId,
     props.node.id,
     props.node.instanceId,
+    props.tileId,
+    props.viewTabId,
   ]);
   if (reachability.status === "unreachable") {
     return (
       <TerminalDeadTileBanner
         hostLabel={reachability.hostLabel}
+        ownerKind="agent"
         onClose={closeCanvasTile}
         testId={`terminal-agent-tile-${props.tileId}`}
       />
@@ -559,6 +573,15 @@ function TuiAgentTileLive(
           isActive={props.isActive}
           recovery={props.recovery}
           onCrashExit={props.onCrashExit}
+          measureProbe={
+            <TerminalGridMeasureProbe
+              sessionId={sessionId}
+              instanceId={instanceId}
+              tileKind="terminal-agent"
+              chrome="padded"
+              onMeasured={bootstrap.reportMeasuredGrid}
+            />
+          }
         />
       </div>
     </TerminalAgentTileShell>
@@ -587,6 +610,8 @@ interface TerminalAgentBodyProps {
   readonly isRestartKillSuppressed: () => boolean;
   readonly recovery: TerminalSessionRecovery;
   readonly onCrashExit: () => void;
+  /** Pre-subscribe grid measurement probe, rendered in the loading state. */
+  readonly measureProbe: React.ReactNode;
 }
 
 function TerminalAgentBody(props: TerminalAgentBodyProps): React.ReactNode {
@@ -663,8 +688,21 @@ function TerminalAgentBody(props: TerminalAgentBodyProps): React.ReactNode {
   if (props.handle === null) {
     // One stable skeleton for the whole pre-ready window (preparing → starting
     // → xterm suspense all render `TerminalLoadingSkeleton`), so the transition
-    // into the live terminal never flickers between placeholder strings.
-    return <TerminalLoadingSkeleton />;
+    // into the live terminal never flickers between placeholder strings. The
+    // measurement probe mounts the persistent xterm engine beneath it (both
+    // fill the same relative box) so the container's grid is measured before
+    // the subscribe is dispatched - see `TerminalGridMeasureProbe`. Probe
+    // first, skeleton in an overlay after: the probe's container is
+    // `absolute inset-0`, so in-flow content preceding it would be painted
+    // over.
+    return (
+      <>
+        {props.measureProbe}
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <TerminalLoadingSkeleton />
+        </div>
+      </>
+    );
   }
 
   return (
@@ -725,7 +763,7 @@ function TerminalAgentPreLaunchToolbar(
     refetchOnWindowFocus: paneVisible,
     // The nested setup notice owns the in-flight polling; this observer only
     // needs the binding for the chip, so it shares the cache without polling.
-    refetchInterval: false,
+    poll: false,
   });
   const binding = bindingQuery.data?.binding ?? null;
   const sourceStagingKey = useMemo<WorktreeStagingKey>(
@@ -891,12 +929,9 @@ function TerminalAgentWorktreeNotice(props: {
     refetchOnWindowFocus: paneVisible,
     // Poll while a setup script is in flight so a background completion/failure
     // surfaces on the card even while the agent PTY runs (no chat subscription
-    // to push binding transitions). TanStack re-runs this against the freshest
-    // binding after each fetch, so polling stops the moment every entry settles.
-    refetchInterval: (query) =>
-      hasInFlightWorktreeSetup(query.state.data?.binding ?? null)
-        ? SETUP_BINDING_POLL_INTERVAL_MS
-        : false,
+    // to push binding transitions). The table stops polling once every entry
+    // settles.
+    poll: true,
   });
   const binding = bindingQuery.data?.binding ?? null;
   // Setup PTYs are spawned server-side, so nothing invalidates the renderer's

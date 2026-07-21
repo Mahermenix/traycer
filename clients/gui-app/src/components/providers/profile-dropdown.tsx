@@ -7,6 +7,7 @@ import {
   DropdownMenuShortcut,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Badge } from "@/components/ui/badge";
 import { Kbd } from "@/components/ui/kbd";
 import { AccentDot } from "@/components/providers/accent-dot";
 import {
@@ -22,10 +23,7 @@ import {
 } from "@/components/providers/profile-dropdown-usage";
 import { ProfileUsageSidecar } from "@/components/providers/profile-usage-sidecar";
 import { isProfileUsageSidecarTarget } from "@/components/providers/profile-usage-sidecar-target";
-import {
-  rateLimitWindowFillPercent,
-  rateLimitWindowSeverityBarClassName,
-} from "@/lib/rate-limits/window-severity";
+import { ProfileUsageCompactMeter } from "@/components/providers/profile-usage-compact-meter";
 import { cn } from "@/lib/utils";
 import type { ProviderProfile } from "@traycer/protocol/host/provider-schemas";
 import { useState } from "react";
@@ -136,7 +134,7 @@ export function ProfileDropdown(props: ProfileDropdownProps) {
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={`${providerLabel} profile: ${profileDisplayLabel(activeProfile)}`}
+          aria-label={`${providerLabel} profile: ${profileDisplayLabel(activeProfile)}${terminalBadgeSuffix(activeProfile)}`}
           className="flex h-8 w-full min-w-0 items-center justify-between gap-2 rounded-md border border-input bg-transparent px-2.5 text-ui-sm text-foreground outline-none transition-colors hover:bg-input/30 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 data-open:bg-input/30 dark:bg-input/30 dark:hover:bg-input/50"
         >
           <AccentDot
@@ -147,8 +145,11 @@ export function ProfileDropdown(props: ProfileDropdownProps) {
             size="default"
             className={undefined}
           />
-          <span className="min-w-0 flex-1 truncate text-left font-medium">
-            {profileDisplayLabel(activeProfile)}
+          <span className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="min-w-0 truncate text-left font-medium">
+              {profileDisplayLabel(activeProfile)}
+            </span>
+            {activeProfile.kind === "ambient" ? <TerminalProfileBadge /> : null}
           </span>
           <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
         </button>
@@ -232,7 +233,10 @@ export function ProfileDropdown(props: ProfileDropdownProps) {
                 size="default"
                 className={undefined}
               />
-              <span className="min-w-0 flex-1 truncate">{label}</span>
+              <span className="flex min-w-0 flex-1 items-center gap-2">
+                <span className="min-w-0 truncate">{label}</span>
+                {profile.kind === "ambient" ? <TerminalProfileBadge /> : null}
+              </span>
               {statusSuffix !== null ? (
                 <span className="shrink-0 text-muted-foreground">
                   {statusSuffix}
@@ -283,6 +287,26 @@ export function ProfileDropdown(props: ProfileDropdownProps) {
   );
 }
 
+/** Marks the terminal/default-CLI-login profile next to its name, on both the
+ *  closed trigger and the open rows. */
+function TerminalProfileBadge() {
+  return (
+    <Badge
+      variant="outline"
+      className="h-5 shrink-0 px-1.5 text-[10px] text-muted-foreground"
+    >
+      Terminal
+    </Badge>
+  );
+}
+
+/** Restates the visual `TerminalProfileBadge` for aria-labels - both the
+ *  trigger and the rows carry aria-labels that replace their text content, so
+ *  the badge is invisible to AT without this suffix. */
+function terminalBadgeSuffix(profile: ProviderProfile): string {
+  return profile.kind === "ambient" ? ", Terminal" : "";
+}
+
 function profileRowAccessibleLabel(input: {
   readonly label: string;
   readonly profile: ProviderProfile;
@@ -290,56 +314,11 @@ function profileRowAccessibleLabel(input: {
   readonly statusSuffix: string | null;
   readonly usageEntry: ProfileDropdownUsageEntry | undefined;
 }): string {
+  const label = `${input.label}${terminalBadgeSuffix(input.profile)}`;
   if (input.usageEntry === undefined) {
-    if (input.statusSuffix === null) return input.label;
-    return `${input.label}, ${input.statusSuffix}`;
+    if (input.statusSuffix === null) return label;
+    return `${label}, ${input.statusSuffix}`;
   }
   const selection = input.selected ? "Selected" : "Not selected";
-  return `${input.label}, ${profileAuthStatusText(input.profile)}, ${selection}, ${profileUsageAccessibleStatus(input.usageEntry.projection)}`;
-}
-
-function ProfileUsageCompactMeter({
-  entry,
-}: {
-  readonly entry: ProfileDropdownUsageEntry;
-}) {
-  const projection = entry.projection;
-  const hasDetail = projection.kind === "detail" || projection.kind === "stale";
-  const fillPercent = hasDetail
-    ? rateLimitWindowFillPercent(projection.compactWindow.window.usedPercent)
-    : 0;
-  const severity =
-    projection.kind === "detail" ||
-    projection.kind === "stale" ||
-    projection.kind === "semantic_only"
-      ? projection.severity
-      : null;
-  return (
-    <span
-      aria-hidden="true"
-      data-testid={`profile-usage-bar-${String(entry.profileId)}`}
-      data-usage-kind={projection.kind}
-      className={cn(
-        "h-1 w-[clamp(3.5rem,22%,5.5rem)] shrink-0 overflow-hidden rounded-full bg-foreground/15",
-        projection.kind === "semantic_only" &&
-          projection.severity === "running_low" &&
-          "bg-amber-500/25 dark:bg-amber-400/25",
-        projection.kind === "semantic_only" &&
-          projection.severity === "limited" &&
-          "bg-red-500/25 dark:bg-red-400/25",
-        (projection.kind === "stale" || projection.kind === "unavailable") &&
-          "opacity-50",
-      )}
-    >
-      {hasDetail && severity !== null ? (
-        <span
-          className={cn(
-            "block h-full rounded-full transition-[width]",
-            rateLimitWindowSeverityBarClassName(severity),
-          )}
-          style={{ width: `${fillPercent}%` }}
-        />
-      ) : null}
-    </span>
-  );
+  return `${label}, ${profileAuthStatusText(input.profile)}, ${selection}, ${profileUsageAccessibleStatus(input.usageEntry.projection)}`;
 }

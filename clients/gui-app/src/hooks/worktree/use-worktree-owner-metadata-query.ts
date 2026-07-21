@@ -39,7 +39,7 @@ export function useWorktreeOwnerMetadata(args: {
     ownerId: args.ownerId,
     ownerKind: args.ownerKind,
     enabled: args.enabled && args.binding === undefined,
-    refetchInterval: false,
+    poll: false,
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
@@ -72,6 +72,9 @@ export function useWorktreeOwnerMetadata(args: {
       activityPaths: worktreePaths,
       cursor: null,
       limit: null,
+      // A background read: serve the host's TTL-cached view. Only the
+      // Settings toolbar's explicit Refresh forces a disk recompute.
+      forceRefresh: false,
     },
     options: { enabled: args.enabled && worktreePaths.length > 0 },
   });

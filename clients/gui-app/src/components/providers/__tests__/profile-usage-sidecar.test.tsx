@@ -22,6 +22,7 @@ const PROFILE: ProviderProfile = {
   identity: null,
   usageUpdatedAt: null,
   rateLimitStatus: "unknown",
+  rateLimitLimitedScopes: null,
   duplicateOfProfileId: null,
   accentColor: null,
   ambientDriftNotice: null,
@@ -33,6 +34,7 @@ function entry(
   return {
     profileId: "work",
     refresh: vi.fn(() => Promise.resolve()),
+    ensureFresh: vi.fn(() => Promise.resolve()),
     ...overrides,
   };
 }

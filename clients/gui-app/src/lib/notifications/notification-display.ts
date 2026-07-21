@@ -17,29 +17,49 @@ import { readFocusedHostNotificationPresenceEntity } from "@/lib/notifications/n
 export interface NotificationDisplayTarget {
   readonly showNotification: NotificationShow;
   readonly playChime: () => void;
-  readonly onToastClick: (row: MergedNotificationRow) => void;
+  readonly onToastClick: (
+    row: MergedNotificationRow,
+    activatedAt: number,
+  ) => void;
 }
 
 export function displayNotificationRows(
   rows: ReadonlyArray<MergedNotificationRow>,
   target: NotificationDisplayTarget,
 ): void {
+  void displayNotificationRowsAwaitNative(rows, target, null).catch(() => {
+    // The feed remains authoritative; a failed native toast is non-critical.
+  });
+}
+
+async function displayNotificationRowsAwaitNative(
+  rows: ReadonlyArray<MergedNotificationRow>,
+  target: NotificationDisplayTarget,
+  deliveryKey: string | null,
+): Promise<void> {
   if (rows.length === 0) return;
   const content = buildNotificationToastContent(rows);
+  let nativeDisplay: Promise<void>;
   try {
-    void target
-      .showNotification(
-        content.title,
-        content.body,
-        content.payload,
-        content.replaceKey,
-      )
-      .catch(() => {
-        // The feed remains authoritative; a failed native toast is non-critical.
-      });
-  } catch {
-    // The feed remains authoritative; a failed native toast is non-critical.
+    nativeDisplay = target.showNotification({
+      title: content.title,
+      body: content.body,
+      payload: content.payload,
+      replaceKey: content.replaceKey,
+      deliveryKey,
+    });
+  } catch (error) {
+    renderNotificationToast(content, target);
+    throw error;
   }
+  renderNotificationToast(content, target);
+  await nativeDisplay;
+}
+
+function renderNotificationToast(
+  content: NotificationToastContent,
+  target: NotificationDisplayTarget,
+): void {
   const isActionable = content.row.payload !== null;
   const toastTitle = isActionable
     ? createElement(
@@ -47,8 +67,11 @@ export function displayNotificationRows(
         {
           type: "button",
           "aria-label": `${content.title} ${content.body}`,
+          "data-notification-toast-action": "",
           className: "min-w-0 text-left",
-          onClick: () => target.onToastClick(content.row),
+          onClick: () => {
+            target.onToastClick(content.row, Date.now());
+          },
         },
         createElement(
           "span",
@@ -101,8 +124,13 @@ export function displayHostChannelEmission(
 export function displayAppLocalNotification(
   entry: AppLocalNotificationEntry,
   target: NotificationDisplayTarget,
-): void {
-  displayNotificationRows([rowFromAppLocalEntry(entry)], target);
+  deliveryKey: string,
+): Promise<void> {
+  return displayNotificationRowsAwaitNative(
+    [rowFromAppLocalEntry(entry)],
+    target,
+    deliveryKey,
+  );
 }
 
 export function playNotificationChime(): void {
@@ -129,15 +157,17 @@ export function playNotificationChime(): void {
   }
 }
 
-function buildNotificationToastContent(
-  rows: ReadonlyArray<MergedNotificationRow>,
-): {
+interface NotificationToastContent {
   readonly title: string;
   readonly body: string;
   readonly row: MergedNotificationRow;
   readonly payload: unknown;
   readonly replaceKey: string;
-} {
+}
+
+function buildNotificationToastContent(
+  rows: ReadonlyArray<MergedNotificationRow>,
+): NotificationToastContent {
   const first = rows[0];
   if (rows.length === 1) {
     return {
@@ -175,6 +205,7 @@ function hostEntityReplaceKey(
       return `host:chat:${payload.chatId}`;
     case "artifact":
     case "epic":
+    case "terminal":
       return epicReplaceKey(payload.epicId);
     case "session":
       return null;

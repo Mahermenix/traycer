@@ -24,6 +24,7 @@ import type {
   TerminalSessionStoreHandle,
 } from "@/stores/terminals/terminal-session-store";
 import { TerminalLoadingSkeleton } from "./terminal-loading-skeleton";
+import { TerminalGridMeasureProbe } from "./terminal-grid-measure-probe";
 import { TerminalDeadTileBanner } from "./dead-tile-banner";
 import { TerminalConnectionOverlay } from "./terminal-connection-overlay";
 import { resolveTerminalOverlayState } from "./terminal-connection-overlay-state";
@@ -60,11 +61,23 @@ export function TerminalTile(props: TerminalTileProps) {
     crashReportedRef.current = true;
     emitTerminalCrashedNotification({
       instanceId: props.node.instanceId,
-      epicId,
-      chatId: props.node.id,
+      target: {
+        kind: "terminal",
+        epicId,
+        terminalId: props.node.id,
+        tabId: props.viewTabId,
+        paneId: props.tileId,
+        tileInstanceId: props.node.instanceId,
+      },
       cause: "exit",
     });
-  }, [epicId, props.node.id, props.node.instanceId]);
+  }, [
+    epicId,
+    props.node.id,
+    props.node.instanceId,
+    props.tileId,
+    props.viewTabId,
+  ]);
   const reportRecoveryExhausted = useCallback(() => {
     // Whichever path observes this terminal death first owns its notification.
     if (crashReportedRef.current) return;
@@ -72,11 +85,23 @@ export function TerminalTile(props: TerminalTileProps) {
     crashReportedRef.current = true;
     emitTerminalCrashedNotification({
       instanceId: props.node.instanceId,
-      epicId,
-      chatId: props.node.id,
+      target: {
+        kind: "terminal",
+        epicId,
+        terminalId: props.node.id,
+        tabId: props.viewTabId,
+        paneId: props.tileId,
+        tileInstanceId: props.node.instanceId,
+      },
       cause: "recovery-exhausted",
     });
-  }, [epicId, props.node.id, props.node.instanceId]);
+  }, [
+    epicId,
+    props.node.id,
+    props.node.instanceId,
+    props.tileId,
+    props.viewTabId,
+  ]);
   const closeCanvasTile = useCloseCanvasTileWithNestedFocus(
     props.viewTabId,
     props.tileId,
@@ -104,8 +129,14 @@ export function TerminalTile(props: TerminalTileProps) {
     emitTerminalClosedNotification({
       instanceId: props.node.instanceId,
       hostLabel: reachability.hostLabel,
-      epicId,
-      chatId: props.node.id,
+      target: {
+        kind: "terminal",
+        epicId,
+        terminalId: props.node.id,
+        tabId: props.viewTabId,
+        paneId: props.tileId,
+        tileInstanceId: props.node.instanceId,
+      },
     });
   }, [
     reachability.status,
@@ -113,11 +144,14 @@ export function TerminalTile(props: TerminalTileProps) {
     epicId,
     props.node.id,
     props.node.instanceId,
+    props.tileId,
+    props.viewTabId,
   ]);
   if (reachability.status === "unreachable") {
     return (
       <TerminalDeadTileBanner
         hostLabel={reachability.hostLabel}
+        ownerKind="terminal"
         onClose={closeCanvasTile}
         testId={`terminal-tile-${props.tileId}`}
       />
@@ -239,12 +273,27 @@ function TerminalTileLive(
   }
 
   if (bootstrap.handle === null) {
+    // The starting state occupies the SAME layout box the live terminal will
+    // (outer column + relative flex-1), so the measurement probe underneath
+    // measures the real grid before the create/subscribe are dispatched -
+    // see `TerminalGridMeasureProbe`. The status text overlays it.
     return (
       <div
-        className="flex h-full w-full items-center justify-center bg-canvas text-ui-sm text-muted-foreground"
+        className="flex h-full w-full min-h-0 flex-col bg-canvas"
         data-testid={`terminal-tile-${props.tileId}`}
       >
-        Starting terminal session…
+        <div className="relative min-h-0 flex-1">
+          <TerminalGridMeasureProbe
+            sessionId={sessionId}
+            instanceId={instanceId}
+            tileKind="terminal"
+            chrome="padded"
+            onMeasured={bootstrap.reportMeasuredGrid}
+          />
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-ui-sm text-muted-foreground">
+            Starting terminal session…
+          </div>
+        </div>
       </div>
     );
   }
@@ -377,10 +426,15 @@ function TerminalLive(props: TerminalLiveProps) {
                 ? `terminal:${props.viewTabId}:${props.tileId}:${handle.sessionId}`
                 : null
             }
-            // Plain terminals have no scrollback to preserve beyond the host
-            // snapshot: their session handle is disposed on unmount and the next
-            // open replays a fresh snapshot, so the xterm engine is rebuilt too.
-            keepAlive={false}
+            // Mirrors the registry's linger rule: a running plain terminal's
+            // handle now outlives this unmount (its stream stays subscribed for
+            // the linger window so tab switches reattach instantly), and the
+            // store's writer keeps pointing at this engine - dispose the engine
+            // and the reattach would be blank, since the host snapshot was
+            // already consumed. The registry follower disposes the engine when
+            // the lingering handle is finally evicted; only an exited session
+            // tears down eagerly.
+            keepAlive={status !== "exited"}
           />
         </Suspense>
         {overlayState !== null ? (

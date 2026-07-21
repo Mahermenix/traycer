@@ -111,6 +111,7 @@ export const chatActionSchema = z.enum([
   "queueSettingsUpdate",
   "queueSettingsRestamp",
   "activePermissionModeUpdate",
+  "activeProfileUpdate",
   "approvalDecision",
   "fileEditApprovalDecision",
   "interviewAnswer",
@@ -232,15 +233,48 @@ const workflowBackgroundItemSchema = z.object({
   agentsFinished: z.number().nullable().default(null),
 });
 
-export const backgroundItemKindSchema = z.enum([
+// ─── Frozen `chat.subscribe@1.3` background-item shapes (pre-`mcp`) ────────
+//
+// `1.4` adds the `mcp` kind below. A released ≤1.3 peer must never observe
+// it - the host degrades `mcp` items to `command` for those lines - and these
+// frozen schemas keep the `1.3` frames parsing only shapes a real 1.3 peer
+// could produce. Do not add `1.4`-only kinds here.
+export const backgroundItemKindSchemaV13 = z.enum([
   ...backgroundItemKindSchemaV12.options,
   "workflow",
+]);
+export const backgroundItemSchemaV13 = z.discriminatedUnion("kind", [
+  ...backgroundItemSchemaV12.def.options,
+  workflowBackgroundItemSchema,
+]);
+
+// One currently-running MCP background item (`chat.subscribe@1.4`) - an MCP
+// tool call the CLI moved to the background after it outlived the
+// auto-background threshold (CLI 2.1.212+, `task_started` with task_type
+// "mcp_task"). Unlike a `command` row there is no shell command line to echo:
+// `serverName`/`toolName` carry the MCP identity (split from
+// `mcp__<server>__<tool>`) so the renderer can title the row and give MCP
+// work its own presentation instead of a pseudo-command one.
+const mcpBackgroundItemSchema = z.object({
+  ...backgroundItemBaseFields,
+  kind: z.literal("mcp"),
+  serverName: z.string(),
+  toolName: z.string(),
+  // Epoch ms of the promotion moment (the CLI's `task_started`), anchoring the
+  // row's live elapsed counter. Nullable-defaulted so a frame from a host that
+  // predates the field still parses; the renderer hides the counter on null.
+  startedAt: z.number().nullable().default(null),
+});
+
+export const backgroundItemKindSchema = z.enum([
+  ...backgroundItemKindSchemaV13.options,
+  "mcp",
 ]);
 export type BackgroundItemKind = z.infer<typeof backgroundItemKindSchema>;
 
 export const backgroundItemSchema = z.discriminatedUnion("kind", [
-  ...backgroundItemSchemaV12.def.options,
-  workflowBackgroundItemSchema,
+  ...backgroundItemSchemaV13.def.options,
+  mcpBackgroundItemSchema,
 ]);
 export type BackgroundItem = z.infer<typeof backgroundItemSchema>;
 
@@ -709,6 +743,24 @@ const pauseQueueClientFrameSchema = z.object({
   ...ownerActionFrameFields,
 });
 
+// Narrow live-turn field update, parallel to `activePermissionModeUpdate`:
+// move the chat's IN-FLIGHT work onto another logged-in profile of the same
+// harness. Sent by the composer on a profile switch while a run is in
+// progress; the host stamps a pre-spawn profile override from it at frame
+// intake, so a turn still parked on worktree setup adopts the switch before
+// it spawns instead of erroring on the rate-limited profile the user just
+// moved off. `harnessId` scopes application: profile ids are harness-scoped,
+// so the switch only applies to a turn on the same harness. Deliberately NOT
+// a whole-settings frame - model/harness never late-bind into an accepted
+// turn (a model change invalidates the reasoning/thinking selection and is
+// only expressible as a full tuple on a new send).
+const activeProfileUpdateClientFrameSchema = z.object({
+  kind: z.literal("activeProfileUpdate"),
+  ...ownerActionFrameFields,
+  harnessId: guiHarnessIdSchema,
+  profileId: z.string().nullable(),
+});
+
 const chatSubscribeClientFrameSchemaBeforeV13Options = [
   z.object({
     kind: z.literal("send"),
@@ -744,6 +796,10 @@ const chatSubscribeClientFrameSchemaBeforeV13Options = [
     // Billing/account context the turn runs under. Global app-wide selection
     // (not per-chat), stamped onto the frame at send time.
     accountContext: accountContextSchema,
+    // Editing and resending a stopped message is another turn-start path. A
+    // worktree staged in the composer must ride on this frame just as it does
+    // on a normal send, otherwise it is not created until the next message.
+    worktreeIntent: worktreeIntentSchema.nullable().default(null),
     // When true, revert all file changes made by the edited message's turn
     // and every turn after it (cumulative, to the state before this message)
     // before trimming history and starting the new turn. Set by the
@@ -894,9 +950,22 @@ export const chatSubscribeClientFrameSchemaBeforeV13 = z.discriminatedUnion(
   chatSubscribeClientFrameSchemaBeforeV13Options,
 );
 
-const chatSubscribeClientFrameSchemaOptions = [
+const chatSubscribeClientFrameSchemaBeforeV14Options = [
   ...chatSubscribeClientFrameSchemaBeforeV13Options,
   pauseQueueClientFrameSchema,
+] as const;
+
+// Frozen client frame of the RELEASED `1.3` line (pauseQueue, but no
+// `activeProfileUpdate`). Kept as its own union so the shipped 1.3 shape
+// stays verbatim while the live schema below grows the minor-4 delta.
+export const chatSubscribeClientFrameSchemaBeforeV14 = z.discriminatedUnion(
+  "kind",
+  chatSubscribeClientFrameSchemaBeforeV14Options,
+);
+
+const chatSubscribeClientFrameSchemaOptions = [
+  ...chatSubscribeClientFrameSchemaBeforeV14Options,
+  activeProfileUpdateClientFrameSchema,
 ] as const;
 
 export const chatSubscribeClientFrameSchema = z.discriminatedUnion(
@@ -1378,7 +1447,7 @@ const chatSnapshotSchemaV13 = z.object({
   missingWorktreePaths: z.array(z.string()),
   pendingFileEditApprovals: z.array(chatFileEditApprovalStateSchema),
   accumulatedFileChanges: z.array(chatAccumulatedFileChangeSchema),
-  backgroundItems: z.array(backgroundItemSchema).optional(),
+  backgroundItems: z.array(backgroundItemSchemaV13).optional(),
   turnInProgress: z.boolean().optional(),
 });
 
@@ -1389,9 +1458,23 @@ const chatSubscribeSnapshotServerFrameSchemaV13 = z.object({
   snapshot: chatSnapshotSchemaV13,
 });
 
+// `turnStateChanged` carries no sender, so `1.3` originally reused the live
+// frame - until `1.4` added the `mcp` background-item kind, which rides this
+// broadcast too. Pinned with the pre-`mcp` item union so the released `1.3`
+// line cannot observe the new kind.
+const chatSubscribeTurnStateChangedServerFrameSchemaV13 = z.object({
+  kind: z.literal("turnStateChanged"),
+  ...textFrameFields,
+  ...chatReferenceFields,
+  runStatus: chatRunStatusSchema,
+  activeTurn: chatActiveTurnSchema.nullable(),
+  backgroundItems: z.array(backgroundItemSchemaV13).optional(),
+  turnInProgress: z.boolean().optional(),
+});
+
 const chatSubscribeServerFrameSchemaV13 = z.discriminatedUnion("kind", [
   chatSubscribeSnapshotServerFrameSchemaV13,
-  chatSubscribeTurnStateChangedServerFrameSchema,
+  chatSubscribeTurnStateChangedServerFrameSchemaV13,
   ...chatSubscribeSharedServerFrameSchemasPreInReplyTo,
 ]);
 
@@ -1400,15 +1483,20 @@ export const chatSubscribeV13 = defineStreamRpcContract({
   schemaVersion: { major: 1, minor: 3 } as const,
   openRequestSchema: chatSubscribeOpenRequestSchema,
   serverFrameSchema: chatSubscribeServerFrameSchemaV13,
-  clientFrameSchema: chatSubscribeClientFrameSchema,
+  clientFrameSchema: chatSubscribeClientFrameSchemaBeforeV14,
 });
 
-// ─── Live `chat.subscribe@1.4` contract (adds `inReplyTo` to senders) ───────
+// ─── Live `chat.subscribe@1.4` contract (`inReplyTo` + `mcp` items) ─────────
 //
 // The live serverFrame carries `inReplyTo` on every agent sender (user-message,
-// assistant, queue item, event `actor`, steer). Older peers negotiate ≤1.3 and
-// receive the frozen frames above, which strip the key. The client frame is
-// identical to `1.3` (`inReplyTo` is host→client only).
+// assistant, queue item, event `actor`, steer) and the `mcp` background-item
+// kind (CLI auto-backgrounded MCP tool calls). Older peers negotiate ≤1.3 and
+// receive the frozen frames above, which strip the key and never carry `mcp`
+// items (the host degrades them to `command`). The client frame adds
+// `activeProfileUpdate` (the narrow in-flight profile switch); a ≤1.3 host
+// never receives it - the host drops unknown kinds with a MALFORMED_FRAME
+// ack, and the switch still lands durably via `epic.updateChatProfile` /
+// the next send's full tuple.
 
 export const chatSubscribeV14 = defineStreamRpcContract({
   method: "chat.subscribe",

@@ -61,6 +61,7 @@ function profile(
     identity: null,
     usageUpdatedAt: null,
     rateLimitStatus: "unknown",
+    rateLimitLimitedScopes: null,
     duplicateOfProfileId: null,
     ambientDriftNotice: null,
     accentColor: null,
@@ -178,14 +179,17 @@ describe("useProfileUsageComparison", () => {
 
     const neverChecked = profile("p-never", "managed", "Never", {
       rateLimitStatus: "ok",
+      rateLimitLimitedScopes: null,
       usageUpdatedAt: null,
     });
     const semanticOnly = profile("p-semantic", "managed", "Semantic", {
       rateLimitStatus: "near_limit",
+      rateLimitLimitedScopes: null,
       usageUpdatedAt: Date.now(),
     });
     const freshProfile = profile("p-fresh", "managed", "Fresh", {
       rateLimitStatus: "ok",
+      rateLimitLimitedScopes: null,
       usageUpdatedAt: Date.now(),
     });
 
@@ -301,6 +305,42 @@ describe("useProfileUsageComparison", () => {
         profileId: "p-a",
       },
     ]);
+  });
+
+  it("ensureFresh fetches once for a cold profile, then no-ops on still-fresh cache while a forced refresh still fires", async () => {
+    const queryClient = new QueryClient();
+    const calls: Array<unknown> = [];
+    const { scope } = buildHostScope("default-host", queryClient, (params) => {
+      calls.push(params);
+      return goodResponse();
+    });
+    scopesRef.byHostId.set(null, scope);
+
+    const profileA = profile("p-a", "managed", "A", {});
+
+    const { result } = renderHook(
+      () =>
+        useProfileUsageComparison({
+          runTargetHostId: null,
+          providerId: "claude-code",
+          profiles: [profileA],
+        }),
+      { wrapper: wrapperFor(queryClient) },
+    );
+
+    // Cold cache: the automatic check spends its one request.
+    await result.current.entries.get("p-a")?.ensureFresh();
+    expect(calls).toHaveLength(1);
+
+    // Fresh cache: the non-forced path must NOT re-spawn a subprocess - this
+    // is what makes the banner's automatic check burst-safe when several
+    // composers nominate the same probe target.
+    await result.current.entries.get("p-a")?.ensureFresh();
+    expect(calls).toHaveLength(1);
+
+    // A user-initiated refresh bypasses the freshness floor as before.
+    await result.current.entries.get("p-a")?.refresh();
+    expect(calls).toHaveLength(2);
   });
 
   it("routes an explicit refresh for the httpFetch lane through the profile's own passive query, addressing exactly that profile", async () => {

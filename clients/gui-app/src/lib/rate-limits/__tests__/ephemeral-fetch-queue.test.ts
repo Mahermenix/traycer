@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import { DEFAULT_ACCOUNT_CONTEXT } from "@traycer/protocol/common/schemas";
 import type { ProviderId } from "@traycer/protocol/host/provider-schemas";
 import type {
@@ -92,6 +93,7 @@ describe("ephemeral-fetch-queue", () => {
   });
   afterEach(() => {
     __resetRateLimitQueueForTests();
+    vi.useRealTimers();
   });
 
   it("serializes concurrent enqueues across providers - only one request is ever in flight (guardrail 1)", async () => {
@@ -115,6 +117,11 @@ describe("ephemeral-fetch-queue", () => {
     // started - the second is queued behind it, not spawned in parallel.
     expect(request).toHaveBeenCalledTimes(1);
     expect(calls).toEqual(["codex"]);
+    expect(
+      queryClient
+        .getQueryCache()
+        .find({ queryKey: keyFor("codex"), exact: true })?.options.meta,
+    ).toMatchObject({ hostRpcMethod: "host.getRateLimitUsage" });
 
     // Release the first; only now may the second run.
     settlers[0].ok();
@@ -316,6 +323,31 @@ describe("ephemeral-fetch-queue", () => {
     });
   });
 
+  it("keeps an inactive rate-limit entry after invalidation instead of garbage-collecting it", async () => {
+    vi.useFakeTimers();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { gcTime: 50, retry: false } },
+    });
+    const request = vi.fn<RateLimitQueueRequestFn>(() =>
+      Promise.resolve(response()),
+    );
+    configureRateLimitQueue({ hostId: HOST_ID, queryClient, request });
+
+    await enqueueRateLimitFetch("codex", DEFAULT_ACCOUNT_CONTEXT, {
+      force: true,
+      profileId: null,
+    });
+    const queryKey = keyFor("codex");
+    await queryClient.invalidateQueries({ queryKey, refetchType: "none" });
+
+    expect(queryClient.getQueryState(queryKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryData(queryKey)).toBeDefined();
+
+    await vi.advanceTimersByTimeAsync(51);
+
+    expect(queryClient.getQueryData(queryKey)).toBeDefined();
+  });
+
   it("force: false no-ops when cached data is still within the freshness floor, force: true bypasses it", async () => {
     const queryClient = newQueryClient();
     const { request } = makeControllableRequest();
@@ -365,6 +397,29 @@ describe("ephemeral-fetch-queue", () => {
     settlers[1].ok();
     await flush();
     expect(isRateLimitQueueDraining()).toBe(false);
+  });
+
+  it("stores a normalized HostRpcError in the shared cache slot when the request rejects a foreign error", async () => {
+    const queryClient = newQueryClient();
+    // A raw TypeError - the shape that previously leaked into the provider
+    // rate-limit slot that `HostRpcError`-typed observers read.
+    const request: RateLimitQueueRequestFn = () =>
+      Promise.reject(new TypeError("boom from transport"));
+    configureRateLimitQueue({ hostId: HOST_ID, queryClient, request });
+
+    void enqueueRateLimitFetch("claude-code", DEFAULT_ACCOUNT_CONTEXT, {
+      force: true,
+      profileId: null,
+    });
+    await flush();
+
+    const cachedError = queryClient.getQueryState(keyFor("claude-code"))?.error;
+    expect(cachedError).toBeInstanceOf(HostRpcError);
+    expect(cachedError).toMatchObject({
+      code: "RPC_ERROR",
+      method: "host.getRateLimitUsage",
+      message: "boom from transport",
+    });
   });
 
   it("a failed first read does not make a provider look fresh; an automatic enqueue retries and recovers", async () => {

@@ -596,10 +596,9 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
         return;
       }
       // Commit the picked model through the memory-aware funnel (restores that
-      // (harness, profile, model)'s remembered effort/tier, or the model's
-      // defaults). Selecting a model keeps the picker open; it only closes on
-      // an outside click / escape (handled by Popover's onOpenChange ->
-      // closeOnly).
+      // (provider, model)'s remembered effort/tier, or the model's defaults).
+      // Selecting a model keeps the picker open; it only closes on an outside
+      // click / escape (handled by Popover's onOpenChange -> closeOnly).
       commitSelection(store, row.harnessId, row.value, activePanelProfileId);
     },
     [activePanelProfileId, closeOnly, disabled, store],
@@ -652,9 +651,8 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       // can differ after browsing a degraded rail entry without committing it,
       // or when this globally retained create-profile callback resolves after
       // another control changed the selection. In that case preserve the old
-      // provider-switch behavior and restore the target provider/profile's
-      // remembered settings instead of pairing its profile with the current
-      // provider.
+      // provider-switch behavior and restore the target provider's remembered
+      // settings instead of pairing its profile with the current provider.
       if (store.getState().selection.harnessId === providerId) {
         commitProfileSelection(store, profileId);
       } else {
@@ -925,11 +923,8 @@ function modelPickerSelectionSummary(
   return `${label} · Thinking ${reasoningLabel}`;
 }
 
-// Restrict to harnesses whose adapter advertises a TUI surface. This is the
-// runtime capability (`modes`), not the schema id: Cursor is a TUI harness at
-// the schema level but its adapter currently advertises only `gui`, so it stays
-// hidden from the terminal launcher until the CLI ships - and reappears on its
-// own once the host starts advertising `tui`, with no code change here.
+// Restrict to harnesses whose adapter advertises a TUI surface. Runtime
+// capability (`modes`) is the source of truth for the terminal launcher.
 function isTuiCapable(harness: HarnessOption): boolean {
   return harness.modes.includes("tui");
 }

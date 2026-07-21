@@ -67,16 +67,17 @@ describe("notification display", () => {
     });
 
     expect(showNotification).toHaveBeenCalledOnce();
-    expect(showNotification).toHaveBeenCalledWith(
-      "Checkout notifications",
-      "New chat • Done",
-      {
+    expect(showNotification).toHaveBeenCalledWith({
+      title: "Checkout notifications",
+      body: "New chat • Done",
+      payload: {
         kind: "chat",
         epicId: "epic-1",
         chatId: "chat-1",
       },
-      "host:chat:chat-1",
-    );
+      replaceKey: "host:chat:chat-1",
+      deliveryKey: null,
+    });
     expect(toastCalls).toHaveLength(1);
     expect(toastCalls[0]?.options.id).toBe("host:chat:chat-1");
     expect(toastCalls[0]?.options.description).toBeUndefined();
@@ -154,19 +155,20 @@ describe("notification display", () => {
       onToastClick,
     });
 
-    expect(showNotification).toHaveBeenCalledWith(
-      "Traycer",
-      "2 new notifications",
-      expect.anything(),
-      "notification-batch",
-    );
+    expect(showNotification).toHaveBeenCalledWith({
+      title: "Traycer",
+      body: "2 new notifications",
+      payload: first.payload,
+      replaceKey: "notification-batch",
+      deliveryKey: null,
+    });
 
     renderActionableToast();
     fireEvent.click(
       screen.getByRole("button", { name: "Traycer 2 new notifications" }),
     );
 
-    expect(onToastClick).toHaveBeenCalledWith(first);
+    expect(onToastClick).toHaveBeenCalledWith(first, expect.any(Number));
   });
 
   it("still plays the chime when native notification setup throws", () => {
@@ -203,7 +205,7 @@ describe("notification display", () => {
       }),
     );
 
-    expect(onToastClick).toHaveBeenCalledWith(notification);
+    expect(onToastClick).toHaveBeenCalledWith(notification, expect.any(Number));
   });
 
   it("does not make notifications without a destination clickable", () => {
