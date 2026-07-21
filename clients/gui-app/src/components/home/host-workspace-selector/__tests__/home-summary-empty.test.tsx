@@ -299,7 +299,6 @@ function DelayedBranchValidationHarness() {
       />
       <button
         type="button"
-        data-testid="submit-task"
         onClick={() => {
           actions.submit({
             editor: editorHandleForPrompt("Investigate the worktree race"),
@@ -615,7 +614,7 @@ describe("landing workspace summary empty state", () => {
       readStagedWorktreeIntent({ surface: "landing", draftId: null }),
     ).toBeNull();
 
-    fireEvent.click(screen.getByTestId("submit-task"));
+    fireEvent.click(screen.getByRole("button", { name: "Create task" }));
 
     await waitFor(() => {
       expect(
