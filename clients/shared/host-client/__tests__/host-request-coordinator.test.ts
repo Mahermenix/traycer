@@ -6,6 +6,7 @@ import {
 } from "@traycer/protocol/framework/index";
 import type {
   HostRequestAuthority,
+  HostRpcRequestOptions,
   RequestOfMethod,
   ResponseOfMethod,
 } from "../../host-transport/host-messenger";
@@ -102,6 +103,20 @@ const schedulingPolicy: RpcSchedulingPolicy<typeof registry> = {
   joinResponseTimeoutMs: (method) => (method === "join.await" ? 1_000 : null),
 };
 
+const AUTHORITATIVE_V14_OPTIONS: HostRpcRequestOptions = {
+  requiredHostCanonicalVersion: {
+    comparison: "minimum",
+    version: { major: 1, minor: 4 },
+  },
+};
+
+const EXACT_V14_OPTIONS: HostRpcRequestOptions = {
+  requiredHostCanonicalVersion: {
+    comparison: "exact",
+    version: { major: 1, minor: 4 },
+  },
+};
+
 type Deferred<Value> = {
   readonly promise: Promise<Value>;
   resolve(value: Value): void;
@@ -167,6 +182,33 @@ function submit<Method extends keyof typeof registry & string>(
 
 function makeCoordinator(): HostRequestCoordinator<typeof registry> {
   return new HostRequestCoordinator({ registry, schedulingPolicy });
+}
+
+function makeBoundClient(
+  messenger: MockHostMessenger<typeof registry>,
+): HostClient<typeof registry> {
+  const invalidator: IHostQueryInvalidator = {
+    invalidateHostScope: () => undefined,
+  };
+  const client = new HostClient({
+    registry,
+    messenger,
+    invalidator,
+    schedulingPolicy,
+    requestCoordinator: null,
+  });
+  const fixture = createAuthenticatedUserFixture(undefined);
+  const context = createRequestContext({
+    identity: identityFromAuthenticatedUser(fixture),
+    bearerToken: "bearer",
+    origin: "test",
+    connectionId: undefined,
+    operationId: undefined,
+    externalAbortSignal: undefined,
+  });
+  client.bind(mockLocalHostEntry);
+  client.setRequestContext(context);
+  return client;
 }
 
 describe("HostRequestCoordinator", () => {
@@ -552,32 +594,12 @@ describe("HostRequestCoordinator", () => {
   });
 
   it("validates join response timeout against the injected method policy", async () => {
-    const invalidator: IHostQueryInvalidator = {
-      invalidateHostScope: () => undefined,
-    };
     const messenger = new MockHostMessenger<typeof registry>({
       registry,
       handlers: { "join.await": () => ({ value: "ok" }) },
       requestId: () => "request-1",
     });
-    const client = new HostClient({
-      registry,
-      messenger,
-      invalidator,
-      schedulingPolicy,
-      requestCoordinator: null,
-    });
-    const fixture = createAuthenticatedUserFixture(undefined);
-    const context = createRequestContext({
-      identity: identityFromAuthenticatedUser(fixture),
-      bearerToken: "bearer",
-      origin: "test",
-      connectionId: undefined,
-      operationId: undefined,
-      externalAbortSignal: undefined,
-    });
-    client.bind(mockLocalHostEntry);
-    client.setRequestContext(context);
+    const client = makeBoundClient(messenger);
 
     await expect(
       client.requestWithResponseTimeout(
@@ -594,6 +616,145 @@ describe("HostRequestCoordinator", () => {
       ),
     ).resolves.toEqual({ value: "ok" });
     expect(messenger.calls).toHaveLength(1);
+    client.dispose();
+  });
+
+  it("does not let a strict request join an already-active optionless request", async () => {
+    const active = deferred<{ value: string }>();
+    const messenger = new MockHostMessenger<typeof registry>({
+      registry,
+      requestId: () => `req-${Math.random()}`,
+      hostCanonicalManifest: {
+        "latest.read": { major: 1, minor: 0 },
+      },
+      handlers: {
+        "latest.read": () => active.promise,
+      },
+    });
+    const client = makeBoundClient(messenger);
+
+    const optionless = client.request("latest.read", { path: "/same" });
+    await flush();
+    expect(messenger.calls).toHaveLength(1);
+
+    await expect(
+      client.requestWithOptions(
+        "latest.read",
+        { path: "/same" },
+        AUTHORITATIVE_V14_OPTIONS,
+      ),
+    ).rejects.toMatchObject({
+      code: "DOWNGRADE_UNSUPPORTED",
+      method: "latest.read",
+    });
+    expect(messenger.calls).toHaveLength(2);
+
+    active.resolve({ value: "optionless" });
+    await expect(optionless).resolves.toEqual({ value: "optionless" });
+    client.dispose();
+  });
+
+  it("does not let an optionless request join or alter an active strict request", async () => {
+    const strictCall = deferred<{ value: string }>();
+    const plainCall = deferred<{ value: string }>();
+    let callCount = 0;
+    const messenger = new MockHostMessenger<typeof registry>({
+      registry,
+      requestId: () => `req-${Math.random()}`,
+      hostCanonicalManifest: {
+        "latest.read": { major: 1, minor: 4 },
+      },
+      handlers: {
+        "latest.read": () => {
+          callCount += 1;
+          return callCount === 1 ? strictCall.promise : plainCall.promise;
+        },
+      },
+    });
+    const client = makeBoundClient(messenger);
+
+    const strict = client.requestWithOptions(
+      "latest.read",
+      { path: "/same" },
+      AUTHORITATIVE_V14_OPTIONS,
+    );
+    await flush();
+    expect(messenger.calls).toHaveLength(1);
+
+    const optionless = client.request("latest.read", { path: "/same" });
+    await flush();
+    expect(messenger.calls).toHaveLength(2);
+
+    strictCall.resolve({ value: "strict" });
+    plainCall.resolve({ value: "optionless" });
+
+    await expect(strict).resolves.toEqual({ value: "strict" });
+    await expect(optionless).resolves.toEqual({ value: "optionless" });
+    client.dispose();
+  });
+
+  it("coalesces only queued strict requests with exactly equal semantic options", async () => {
+    const activeStrict = deferred<{ value: string }>();
+    const exactStrict = deferred<{ value: string }>();
+    const queuedStrict = deferred<{ value: string }>();
+    let callCount = 0;
+    const messenger = new MockHostMessenger<typeof registry>({
+      registry,
+      requestId: () => `req-${Math.random()}`,
+      hostCanonicalManifest: {
+        "latest.read": { major: 1, minor: 4 },
+      },
+      handlers: {
+        "latest.read": () => {
+          callCount += 1;
+          if (callCount === 1) {
+            return activeStrict.promise;
+          }
+          if (callCount === 2) {
+            return exactStrict.promise;
+          }
+          return queuedStrict.promise;
+        },
+      },
+    });
+    const client = makeBoundClient(messenger);
+
+    const minimumA = client.requestWithOptions(
+      "latest.read",
+      { path: "/same" },
+      AUTHORITATIVE_V14_OPTIONS,
+    );
+    const minimumB = client.requestWithOptions(
+      "latest.read",
+      { path: "/same" },
+      AUTHORITATIVE_V14_OPTIONS,
+    );
+    const minimumC = client.requestWithOptions(
+      "latest.read",
+      { path: "/same" },
+      AUTHORITATIVE_V14_OPTIONS,
+    );
+    await flush();
+    expect(messenger.calls).toHaveLength(1);
+
+    const exact = client.requestWithOptions(
+      "latest.read",
+      { path: "/same" },
+      EXACT_V14_OPTIONS,
+    );
+    await flush();
+    expect(messenger.calls).toHaveLength(2);
+
+    activeStrict.resolve({ value: "minimum-active" });
+    await flush();
+
+    queuedStrict.resolve({ value: "minimum-queued" });
+    exactStrict.resolve({ value: "exact" });
+
+    await expect(minimumA).resolves.toEqual({ value: "minimum-active" });
+    await expect(minimumB).resolves.toEqual({ value: "minimum-queued" });
+    await expect(minimumC).resolves.toEqual({ value: "minimum-queued" });
+    await expect(exact).resolves.toEqual({ value: "exact" });
     client.dispose();
   });
 

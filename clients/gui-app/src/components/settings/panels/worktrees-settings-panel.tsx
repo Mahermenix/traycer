@@ -59,6 +59,7 @@ import {
   classifyWorktreeTier,
   describeReviewReasons,
   provenRemovable,
+  type WorktreeDeleteBlocker,
   type WorktreeTier,
 } from "@traycer-clients/shared/worktree/classify-worktree";
 import {
@@ -1348,6 +1349,12 @@ export function WorktreesList(props: {
     setPendingDeleteTargets(null);
   };
 
+  const deleteEnrichmentPendingForPath = useCallback(
+    (worktreePath: string): boolean =>
+      deleteEnrichmentStateFor(worktreePath) === "pending",
+    [deleteEnrichmentStateFor],
+  );
+
   const handleConfirm = useCallback(async (): Promise<void> => {
     if (
       confirmingDelete ||
@@ -1356,66 +1363,23 @@ export function WorktreesList(props: {
     ) {
       return;
     }
-    if (client === null) {
-      const { kept, dropped } = pendingResolution;
-      if (dropped.length > 0) {
-        toast.message(
-          worktreeDropMessage(
-            dropped,
-            (worktreePath) =>
-              deleteEnrichmentStateFor(worktreePath) === "pending",
-          ),
-        );
-      }
-      if (kept.length === 1) {
-        start(kept[0], reviewedScriptsByPath.get(kept[0].worktreePath) ?? null);
-      } else if (kept.length > 1) {
-        startBatchBackgrounded(kept, reviewedScriptsByPath);
-      }
-      clearSelectionForTargets(pendingDeleteTargets);
-      return;
-    }
     setConfirmingDelete(true);
     try {
       const { kept: cachedKept, dropped: cachedDropped } = pendingResolution;
-      const authoritativeResults = await Promise.all(
-        cachedKept.map((entry) =>
-          confirmTimeAuthoritativeDeleteCheck(client, entry.worktreePath),
-        ),
+      const authoritativeResults = await confirmTimeAuthoritativeDeleteChecks(
+        client,
+        cachedKept,
       );
-      const kept: WorktreeHostEntryV14[] = [];
-      const dropped: ConfirmTimeAuthoritativeDrop[] = [];
-      for (const result of authoritativeResults) {
-        switch (result.kind) {
-          case "ready":
-            kept.push(result.target);
-            break;
-          case "missing":
-          case "unresolved":
-          case "bound":
-          case "query-failed":
-          case "non-authoritative-version":
-            dropped.push(result);
-            break;
-        }
-      }
-      if (cachedDropped.length > 0) {
-        toast.message(
-          worktreeDropMessage(
-            cachedDropped,
-            (worktreePath) =>
-              deleteEnrichmentStateFor(worktreePath) === "pending",
-          ),
-        );
-      }
-      if (dropped.length > 0) {
-        toast.message(confirmTimeAuthoritativeDropMessage(dropped));
-      }
-      if (kept.length === 1) {
-        start(kept[0], reviewedScriptsByPath.get(kept[0].worktreePath) ?? null);
-      } else if (kept.length > 1) {
-        startBatchBackgrounded(kept, reviewedScriptsByPath);
-      }
+      const { kept, dropped } =
+        partitionConfirmTimeAuthoritativeResults(authoritativeResults);
+      notifyCachedDeleteDrops(cachedDropped, deleteEnrichmentPendingForPath);
+      notifyConfirmTimeDeleteDrops(dropped);
+      startConfirmedDeleteTargets(
+        kept,
+        reviewedScriptsByPath,
+        start,
+        startBatchBackgrounded,
+      );
       clearSelectionForTargets(pendingDeleteTargets);
     } finally {
       setConfirmingDelete(false);
@@ -1423,7 +1387,7 @@ export function WorktreesList(props: {
   }, [
     client,
     confirmingDelete,
-    deleteEnrichmentStateFor,
+    deleteEnrichmentPendingForPath,
     pendingDeleteTargets,
     pendingResolution,
     reviewedScriptsByPath,
@@ -2187,35 +2151,36 @@ interface WorktreeRowProps {
  * enrichment states included, so a seeded row's delete affordance re-enables
  * the moment its live probe lands.
  */
-function worktreeRowPropsEqual(
+function boundCountForSelectionReason(
+  reason: WorktreeActionDisabledReason | null,
+): number | null {
+  return reason?.kind === "bound" ? reason.bindingCount : null;
+}
+
+function worktreeRowCorePropsEqual(
   prev: WorktreeRowProps,
   next: WorktreeRowProps,
 ): boolean {
-  const prevBoundCount =
-    prev.selectionDisabledReason?.kind === "bound"
-      ? prev.selectionDisabledReason.bindingCount
-      : null;
-  const nextBoundCount =
-    next.selectionDisabledReason?.kind === "bound"
-      ? next.selectionDisabledReason.bindingCount
-      : null;
-  if (
-    prev.entry !== next.entry ||
-    prev.enrichment !== next.enrichment ||
-    prev.deleteEnrichment !== next.deleteEnrichment ||
-    prev.deleteStatus !== next.deleteStatus ||
-    prev.selected !== next.selected ||
-    prev.canSelect !== next.canSelect ||
-    prev.selectionDisabledReason?.kind !== next.selectionDisabledReason?.kind ||
-    prevBoundCount !== nextBoundCount ||
-    prev.onToggleSelection !== next.onToggleSelection ||
-    prev.onManageScripts !== next.onManageScripts ||
-    prev.onDelete !== next.onDelete
-  ) {
-    return false;
-  }
-  // `prev.entry === next.entry` (checked above), so both sides read the same
-  // owner epic ids - the only keys this row looks up in either map.
+  return [
+    prev.entry === next.entry,
+    prev.enrichment === next.enrichment,
+    prev.deleteEnrichment === next.deleteEnrichment,
+    prev.deleteStatus === next.deleteStatus,
+    prev.selected === next.selected,
+    prev.canSelect === next.canSelect,
+    prev.selectionDisabledReason?.kind === next.selectionDisabledReason?.kind,
+    boundCountForSelectionReason(prev.selectionDisabledReason) ===
+      boundCountForSelectionReason(next.selectionDisabledReason),
+    prev.onToggleSelection === next.onToggleSelection,
+    prev.onManageScripts === next.onManageScripts,
+    prev.onDelete === next.onDelete,
+  ].every(Boolean);
+}
+
+function worktreeRowOwnerTaskSlicesEqual(
+  prev: WorktreeRowProps,
+  next: WorktreeRowProps,
+): boolean {
   return next.entry.owners.every(
     ({ epicId }) =>
       prev.taskTitlesByEpicId.get(epicId) ===
@@ -2225,6 +2190,18 @@ function worktreeRowPropsEqual(
         next.taskRollupByEpicId.get(epicId),
       ),
   );
+}
+
+function worktreeRowPropsEqual(
+  prev: WorktreeRowProps,
+  next: WorktreeRowProps,
+): boolean {
+  if (!worktreeRowCorePropsEqual(prev, next)) {
+    return false;
+  }
+  // `prev.entry === next.entry` (checked above), so both sides read the same
+  // owner epic ids - the only keys this row looks up in either map.
+  return worktreeRowOwnerTaskSlicesEqual(prev, next);
 }
 
 const WorktreeRow = memo(function WorktreeRow(
@@ -3528,6 +3505,11 @@ type ConfirmTimeAuthoritativeDrop =
     }
   | { readonly kind: "unresolved"; readonly target: WorktreeHostEntryV14 }
   | {
+      readonly kind: "blocked";
+      readonly target: WorktreeHostEntryV14;
+      readonly deleteBlockers: readonly WorktreeDeleteBlocker[];
+    }
+  | {
       readonly kind: "bound";
       readonly target: WorktreeHostEntryV14;
       readonly bindingCount: number;
@@ -3559,6 +3541,12 @@ async function confirmTimeAuthoritativeDeleteCheck(
         return { kind: "missing", worktreePath };
       case "unresolved":
         return { kind: "unresolved", target: decision.target };
+      case "blocked":
+        return {
+          kind: "blocked",
+          target: decision.target,
+          deleteBlockers: decision.deleteBlockers,
+        };
       case "bound":
         return {
           kind: "bound",
@@ -3578,6 +3566,10 @@ function confirmTimeAuthoritativeDropMessage(
   drops: readonly ConfirmTimeAuthoritativeDrop[],
 ): string {
   const unresolvedCount = drops.filter((drop) => drop.kind === "unresolved").length;
+  const blockedDrops = drops.filter(
+    (drop): drop is Extract<ConfirmTimeAuthoritativeDrop, { kind: "blocked" }> =>
+      drop.kind === "blocked",
+  );
   const boundDrops = drops
     .filter((drop): drop is Extract<ConfirmTimeAuthoritativeDrop, { kind: "bound" }> =>
       drop.kind === "bound",
@@ -3596,6 +3588,9 @@ function confirmTimeAuthoritativeDropMessage(
       : [
           `${unresolvedCount} still checking status`,
         ]),
+    ...(blockedDrops.length === 0
+      ? []
+      : [confirmTimeBlockedDropSummary(blockedDrops)]),
     ...(boundDrops.length === 0
       ? []
       : [countWorktreeClasses(boundDrops, WORKTREE_EXCLUSION_ORDER)]),
@@ -3614,6 +3609,107 @@ function confirmTimeAuthoritativeDropMessage(
   const plural = drops.length === 1 ? "" : "s";
   const verb = drops.length === 1 ? "was" : "were";
   return `${drops.length} worktree${plural} became ineligible and ${verb} skipped: ${parts.join(", ")}.`;
+}
+
+function confirmTimeBlockedDropSummary(
+  blockedDrops: readonly Extract<
+    ConfirmTimeAuthoritativeDrop,
+    { kind: "blocked" }
+  >[],
+): string {
+  const inUseCount = blockedDrops.filter((drop) =>
+    drop.deleteBlockers.includes("in-use"),
+  ).length;
+  if (inUseCount === blockedDrops.length) {
+    return `${inUseCount} still in use`;
+  }
+  return `${blockedDrops.length} blocked by ${blockedDrops
+    .flatMap((drop) => drop.deleteBlockers)
+    .toSorted()
+    .join(", ")}`;
+}
+
+async function confirmTimeAuthoritativeDeleteChecks(
+  client: HostClient<HostRpcRegistry> | null,
+  entries: readonly WorktreeHostEntryV14[],
+): Promise<
+  readonly (
+    | { readonly kind: "ready"; readonly target: WorktreeHostEntryV14 }
+    | ConfirmTimeAuthoritativeDrop
+  )[]
+> {
+  if (client === null) {
+    return entries.map(({ worktreePath }) => ({
+      kind: "query-failed" as const,
+      worktreePath,
+    }));
+  }
+  return Promise.all(
+    entries.map((entry) =>
+      confirmTimeAuthoritativeDeleteCheck(client, entry.worktreePath),
+    ),
+  );
+}
+
+function partitionConfirmTimeAuthoritativeResults(
+  results: readonly (
+    | { readonly kind: "ready"; readonly target: WorktreeHostEntryV14 }
+    | ConfirmTimeAuthoritativeDrop
+  )[],
+): {
+  readonly kept: WorktreeHostEntryV14[];
+  readonly dropped: ConfirmTimeAuthoritativeDrop[];
+} {
+  const kept: WorktreeHostEntryV14[] = [];
+  const dropped: ConfirmTimeAuthoritativeDrop[] = [];
+  for (const result of results) {
+    if (result.kind === "ready") {
+      kept.push(result.target);
+      continue;
+    }
+    dropped.push(result);
+  }
+  return { kept, dropped };
+}
+
+function notifyCachedDeleteDrops(
+  dropped: readonly WorktreeHostEntryV14[],
+  isDeleteEnrichmentPending: (worktreePath: string) => boolean,
+): void {
+  if (dropped.length === 0) {
+    return;
+  }
+  toast.message(worktreeDropMessage(dropped, isDeleteEnrichmentPending));
+}
+
+function notifyConfirmTimeDeleteDrops(
+  dropped: readonly ConfirmTimeAuthoritativeDrop[],
+): void {
+  if (dropped.length === 0) {
+    return;
+  }
+  toast.message(confirmTimeAuthoritativeDropMessage(dropped));
+}
+
+function startConfirmedDeleteTargets(
+  kept: readonly WorktreeHostEntryV14[],
+  reviewedScriptsByPath: ReadonlyMap<string, WorktreeEntryScripts>,
+  start: (
+    target: WorktreeHostEntryV14,
+    scripts: WorktreeEntryScripts | null,
+  ) => void,
+  startBatchBackgrounded: (
+    targets: readonly WorktreeHostEntryV14[],
+    reviewedScriptsByPath: ReadonlyMap<string, WorktreeEntryScripts>,
+  ) => void,
+): void {
+  if (kept.length === 1) {
+    start(kept[0], reviewedScriptsByPath.get(kept[0].worktreePath) ?? null);
+    return;
+  }
+  if (kept.length > 1) {
+    startBatchBackgrounded(kept, reviewedScriptsByPath);
+  }
 }
 
 interface WorktreeBulkDeleteSummary {

@@ -61,6 +61,7 @@ export interface HostRequestSubmission<
   readonly authority: HostRequestAuthority;
   readonly authorityDomain: HostRequestAuthorityDomain;
   readonly signal: AbortSignal | undefined;
+  readonly requestSemanticsKey?: string;
   readonly execute: (
     authority: HostRequestAuthority,
   ) => Promise<ResponseOfMethod<Registry, Method>>;
@@ -131,6 +132,7 @@ export class HostRequestCoordinator<Registry extends VersionedRpcRegistry> {
       submission.params,
       submission.hostId,
       submission.userId,
+      submission.requestSemanticsKey ?? "",
     );
     const mode = this.schedulingPolicy.modeFor(
       submission.method,
@@ -221,7 +223,7 @@ export class HostRequestCoordinator<Registry extends VersionedRpcRegistry> {
     method: Method,
     params: RequestOfMethod<Registry, Method>,
   ): void {
-    const key = this.keyFor(method, params, hostId, userId);
+    const key = this.keyFor(method, params, hostId, userId, "");
     const active = this.queues.get(key)?.active;
     if (active === null || active === undefined || active.mode === "fifo") {
       return;
@@ -254,7 +256,7 @@ export class HostRequestCoordinator<Registry extends VersionedRpcRegistry> {
     method: Method,
     params: RequestOfMethod<Registry, Method>,
   ): string {
-    return this.keyFor(method, params, hostId, userId);
+    return this.keyFor(method, params, hostId, userId, "");
   }
 
   private keyFor<Method extends keyof Registry & string>(
@@ -262,10 +264,17 @@ export class HostRequestCoordinator<Registry extends VersionedRpcRegistry> {
     params: RequestOfMethod<Registry, Method>,
     hostId: string,
     userId: string,
+    requestSemanticsKey: string,
   ): string {
     const contract = getLatestContract(this.registry[method], undefined);
     const parsed = contract.requestSchema.parse(params);
-    return JSON.stringify([hostId, userId, method, stableWireJson(parsed)]);
+    return JSON.stringify([
+      hostId,
+      userId,
+      method,
+      requestSemanticsKey,
+      stableWireJson(parsed),
+    ]);
   }
 
   private selectJob(

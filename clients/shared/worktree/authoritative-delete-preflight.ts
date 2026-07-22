@@ -2,7 +2,10 @@ import type {
   WorktreeHostEntryV14,
   WorktreeListAllForHostRequestV14,
 } from "@traycer/protocol/host";
-import { classifyWorktreeDeletion } from "./classify-worktree";
+import {
+  classifyWorktreeDeletion,
+  type WorktreeDeleteBlocker,
+} from "./classify-worktree";
 import type { HostRpcRequestOptions } from "../host-transport/host-messenger";
 
 export const WORKTREE_DELETE_PRECHECK_REQUEST_OPTIONS: HostRpcRequestOptions = {
@@ -16,6 +19,11 @@ export type AuthoritativeDeletePreflightDecision =
   | { readonly kind: "ready"; readonly target: WorktreeHostEntryV14 }
   | { readonly kind: "missing" }
   | { readonly kind: "unresolved"; readonly target: WorktreeHostEntryV14 }
+  | {
+      readonly kind: "blocked";
+      readonly target: WorktreeHostEntryV14;
+      readonly deleteBlockers: readonly WorktreeDeleteBlocker[];
+    }
   | {
       readonly kind: "bound";
       readonly target: WorktreeHostEntryV14;
@@ -45,7 +53,10 @@ export function decideAuthoritativeDeletePreflightTarget(
     return { kind: "unresolved", target };
   }
   const deletion = classifyWorktreeDeletion(target);
-  if (deletion.bindingCount > 0) {
+  if (deletion.deleteEligible) {
+    return { kind: "ready", target };
+  }
+  if (deletion.deleteBlockers.includes("bound")) {
     return {
       kind: "bound",
       target,
@@ -53,7 +64,11 @@ export function decideAuthoritativeDeletePreflightTarget(
       ownerIdentifiers: stableOwnerIdentifiers(target),
     };
   }
-  return { kind: "ready", target };
+  return {
+    kind: "blocked",
+    target,
+    deleteBlockers: deletion.deleteBlockers,
+  };
 }
 
 export function stableOwnerIdentifiers(

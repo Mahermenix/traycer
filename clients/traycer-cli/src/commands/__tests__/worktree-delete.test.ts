@@ -264,6 +264,30 @@ describe("buildWorktreeDeleteCommand binding-aware preflight", () => {
     expect(hoisted.subscribeMock).not.toHaveBeenCalled();
   });
 
+  it("fails closed when the exact-path preflight target is still in use", async () => {
+    callHostRpcWithOptionsMock.mockResolvedValue({
+      worktrees: [entry({ inUse: true, owners: [] })],
+      nextCursor: null,
+    });
+
+    await expect(
+      buildWorktreeDeleteCommand({
+        worktreePath: "/wt/x",
+        readonlySurface: false,
+      })(ctx),
+    ).rejects.toMatchObject({
+      code: CLI_ERROR_CODES.UNEXPECTED,
+      details: {
+        worktreePath: "/wt/x",
+        deleteBlockers: ["in-use"],
+      },
+      exitCode: 1,
+      message: expect.stringContaining("in use"),
+    });
+
+    expect(hoisted.subscribeMock).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the exact-path preflight query itself fails", async () => {
     callHostRpcWithOptionsMock.mockRejectedValue(new Error("host timeout"));
 

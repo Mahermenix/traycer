@@ -641,6 +641,57 @@ describe("WorktreesSettingsPanel confirm-time authoritative delete recheck", () 
     expect(toastMock.messages.join("\n")).toContain("still checking status");
   });
 
+  it("blocks confirm-time delete when the fresh exact-path query returns an in-use row", async () => {
+    const baseRow = entry({
+      worktreePath: "/wt/in-use",
+      branch: "feat-in-use",
+    });
+    state.hosts = [host({ hostId: "host-a" })];
+    state.activeHostId = "host-a";
+    state.client = clientWithMessenger(
+      new MockHostMessenger<HostRpcRegistry>({
+        registry: hostRpcRegistry,
+        requestId: () => "req-in-use",
+        hostCanonicalManifest: {
+          "worktree.listAllForHost": { major: 1, minor: 4 },
+        },
+        handlers: {
+          "worktree.listAllForHost": (params) => {
+            if (params.activityPaths === null) {
+              return { worktrees: [baseRow], nextCursor: null };
+            }
+            return {
+              worktrees: [{ ...baseRow, inUse: true, owners: [] }],
+              nextCursor: null,
+            };
+          },
+        },
+      }),
+    );
+    state.enrichment = {
+      enrichedByPath: new Map([[baseRow.worktreePath, baseRow]]),
+      erroredPaths: new Set(),
+      seededPaths: new Set(),
+      reportVisiblePaths: vi.fn(),
+      enriching: false,
+    };
+
+    renderPanel();
+
+    await waitFor(() => {
+      screen.getByText("feat-in-use");
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete worktree feat-in-use" }),
+    );
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(streamMock.paths).toEqual([]);
+    });
+    expect(toastMock.messages.join("\n")).toContain("still in use");
+  });
+
   it("blocks confirm-time delete when the fresh exact-path query fails or cannot prove v1.4", async () => {
     const baseRow = entry({
       worktreePath: "/wt/fail-closed",

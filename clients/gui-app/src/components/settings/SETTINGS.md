@@ -437,14 +437,17 @@ codeFontSize` in muted styling while `null`; any tick/type pins an
     discard-N-uncommitted-changes, unpushed/local-only commits, the
     unknown-risk copy above, forced cleanup for orphaned rows, or a plain
     confirmation for a proven-green row (`deleteDialogCopy` /
-    `singleWorktreeDeleteDialogCopy`). The destructive action still runs the
-    same host-side CLI-backed delete pipeline (`worktree.deleteByPath`), not a
-    second product-specific delete mechanism. On confirm the row is re-checked
-    against a fresh authoritative exact-path `worktree.listAllForHost@1.4`
-    lookup; if it became ineligible in the interim the delete is skipped and
-    the user is told why instead of proceeding on stale information. This
-    remains a client-side preflight only - the host-side atomic lease / TOCTOU
-    race is still unresolved here because the Host source is not in this repo.
+    `singleWorktreeDeleteDialogCopy`). Manual deletion exists in this Settings
+    UI, but automated / housekeeping removal must go through
+    `traycer worktree delete --path <absolute-path>` so it gets the same
+    destructive preflight and delete pipeline; it must never call raw Git /
+    filesystem removal or the Host delete stream directly. On confirm the
+    Settings UI re-checks the row against a fresh authoritative exact-path
+    `worktree.listAllForHost@1.4` lookup; if it became ineligible in the
+    interim the delete is skipped and the user is told why instead of
+    proceeding on stale information. This remains a client-side preflight only
+    - the host-side atomic lease / TOCTOU race is still unresolved here
+    because the Host source is not in this repo.
   - **Selection and bulk delete** use always-keyboard-reachable checkboxes
     plus a tri-state toolbar select-all toggle (`WorktreeSelectAllToggle`,
     scoped to currently-visible selectable rows) instead of a permanent

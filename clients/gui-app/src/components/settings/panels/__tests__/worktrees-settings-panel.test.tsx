@@ -336,6 +336,10 @@ function renderList(args: {
   readonly taskTitlesByEpicId: ReadonlyMap<string, string> | undefined;
   readonly client?: HostClient<HostRpcRegistry> | null;
 }) {
+  const client =
+    args.client === undefined
+      ? authoritativeDeleteClient(args.worktrees)
+      : args.client;
   const Wrapper = (props: { readonly children: ReactNode }): ReactNode => (
     <QueryClientProvider client={args.queryClient}>
       <TooltipProvider>{props.children}</TooltipProvider>
@@ -344,7 +348,7 @@ function renderList(args: {
   return render(
     <Wrapper>
       <WorktreesList
-        client={args.client ?? null}
+        client={client}
         openStreamTransport={() => stubOpenStreamTransport()}
         hostId={args.hostId}
         worktrees={args.worktrees}
@@ -371,7 +375,7 @@ function renderListWithToolbar(toolbarProps: ToolbarTestProps): void {
   render(
     <Wrapper>
       <WorktreesList
-        client={null}
+        client={authoritativeDeleteClient(WORKTREES)}
         openStreamTransport={() => stubOpenStreamTransport()}
         hostId="host-a"
         worktrees={WORKTREES}
@@ -405,6 +409,32 @@ function confirmDelete(branch: string): void {
     screen.getByRole("button", { name: `Delete worktree ${branch}` }),
   );
   fireEvent.click(screen.getByTestId("confirm-action"));
+}
+
+async function waitForStartedPaths(paths: readonly string[]): Promise<void> {
+  await waitFor(() => {
+    expect(streamMock.paths).toEqual([...paths]);
+  });
+}
+
+async function waitForSortedStartedPaths(
+  paths: readonly string[],
+): Promise<void> {
+  await waitFor(() => {
+    expect([...streamMock.paths].sort()).toEqual([...paths].sort());
+  });
+}
+
+async function waitForToastContaining(message: string): Promise<void> {
+  await waitFor(() => {
+    expect(toastMock.messages.join("\n")).toContain(message);
+  });
+}
+
+async function waitForVisibleText(text: string): Promise<void> {
+  await waitFor(() => {
+    expect(screen.getByText(text)).not.toBeNull();
+  });
 }
 
 // No selection mode: checkboxes are always present. Hand-pick rows directly.
@@ -453,6 +483,41 @@ function toolbarButtonLabels(): string[] {
     .map((button) => {
       return button.getAttribute("aria-label") ?? button.textContent.trim();
     });
+}
+
+function authoritativeDeleteClient(
+  worktrees: readonly WorktreeHostEntryV14[],
+): HostClient<HostRpcRegistry> {
+  const client = new HostClient<HostRpcRegistry>({
+    registry: hostRpcRegistry,
+    invalidator: { invalidateHostScope: () => undefined },
+    messenger: new MockHostMessenger<HostRpcRegistry>({
+      registry: hostRpcRegistry,
+      requestId: () => `req-${Math.random()}`,
+      hostCanonicalManifest: {
+        "worktree.listAllForHost": { major: 1, minor: 4 },
+      },
+      handlers: {
+        "worktree.listAllForHost": (params) => {
+          const activityPaths = params.activityPaths;
+          return {
+            worktrees:
+              activityPaths === null
+                ? [...worktrees]
+                : worktrees.filter((entry) =>
+                    activityPaths.includes(entry.worktreePath),
+                  ),
+            nextCursor: null,
+          };
+        },
+      },
+    }),
+  });
+  client.bind(mockLocalHostEntry);
+  client.setRequestContext(
+    createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
+  );
+  return client;
 }
 
 describe("useWorktreeListing", () => {
@@ -855,7 +920,7 @@ describe("WorktreesList delete flow", () => {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <WorktreesList
-            client={null}
+            client={authoritativeDeleteClient([seededRow])}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-a"
             worktrees={[seededRow]}
@@ -1075,9 +1140,10 @@ describe("WorktreesList delete flow", () => {
     expect(selectAll.classList.contains("text-muted-foreground")).toBe(false);
   });
 
-  it("excludes an in-use row and a backgrounded-deleting row from selection and select-all", () => {
+  it("excludes an in-use row and a backgrounded-deleting row from selection and select-all", async () => {
     renderDefault();
     confirmDelete("feat-dirty");
+    await waitForStartedPaths(["/wt/dirty"]);
     act(() => {
       streamMock.callbacks?.onStarted(true);
       streamMock.callbacks?.onPhase("teardown");
@@ -1103,7 +1169,7 @@ describe("WorktreesList delete flow", () => {
 
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
     fireEvent.click(screen.getByTestId("confirm-action"));
-    expect(streamMock.paths).toEqual(["/wt/dirty", "/wt/clean"]);
+    await waitForStartedPaths(["/wt/dirty", "/wt/clean"]);
   });
 
   it("excludes bound rows from selection and select-all", () => {
@@ -1152,7 +1218,7 @@ describe("WorktreesList delete flow", () => {
     ).toBe("true");
   });
 
-  it("select-all-visible only picks rows matching an active search", () => {
+  it("select-all-visible only picks rows matching an active search", async () => {
     renderDefault();
 
     fireEvent.change(
@@ -1168,7 +1234,7 @@ describe("WorktreesList delete flow", () => {
 
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
     fireEvent.click(screen.getByTestId("confirm-action"));
-    expect(streamMock.paths).toEqual(["/wt/dirty"]);
+    await waitForStartedPaths(["/wt/dirty"]);
   });
 
   it("collapses and expands a repo section", () => {
@@ -1219,7 +1285,7 @@ describe("WorktreesList delete flow", () => {
     screen.getByRole("button", { name: "Delete worktree feat-clean" });
   });
 
-  it("collapses and expands all repos and selects only visible worktrees", () => {
+  it("collapses and expands all repos and selects only visible worktrees", async () => {
     const multiRepoWorktrees = [
       ...WORKTREES,
       entry({
@@ -1270,7 +1336,7 @@ describe("WorktreesList delete flow", () => {
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
     fireEvent.click(screen.getByTestId("confirm-action"));
 
-    expect(streamMock.paths).toEqual(["/wt/api-clean"]);
+    await waitForStartedPaths(["/wt/api-clean"]);
   });
 
   it("keeps row actions in one compact overflow with destructive delete", () => {
@@ -1410,7 +1476,10 @@ describe("WorktreesList delete flow", () => {
     expect(screen.queryByTestId("worktree-script-review-dialog")).toBeNull();
 
     confirmDelete("feat-clean");
-
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     expect(streamMock.paths).toEqual(["/wt/clean"]);
     expect(streamMock.scriptsByPath.get("/wt/clean")).toEqual({
       setup: {
@@ -1428,7 +1497,7 @@ describe("WorktreesList delete flow", () => {
     });
   });
 
-  it("selects visible deletable worktrees and starts bulk deletes in the background", () => {
+  it("selects visible deletable worktrees and starts bulk deletes in the background", async () => {
     renderDefault();
 
     // No selection yet -> no action bar. The in-use row's checkbox is disabled.
@@ -1466,9 +1535,8 @@ describe("WorktreesList delete flow", () => {
     screen.getByTestId("worktree-bulk-delete-dirty-loss");
     screen.getByText("1 not selected: 1 in use");
     fireEvent.click(screen.getByTestId("confirm-action"));
-
-    expect(streamMock.paths).toEqual(["/wt/clean", "/wt/dirty"]);
-    screen.getByText("Deleting worktrees");
+    await waitForStartedPaths(["/wt/clean", "/wt/dirty"]);
+    await waitForVisibleText("Deleting worktrees");
     screen.getByText("0/2 deleted");
     expect(screen.queryByTestId("worktree-delete-progress-modal")).toBeNull();
     expect(screen.getAllByTestId("worktree-row-deleting-spinner")).toHaveLength(
@@ -1482,7 +1550,7 @@ describe("WorktreesList delete flow", () => {
     ).toBeNull();
   });
 
-  it("queues bulk deletes across repo groups while every selected row shows progress", () => {
+  it("queues bulk deletes across repo groups while every selected row shows progress", async () => {
     const queryClient = new QueryClient();
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
     const multiRepoWorktrees = [
@@ -1508,8 +1576,7 @@ describe("WorktreesList delete flow", () => {
     selectRows(["feat-clean", "feat-dirty", "feat-api-clean"]);
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
     fireEvent.click(screen.getByTestId("confirm-action"));
-
-    expect(streamMock.paths).toEqual(["/wt/clean", "/wt/dirty"]);
+    await waitForStartedPaths(["/wt/clean", "/wt/dirty"]);
     screen.getByText("0/3 deleted");
     expect(screen.getAllByTestId("worktree-row-deleting-spinner")).toHaveLength(
       3,
@@ -1527,11 +1594,7 @@ describe("WorktreesList delete flow", () => {
     });
 
     screen.getByText("1/3 deleted");
-    expect(streamMock.paths).toEqual([
-      "/wt/clean",
-      "/wt/dirty",
-      "/wt/api-clean",
-    ]);
+    await waitForStartedPaths(["/wt/clean", "/wt/dirty", "/wt/api-clean"]);
     expect(screen.getAllByTestId("worktree-row-deleting-spinner")).toHaveLength(
       3,
     );
@@ -1559,7 +1622,7 @@ describe("WorktreesList delete flow", () => {
     });
   });
 
-  it("continues queued bulk deletes when a queued stream fails to start", () => {
+  it("continues queued bulk deletes when a queued stream fails to start", async () => {
     const multiRepoWorktrees = [
       ...WORKTREES,
       entry({
@@ -1595,14 +1658,13 @@ describe("WorktreesList delete flow", () => {
     ]);
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
     fireEvent.click(screen.getByTestId("confirm-action"));
-
-    expect(streamMock.paths).toEqual(["/wt/clean", "/wt/dirty"]);
+    await waitForStartedPaths(["/wt/clean", "/wt/dirty"]);
 
     act(() => {
       callbacksFor("/wt/clean").onComplete(true);
     });
 
-    expect(streamMock.paths).toEqual([
+    await waitForStartedPaths([
       "/wt/clean",
       "/wt/dirty",
       "/wt/api-clean",
@@ -1640,11 +1702,11 @@ describe("WorktreesList delete flow", () => {
     screen.getByText(/3 uncommitted changes that will be permanently lost/i);
   });
 
-  it("opens the progress modal and drives the delete stream on confirm", () => {
+  it("opens the progress modal and drives the delete stream on confirm", async () => {
     renderDefault();
     confirmDelete("feat-clean");
     // The confirm started the stream for the chosen worktree.
-    expect(streamMock.paths).toEqual(["/wt/clean"]);
+    await waitForStartedPaths(["/wt/clean"]);
     screen.getByTestId("worktree-delete-progress-modal");
 
     act(() => {
@@ -1655,13 +1717,14 @@ describe("WorktreesList delete flow", () => {
       streamMock.callbacks?.onComplete(true);
     });
     // Success copy on a clean removal.
-    screen.getByText("Worktree deleted");
+    await waitForVisibleText("Worktree deleted");
     expect(streamMock.closeCount).toBe(1);
   });
 
-  it("shows only the scoped modal (not the row) while a delete runs in the foreground", () => {
+  it("shows only the scoped modal (not the row) while a delete runs in the foreground", async () => {
     renderDefault();
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
     act(() => {
       streamMock.callbacks?.onStarted(true);
       streamMock.callbacks?.onPhase("teardown");
@@ -1673,9 +1736,10 @@ describe("WorktreesList delete flow", () => {
     screen.getByRole("button", { name: "Delete worktree feat-clean" });
   });
 
-  it("shows an error in the modal when the host reports deleted: false", () => {
+  it("shows an error in the modal when the host reports deleted: false", async () => {
     renderDefault();
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
     act(() => {
       streamMock.callbacks?.onStarted(false);
       streamMock.callbacks?.onComplete(false);
@@ -1685,9 +1749,10 @@ describe("WorktreesList delete flow", () => {
     );
   });
 
-  it("shows the failure reason in the modal on a failed frame", () => {
+  it("shows the failure reason in the modal on a failed frame", async () => {
     renderDefault();
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
     act(() => {
       streamMock.callbacks?.onFailed(
         "Worktree /wt/clean is in use by an active agent session",
@@ -1699,7 +1764,7 @@ describe("WorktreesList delete flow", () => {
     expect(streamMock.closeCount).toBe(1);
   });
 
-  it("invalidates the host captured at delete start, even after a host swap mid-flight", () => {
+  it("invalidates the host captured at delete start, even after a host swap mid-flight", async () => {
     const queryClient = new QueryClient();
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
     const rendered = renderList({
@@ -1714,6 +1779,7 @@ describe("WorktreesList delete flow", () => {
     });
 
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
 
     // The selector swaps to host-b while the host-a delete is still in
     // flight; the list re-renders with the new host id.
@@ -1721,7 +1787,7 @@ describe("WorktreesList delete flow", () => {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <WorktreesList
-            client={null}
+            client={authoritativeDeleteClient(WORKTREES)}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-b"
             worktrees={WORKTREES}
@@ -1756,9 +1822,10 @@ describe("WorktreesList delete flow", () => {
     });
   });
 
-  it("backgrounds a running delete: hides the panel and marks the row as deleting", () => {
+  it("backgrounds a running delete: hides the panel and marks the row as deleting", async () => {
     renderDefault();
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
     act(() => {
       streamMock.callbacks?.onStarted(true);
       streamMock.callbacks?.onPhase("teardown");
@@ -1779,7 +1846,7 @@ describe("WorktreesList delete flow", () => {
     ).toBeNull();
   });
 
-  it("remembers a backgrounded delete after the list unmounts and remounts", () => {
+  it("remembers a backgrounded delete after the list unmounts and remounts", async () => {
     const rendered = renderList({
       hostId: "host-a",
       queryClient: new QueryClient(),
@@ -1791,6 +1858,7 @@ describe("WorktreesList delete flow", () => {
       taskTitlesByEpicId: undefined,
     });
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
     act(() => {
       streamMock.callbacks?.onStarted(true);
       streamMock.callbacks?.onPhase("teardown");
@@ -1809,7 +1877,7 @@ describe("WorktreesList delete flow", () => {
     ).toBeNull();
   });
 
-  it("backgrounds a foreground delete when the list unmounts", () => {
+  it("backgrounds a foreground delete when the list unmounts", async () => {
     const rendered = renderList({
       hostId: "host-a",
       queryClient: new QueryClient(),
@@ -1821,6 +1889,7 @@ describe("WorktreesList delete flow", () => {
       taskTitlesByEpicId: undefined,
     });
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
     act(() => {
       callbacksFor("/wt/clean").onStarted(true);
       callbacksFor("/wt/clean").onPhase("teardown");
@@ -1839,9 +1908,10 @@ describe("WorktreesList delete flow", () => {
     ).toBeNull();
   });
 
-  it("keeps every backgrounded delete row locked when another delete starts", () => {
+  it("keeps every backgrounded delete row locked when another delete starts", async () => {
     renderDefault();
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
     act(() => {
       callbacksFor("/wt/clean").onStarted(true);
       callbacksFor("/wt/clean").onPhase("teardown");
@@ -1849,8 +1919,7 @@ describe("WorktreesList delete flow", () => {
     fireEvent.click(screen.getByTestId("worktree-delete-close-button"));
 
     confirmDelete("feat-dirty");
-
-    expect(streamMock.paths).toEqual(["/wt/clean", "/wt/dirty"]);
+    await waitForStartedPaths(["/wt/clean", "/wt/dirty"]);
     expect(screen.getByTestId("worktree-row-deleting-spinner")).not.toBeNull();
     expect(
       screen.queryByRole("button", { name: "Delete worktree feat-clean" }),
@@ -1885,7 +1954,7 @@ describe("WorktreesList delete flow", () => {
     ).toBeNull();
   });
 
-  it("keeps a completed background delete locked until the refreshed list drops it", () => {
+  it("keeps a completed background delete locked until the refreshed list drops it", async () => {
     const queryClient = new QueryClient();
     const rendered = renderList({
       hostId: "host-a",
@@ -1898,6 +1967,7 @@ describe("WorktreesList delete flow", () => {
       taskTitlesByEpicId: undefined,
     });
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
     act(() => {
       streamMock.callbacks?.onStarted(false);
     });
@@ -1920,7 +1990,11 @@ describe("WorktreesList delete flow", () => {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <WorktreesList
-            client={null}
+            client={authoritativeDeleteClient(
+              WORKTREES.filter(
+                (worktree) => worktree.worktreePath !== "/wt/clean",
+              ),
+            )}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-a"
             worktrees={WORKTREES.filter(
@@ -1945,9 +2019,10 @@ describe("WorktreesList delete flow", () => {
     expect(screen.queryByTestId("worktree-row-deleting-spinner")).toBeNull();
   });
 
-  it("re-surfaces the panel with the error when a backgrounded delete fails", () => {
+  it("re-surfaces the panel with the error when a backgrounded delete fails", async () => {
     renderDefault();
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
     act(() => {
       streamMock.callbacks?.onStarted(false);
     });
@@ -1965,15 +2040,16 @@ describe("WorktreesList delete flow", () => {
     );
   });
 
-  it("closes a completed foreground delete instead of backgrounding it", () => {
+  it("closes a completed foreground delete instead of backgrounding it", async () => {
     renderDefault();
     confirmDelete("feat-clean");
+    await waitForStartedPaths(["/wt/clean"]);
     act(() => {
       streamMock.callbacks?.onStarted(true);
       streamMock.callbacks?.onComplete(true);
     });
     // Terminal success: the modal now offers an explicit Close.
-    screen.getByText("Worktree deleted");
+    await waitForVisibleText("Worktree deleted");
 
     fireEvent.click(screen.getByTestId("worktree-delete-close-button"));
 
@@ -1985,7 +2061,7 @@ describe("WorktreesList delete flow", () => {
     screen.getByRole("button", { name: "Delete worktree feat-clean" });
   });
 
-  it("surfaces a batch failure in the strip without a modal, and Dismiss clears it", () => {
+  it("surfaces a batch failure in the strip without a modal, and Dismiss clears it", async () => {
     renderList({
       hostId: "host-a",
       queryClient: new QueryClient(),
@@ -2003,7 +2079,7 @@ describe("WorktreesList delete flow", () => {
 
     // Two selectable worktrees go to the background (the in-use one cannot be
     // selected); one succeeds and one fails.
-    expect(streamMock.paths).toEqual(["/wt/clean", "/wt/dirty"]);
+    await waitForStartedPaths(["/wt/clean", "/wt/dirty"]);
     act(() => {
       callbacksFor("/wt/clean").onComplete(true);
       callbacksFor("/wt/dirty").onFailed("Worktree /wt/dirty is busy");
@@ -2046,7 +2122,7 @@ describe("WorktreesList confirm-time re-check", () => {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <WorktreesList
-            client={null}
+            client={authoritativeDeleteClient(worktrees)}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-a"
             worktrees={worktrees}
@@ -2062,7 +2138,7 @@ describe("WorktreesList confirm-time re-check", () => {
     );
   }
 
-  it("drops a swept row that became dirty in the freshest snapshot, updates the dialog, and names the drop", () => {
+  it("drops a swept row that became dirty in the freshest snapshot, updates the dialog, and names the drop", async () => {
     const queryClient = new QueryClient();
     const clean = [
       merged("/wt/a", "feat-a"),
@@ -2098,11 +2174,11 @@ describe("WorktreesList confirm-time re-check", () => {
 
     // The now-ineligible row is excluded from the started delete and named by the
     // lock reason instead of by its underlying git facts.
-    expect(streamMock.paths).toEqual(["/wt/a", "/wt/b"]);
-    expect(toastMock.messages.join("\n")).toContain("1 in use");
+    await waitForStartedPaths(["/wt/a", "/wt/b"]);
+    await waitForToastContaining("1 in use");
   });
 
-  it("drops a newly bound row from the freshest confirm-time snapshot", () => {
+  it("drops a newly bound row from the freshest confirm-time snapshot", async () => {
     const queryClient = new QueryClient();
     const clean = [merged("/wt/a", "feat-a"), merged("/wt/b", "feat-b")];
     const rendered = render(renderWith(queryClient, clean));
@@ -2133,11 +2209,11 @@ describe("WorktreesList confirm-time re-check", () => {
     screen.getByText("Delete worktree?");
     fireEvent.click(screen.getByTestId("confirm-action"));
 
-    expect(streamMock.paths).toEqual(["/wt/b"]);
-    expect(toastMock.messages.join("\n")).toContain("1 bound");
+    await waitForStartedPaths(["/wt/b"]);
+    await waitForToastContaining("1 bound");
   });
 
-  it("filter → Landed then select-all picks only the Landed rows (fast path)", () => {
+  it("filter → Landed then select-all picks only the Landed rows (fast path)", async () => {
     render(
       renderWith(new QueryClient(), [
         merged("/wt/merged", "feat-merged"),
@@ -2162,7 +2238,7 @@ describe("WorktreesList confirm-time re-check", () => {
     expect(screen.getByText("1 selected")).not.toBeNull();
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
     fireEvent.click(screen.getByTestId("confirm-action"));
-    expect(streamMock.paths).toEqual(["/wt/merged"]);
+    await waitForStartedPaths(["/wt/merged"]);
   });
 
   function atBase(path: string, branch: string): WorktreeHostEntryV14 {
@@ -2345,7 +2421,7 @@ describe("WorktreesList confirm-time re-check", () => {
     expect(selectAll.getAttribute("aria-checked")).toBe("false");
   });
 
-  it("prunes a dropped row from the selection bookkeeping after confirm", () => {
+  it("prunes a dropped row from the selection bookkeeping after confirm", async () => {
     const queryClient = new QueryClient();
     const rendered = render(
       renderWith(queryClient, [
@@ -2375,7 +2451,7 @@ describe("WorktreesList confirm-time re-check", () => {
     screen.getByText("Delete 2 worktrees?");
     fireEvent.click(screen.getByTestId("confirm-action"));
 
-    expect(streamMock.paths).toEqual(["/wt/a", "/wt/b"]);
+    await waitForStartedPaths(["/wt/a", "/wt/b"]);
 
     // On a later refresh /wt/c is selectable again. If the dropped path had
     // lingered in the selection it would show selected; the prune keeps it
@@ -3466,7 +3542,7 @@ describe("WorktreesList virtualization + per-viewport enrichment", () => {
       <QueryClientProvider client={new QueryClient()}>
         <TooltipProvider>
           <WorktreesList
-            client={null}
+            client={authoritativeDeleteClient(args.worktrees)}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-a"
             worktrees={args.worktrees}
@@ -3802,7 +3878,7 @@ describe("WorktreesList status-aware delete safety", () => {
       <QueryClientProvider client={args.queryClient}>
         <TooltipProvider>
           <WorktreesList
-            client={null}
+            client={authoritativeDeleteClient(args.worktrees)}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-a"
             worktrees={args.worktrees}
@@ -3876,7 +3952,7 @@ describe("WorktreesList status-aware delete safety", () => {
     expect(screen.queryByText(/^Delete \d+ worktrees\?$/)).toBeNull();
   });
 
-  it("opens an unknown-risk confirmation for a settled-error row instead of the generic one", () => {
+  it("opens an unknown-risk confirmation for a settled-error row instead of the generic one", async () => {
     const erroredRow = entry({
       worktreePath: "/wt/errored",
       branch: "feat-errored",
@@ -3901,10 +3977,10 @@ describe("WorktreesList status-aware delete safety", () => {
     );
 
     fireEvent.click(screen.getByTestId("confirm-action"));
-    expect(streamMock.paths).toEqual(["/wt/errored"]);
+    await waitForStartedPaths(["/wt/errored"]);
   });
 
-  it("includes an unknown-risk caveat in the bulk summary when selected rows include an Unknown row", () => {
+  it("includes an unknown-risk caveat in the bulk summary when selected rows include an Unknown row", async () => {
     const mergedRow = entry({
       worktreePath: "/wt/merged",
       branch: "feat-merged",
@@ -3932,7 +4008,7 @@ describe("WorktreesList status-aware delete safety", () => {
     screen.getByTestId("worktree-bulk-delete-unknown-caveat");
 
     fireEvent.click(screen.getByTestId("confirm-action"));
-    expect([...streamMock.paths].sort()).toEqual(["/wt/errored", "/wt/merged"]);
+    await waitForSortedStartedPaths(["/wt/errored", "/wt/merged"]);
   });
 
   it("clears a stale single-row delete target that regresses to Checking, names it in the drop toast, and does not reopen once it settles", () => {
@@ -3985,6 +4061,33 @@ describe("WorktreesList status-aware delete safety", () => {
     expect(screen.queryByTestId("confirm-destructive-dialog")).toBeNull();
     expect(screen.queryByText("Delete worktree?")).toBeNull();
     expect(streamMock.paths).toEqual([]);
+  });
+
+  it("fails closed at confirm time when no authoritative client exists", async () => {
+    const readyRow = entry({
+      worktreePath: "/wt/no-client",
+      branch: "feat-no-client",
+    });
+    renderList({
+      hostId: "host-a",
+      queryClient: new QueryClient(),
+      client: null,
+      worktrees: [readyRow],
+      enrichedByPath: fullyEnriched([readyRow]),
+      erroredPaths: undefined,
+      seededPaths: undefined,
+      onVisiblePathsChange: undefined,
+      taskTitlesByEpicId: undefined,
+    });
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete worktree feat-no-client" }),
+    );
+    screen.getByText("Delete worktree?");
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitForStartedPaths([]);
+    await waitForToastContaining("could not be re-verified before delete");
   });
 
   it("clears a stale bulk delete target set when every selected row regresses to Checking, and does not reopen once settled", () => {
@@ -4043,7 +4146,7 @@ describe("WorktreesList status-aware delete safety", () => {
     expect(streamMock.paths).toEqual([]);
   });
 
-  it("skips a row that regresses to Checking mid-dialog, names it in the drop toast, and still deletes its still-eligible sibling", () => {
+  it("skips a row that regresses to Checking mid-dialog, names it in the drop toast, and still deletes its still-eligible sibling", async () => {
     const readyA = entry({ worktreePath: "/wt/a", branch: "feat-a" });
     const readyB = entry({ worktreePath: "/wt/b", branch: "feat-b" });
     const queryClient = new QueryClient();
@@ -4079,11 +4182,11 @@ describe("WorktreesList status-aware delete safety", () => {
     screen.getByText("Delete worktree?");
     fireEvent.click(screen.getByTestId("confirm-action"));
 
-    expect(streamMock.paths).toEqual(["/wt/a"]);
-    expect(toastMock.messages.join("\n")).toContain("still checking status");
+    await waitForStartedPaths(["/wt/a"]);
+    await waitForToastContaining("still checking status");
   });
 
-  it("names permanent dirty loss and unknown risk for an Unknown row with uncommitted changes", () => {
+  it("names permanent dirty loss and unknown risk for an Unknown row with uncommitted changes", async () => {
     const dirtyErroredRow = entry({
       worktreePath: "/wt/errored-dirty",
       branch: "feat-errored-dirty",
@@ -4119,7 +4222,7 @@ describe("WorktreesList status-aware delete safety", () => {
     screen.getByText(/could not be verified/i);
 
     fireEvent.click(screen.getByTestId("confirm-action"));
-    expect(streamMock.paths).toEqual(["/wt/errored-dirty"]);
+    await waitForStartedPaths(["/wt/errored-dirty"]);
   });
 });
 

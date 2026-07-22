@@ -20,6 +20,24 @@ import {
 } from "./host-request-coordinator";
 import type { RpcSchedulingPolicy } from "./rpc-scheduling-policy";
 
+const OPTIONLESS_REQUEST_SEMANTICS_KEY = "";
+
+function requestOptionsSemanticsKey(options: HostRpcRequestOptions): string {
+  const requirement = options.requiredHostCanonicalVersion;
+  return requirement === undefined
+    ? OPTIONLESS_REQUEST_SEMANTICS_KEY
+    : JSON.stringify([
+        "host-rpc-options",
+        requirement.comparison,
+        requirement.version.major,
+        requirement.version.minor,
+      ]);
+}
+
+function responseTimeoutSemanticsKey(responseTimeoutMs: number): string {
+  return JSON.stringify(["response-timeout", responseTimeoutMs]);
+}
+
 /**
  * Narrow port the client calls to invalidate host-scoped query state.
  *
@@ -462,8 +480,13 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
     params: RequestOfMethod<Registry, Method>,
     signal: AbortSignal | undefined,
   ): Promise<ResponseOfMethod<Registry, Method>> {
-    return this.scheduleRequest(entry, method, params, signal, (authority) =>
-      this.messenger.request(method, params, authority),
+    return this.scheduleRequest(
+      entry,
+      method,
+      params,
+      signal,
+      OPTIONLESS_REQUEST_SEMANTICS_KEY,
+      (authority) => this.messenger.request(method, params, authority),
     );
   }
 
@@ -473,8 +496,14 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
     params: RequestOfMethod<Registry, Method>,
     options: HostRpcRequestOptions,
   ): Promise<ResponseOfMethod<Registry, Method>> {
-    return this.scheduleRequest(entry, method, params, undefined, (authority) =>
-      this.messenger.requestWithOptions(method, params, authority, options),
+    return this.scheduleRequest(
+      entry,
+      method,
+      params,
+      undefined,
+      requestOptionsSemanticsKey(options),
+      (authority) =>
+        this.messenger.requestWithOptions(method, params, authority, options),
     );
   }
 
@@ -492,13 +521,19 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
         ),
       );
     }
-    return this.scheduleRequest(entry, method, params, undefined, (authority) =>
-      this.messenger.requestWithResponseTimeout(
-        method,
-        params,
-        responseTimeoutMs,
-        authority,
-      ),
+    return this.scheduleRequest(
+      entry,
+      method,
+      params,
+      undefined,
+      responseTimeoutSemanticsKey(responseTimeoutMs),
+      (authority) =>
+        this.messenger.requestWithResponseTimeout(
+          method,
+          params,
+          responseTimeoutMs,
+          authority,
+        ),
     );
   }
 
@@ -507,6 +542,7 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
     method: Method,
     params: RequestOfMethod<Registry, Method>,
     signal: AbortSignal | undefined,
+    requestSemanticsKey: string,
     execute: (
       authority: HostRequestAuthority,
     ) => Promise<ResponseOfMethod<Registry, Method>>,
@@ -528,6 +564,7 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
         authority: captured.authority,
         authorityDomain: captured.authorityDomain,
         signal,
+        requestSemanticsKey,
         execute,
       });
     } catch (error) {

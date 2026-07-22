@@ -5,7 +5,6 @@ import {
 import {
   buildWorktreeDeletePreflightRequest,
   decideAuthoritativeDeletePreflightTarget,
-  stableOwnerIdentifiers,
   WORKTREE_DELETE_PRECHECK_REQUEST_OPTIONS,
 } from "../../../shared/worktree/authoritative-delete-preflight";
 import {
@@ -25,7 +24,6 @@ import type {
   StreamCloseReason,
   StreamConnectionStatus,
 } from "../../../shared/host-transport/i-stream-session";
-import { classifyWorktreeDeletion } from "../../../shared/worktree/classify-worktree";
 import { resolveHostAuth } from "../internal/host-auth";
 import {
   callHostRpcWithOptions,
@@ -151,6 +149,16 @@ async function preflightWorktreeDelete(worktreePath: string): Promise<void> {
         details: { worktreePath },
         exitCode: 1,
       });
+    case "blocked":
+      throw cliError({
+        code: CLI_ERROR_CODES.UNEXPECTED,
+        message: `traycer: could not verify whether ${worktreePath} is safe to delete before opening the delete stream because it is still ${describeDeleteBlockers(decision.deleteBlockers)}.`,
+        details: {
+          worktreePath,
+          deleteBlockers: decision.deleteBlockers,
+        },
+        exitCode: 1,
+      });
     case "bound":
       throw cliError({
         code: CLI_ERROR_CODES.WORKTREE_BOUND,
@@ -171,6 +179,16 @@ function normalizeAbsoluteWorktreePath(worktreePath: string): string {
     return normalized;
   }
   return normalized.replace(/[/\\]+$/, "");
+}
+
+function describeDeleteBlockers(
+  deleteBlockers: readonly ("bound" | "in-use")[],
+): string {
+  return deleteBlockers
+    .map((deleteBlocker) =>
+      deleteBlocker === "in-use" ? "in use" : "bound",
+    )
+    .join(", ");
 }
 
 /**
