@@ -152,3 +152,32 @@ Router/Query, Zustand) — see its `AGENTS.md`.
 
 - Always run `bun run compile` for the workspaces containing your changes, never
   `tsc` directly.
+
+## Cursor Cloud specific instructions
+
+Toolchain (Bun 1.3.12, Node 24) and workspace deps are already provisioned by the
+startup update script (`bun install`); `bun` and `node` are on `PATH` via
+`~/.bashrc`. Standard commands live in the "Common Commands" section above
+(`bun run build|compile|lint|test|format`) — all four gates pass from a clean
+checkout. Non-obvious caveats:
+
+- **Node 24 must outrank `/exec-daemon/node` (v22).** `~/.bashrc` prepends the
+  nvm Node 24 bin so `node --version` is v24; the repo's `engines` require it.
+- **`bun run lint` runs ESLint with `--fix`.** It can rewrite source in place, so
+  re-check `git status` after linting.
+- **Running the app:** `make dev-desktop` (from repo root) is the E2E entrypoint.
+  It downloads + minisign-verifies the signed host from GitHub Releases, stages a
+  dev CLI wrapper, starts the host, and runs the Vite-HMR Electron shell against
+  the **production** cloud (`authn.traycer.ai` / `platform.traycer.ai`). The
+  renderer port is hash-derived per worktree (not 5173). Ctrl-C deregisters the
+  dev host but preserves `~/.traycer` user data.
+- **Headless Electron noise is benign.** `dbus`/`Gtk`/GPU `ERROR` lines and the
+  `systemctl --user daemon-reload ... No medium found` service-install warning do
+  not stop the run — the host still starts and the launch probe reports
+  `reachable: true`. There is no systemd user session in the VM.
+- **Auto-open-browser fails in the VM** ("Failed to execute default Web Browser —
+  Input/output error"). Sign-in uses an OAuth **device-code** flow: the app shows
+  a code + approval URL (`platform.traycer.ai/device`); open that URL manually in
+  Chrome (`DISPLAY=:1`) to approve. Full sign-in (and any epic/chat/terminal
+  action) needs a **real Traycer account** (GitHub/Google/email) — there are no
+  test credentials in this environment.
