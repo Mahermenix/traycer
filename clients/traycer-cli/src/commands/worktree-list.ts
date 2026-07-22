@@ -4,8 +4,10 @@ import {
 } from "@traycer/protocol/host";
 import type { WorktreeHostEntryV14 } from "@traycer/protocol/host";
 import {
+  classifyWorktreeDeletion,
   WORKTREE_TIER_LABEL,
   classifyWorktreeTier,
+  type WorktreeDeleteBlocker,
   type WorktreeTier,
 } from "@traycer-clients/shared/worktree/classify-worktree";
 import {
@@ -33,6 +35,10 @@ const DEFAULT_WORKTREE_LIST_PAGE_LIMIT = 32;
  */
 export type WorktreeListRow = WorktreeHostEntryV14 & {
   readonly tier: WorktreeTier | null;
+  readonly bindingState: "known";
+  readonly bindingCount: number;
+  readonly deleteEligible: boolean;
+  readonly deleteBlockers: readonly WorktreeDeleteBlocker[];
 };
 
 export interface WorktreeListCommandOpts {
@@ -146,10 +152,17 @@ async function requestWorktreeListPage(
     result,
   );
   return {
-    worktrees: parsed.worktrees.map((entry) => ({
-      ...entry,
-      tier: includeActivity ? classifyWorktreeTier(entry) : null,
-    })),
+    worktrees: parsed.worktrees.map((entry) => {
+      const deletion = classifyWorktreeDeletion(entry);
+      return {
+        ...entry,
+        tier: includeActivity ? classifyWorktreeTier(entry) : null,
+        bindingState: deletion.bindingState,
+        bindingCount: deletion.bindingCount,
+        deleteEligible: deletion.deleteEligible,
+        deleteBlockers: deletion.deleteBlockers,
+      };
+    }),
     nextCursor: parsed.nextCursor,
   };
 }
@@ -183,6 +196,7 @@ const COLUMNS = [
   "UNCOMMITTED",
   "LAST-ACTIVE",
   "OWNERS",
+  "BLOCKERS",
   "PATH",
 ] as const;
 
@@ -206,7 +220,8 @@ export function formatWorktreeListTable(
     entry.inUse ? "yes" : "no",
     String(entry.uncommittedCount),
     formatLastActive(entry.lastActivityAt),
-    String(entry.owners.length),
+    String(entry.bindingCount),
+    formatDeleteBlockers(entry.deleteBlockers, entry.bindingCount),
     entry.worktreePath,
   ]);
   const widths = COLUMNS.map((header, column) =>
@@ -229,6 +244,18 @@ export function formatWorktreeListTable(
     );
   }
   return formatWorktreeListTailHints(lines, nextCursor);
+}
+
+function formatDeleteBlockers(
+  deleteBlockers: readonly WorktreeDeleteBlocker[],
+  bindingCount: number,
+): string {
+  if (deleteBlockers.length === 0) return "-";
+  return deleteBlockers
+    .map((blocker) =>
+      blocker === "bound" ? `bound (${bindingCount})` : "in-use",
+    )
+    .join(", ");
 }
 
 function formatWorktreeListTailHints(

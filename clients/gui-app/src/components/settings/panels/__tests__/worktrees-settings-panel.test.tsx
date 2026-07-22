@@ -683,6 +683,55 @@ describe("WorktreesList delete flow", () => {
     expect(busyButton.hasAttribute("disabled")).toBe(true);
   });
 
+  it("keeps a bound green row visibly blocked, while preserving its lifecycle pill", () => {
+    renderList({
+      hostId: "host-a",
+      queryClient: new QueryClient(),
+      worktrees: [
+        entry({
+          worktreePath: "/wt/bound",
+          branch: "feat-bound",
+          atBaseCommit: true,
+          owners: [
+            {
+              epicId: "epic-1",
+              ownerKind: "chat",
+              ownerId: "chat-1",
+              updatedAt: 1,
+            },
+            {
+              epicId: "epic-2",
+              ownerKind: "terminal-agent",
+              ownerId: "agent-1",
+              updatedAt: 2,
+            },
+          ],
+        }),
+      ],
+      enrichedByPath: undefined,
+      erroredPaths: undefined,
+      seededPaths: undefined,
+      onVisiblePathsChange: undefined,
+      taskTitlesByEpicId: new Map([
+        ["epic-1", "Ship the audit"],
+        ["epic-2", "Close the task"],
+      ]),
+    });
+
+    const tier = screen.getByTestId("worktree-tier-pill");
+    expect(tier.getAttribute("data-tier")).toBe("at-base-commit");
+    screen.getByText("Deletion blocked while bound to 2 Traycer chats/tasks.");
+    expect(
+      screen
+        .getByRole("checkbox", { name: "Select worktree feat-bound" })
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
+    const deleteButton = screen.getByRole("button", {
+      name: "Delete worktree (bound to 2 Traycer chats/tasks)",
+    });
+    expect(deleteButton.hasAttribute("disabled")).toBe(true);
+  });
+
   it("renders unresolved rows as checking and excludes them from destructive selection", () => {
     const unresolved = entry({
       worktreePath: "/wt/unresolved",
@@ -1050,6 +1099,52 @@ describe("WorktreesList delete flow", () => {
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
     fireEvent.click(screen.getByTestId("confirm-action"));
     expect(streamMock.paths).toEqual(["/wt/dirty", "/wt/clean"]);
+  });
+
+  it("excludes bound rows from selection and select-all", () => {
+    renderList({
+      hostId: "host-a",
+      queryClient: new QueryClient(),
+      worktrees: [
+        entry({
+          worktreePath: "/wt/bound",
+          branch: "feat-bound",
+          atBaseCommit: true,
+          owners: [
+            {
+              epicId: "epic-1",
+              ownerKind: "chat",
+              ownerId: "chat-1",
+              updatedAt: 1,
+            },
+          ],
+        }),
+        entry({
+          worktreePath: "/wt/free",
+          branch: "feat-free",
+          branchStatus: { ahead: 0, behind: 0, mergedIntoDefault: true },
+        }),
+      ],
+      enrichedByPath: undefined,
+      erroredPaths: undefined,
+      seededPaths: undefined,
+      onVisiblePathsChange: undefined,
+      taskTitlesByEpicId: undefined,
+    });
+
+    fireEvent.click(screen.getByTestId("worktrees-select-all"));
+
+    expect(screen.getByText("1 selected")).not.toBeNull();
+    expect(
+      screen
+        .getByRole("checkbox", { name: "Select worktree feat-bound" })
+        .getAttribute("aria-checked"),
+    ).toBe("false");
+    expect(
+      screen
+        .getByRole("checkbox", { name: "Select worktree feat-bound" })
+        .getAttribute("aria-disabled"),
+    ).toBe("true");
   });
 
   it("select-all-visible only picks rows matching an active search", () => {
@@ -1999,6 +2094,41 @@ describe("WorktreesList confirm-time re-check", () => {
     expect(toastMock.messages.join("\n")).toContain("1 in use");
   });
 
+  it("drops a newly bound row from the freshest confirm-time snapshot", () => {
+    const queryClient = new QueryClient();
+    const clean = [merged("/wt/a", "feat-a"), merged("/wt/b", "feat-b")];
+    const rendered = render(renderWith(queryClient, clean));
+
+    fireEvent.click(screen.getByTestId("worktrees-select-all"));
+    fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
+    screen.getByText("Delete 2 worktrees?");
+
+    rendered.rerender(
+      renderWith(queryClient, [
+        entry({
+          worktreePath: "/wt/a",
+          branch: "feat-a",
+          branchStatus: { ahead: 0, behind: 0, mergedIntoDefault: true },
+          owners: [
+            {
+              epicId: "epic-1",
+              ownerKind: "chat",
+              ownerId: "chat-1",
+              updatedAt: 1,
+            },
+          ],
+        }),
+        merged("/wt/b", "feat-b"),
+      ]),
+    );
+
+    screen.getByText("Delete worktree?");
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    expect(streamMock.paths).toEqual(["/wt/b"]);
+    expect(toastMock.messages.join("\n")).toContain("1 bound");
+  });
+
   it("filter → Landed then select-all picks only the Landed rows (fast path)", () => {
     render(
       renderWith(new QueryClient(), [
@@ -2869,9 +2999,9 @@ describe("WorktreesList v1.2 signals", () => {
 
     // Match on the resolved Task title -> only the alpha row survives.
     fireEvent.change(search, { target: { value: "payments" } });
-    screen.getByRole("button", { name: "Delete worktree feat-alpha" });
+    screen.getByRole("button", { name: "Worktree actions for feat-alpha" });
     expect(
-      screen.queryByRole("button", { name: "Delete worktree feat-beta" }),
+      screen.queryByRole("button", { name: "Worktree actions for feat-beta" }),
     ).toBeNull();
 
     // Match on the branch name -> only the beta row survives.

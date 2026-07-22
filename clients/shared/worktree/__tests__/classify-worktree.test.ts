@@ -6,6 +6,7 @@ import type {
 } from "@traycer/protocol/host/index";
 import {
   WORKTREE_TIER_ORDER,
+  classifyWorktreeDeletion,
   classifyWorktree,
   classifyWorktreeTier,
   describeReviewReasons,
@@ -18,11 +19,15 @@ function status(over: Partial<WorktreeBranchStatus>): WorktreeBranchStatus {
   return { ahead: 0, behind: 0, mergedIntoDefault: false, ...over };
 }
 
-function owner(epicId: string) {
+function owner(
+  epicId: string,
+  ownerKind: "chat" | "terminal-agent" = "chat",
+  ownerId: string = `${ownerKind}-${epicId}`,
+) {
   return {
     epicId,
-    ownerKind: "chat" as const,
-    ownerId: `chat-${epicId}`,
+    ownerKind,
+    ownerId,
     updatedAt: 1,
   };
 }
@@ -694,6 +699,14 @@ describe("provenRemovable - single green / bulk-eligible predicate", () => {
         }),
       ),
     ).toBe(false);
+    expect(
+      provenRemovable(
+        entry({
+          atBaseCommit: true,
+          owners: [owner("epic-1")],
+        }),
+      ),
+    ).toBe(false);
     // Detached is never green in this pass, even with positive proof.
     expect(
       provenRemovable(
@@ -731,6 +744,61 @@ describe("provenRemovable - single green / bulk-eligible predicate", () => {
         greens.has(classifyWorktreeTier(sample)),
       );
     }
+  });
+});
+
+describe("classifyWorktreeDeletion", () => {
+  it("keeps a bound at-base row green-tiered but blocks both direct and bulk deletion", () => {
+    const boundAtBase = entry({
+      atBaseCommit: true,
+      owners: [owner("epic-1")],
+    });
+
+    expect(classifyWorktreeTier(boundAtBase)).toBe("at-base-commit");
+    expect(classifyWorktreeDeletion(boundAtBase)).toEqual({
+      bindingState: "known",
+      bindingCount: 1,
+      deleteEligible: false,
+      deleteBlockers: ["bound"],
+      bulkEligible: false,
+    });
+  });
+
+  it("counts all bindings across owner kinds and epics, while chat and task shapes both block", () => {
+    expect(
+      classifyWorktreeDeletion(
+        entry({
+          owners: [
+            owner("epic-chat", "chat", "chat-1"),
+            owner("epic-task", "terminal-agent", "agent-1"),
+            owner("epic-other", "chat", "chat-2"),
+          ],
+        }),
+      ),
+    ).toEqual({
+      bindingState: "known",
+      bindingCount: 3,
+      deleteEligible: false,
+      deleteBlockers: ["bound"],
+      bulkEligible: false,
+    });
+  });
+
+  it("keeps an unbound green row eligible for both direct and bulk delete", () => {
+    expect(
+      classifyWorktreeDeletion(
+        entry({
+          branchStatus: status({ ahead: 0 }),
+          owners: [],
+        }),
+      ),
+    ).toEqual({
+      bindingState: "known",
+      bindingCount: 0,
+      deleteEligible: true,
+      deleteBlockers: [],
+      bulkEligible: true,
+    });
   });
 });
 

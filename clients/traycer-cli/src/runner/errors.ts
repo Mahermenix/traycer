@@ -10,6 +10,7 @@ export const CLI_ERROR_CODES = {
   UNEXPECTED: "E_UNEXPECTED",
   INVALID_ARGUMENT: "E_INVALID_ARGUMENT",
   NOT_FOUND: "E_NOT_FOUND",
+  WORKTREE_BOUND: "E_WORKTREE_BOUND",
   // Authenticated but not authorized - the caller is signed in but lacks
   // access to the requested resource (e.g. the host's 403 "does not have
   // required permission for task"). Distinct from NOT_FOUND ("doesn't

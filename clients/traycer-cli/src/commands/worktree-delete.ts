@@ -1,3 +1,9 @@
+import { resolve as resolvePath } from "node:path";
+import {
+  worktreeListAllForHostRequestSchemaV14,
+  worktreeListAllForHostResponseSchemaV14,
+  type WorktreeHostEntryV14,
+} from "@traycer/protocol/host";
 import {
   hostStreamRpcRegistry,
   type HostStreamRpcRegistry,
@@ -15,9 +21,15 @@ import type {
   StreamCloseReason,
   StreamConnectionStatus,
 } from "../../../shared/host-transport/i-stream-session";
+import { classifyWorktreeDeletion } from "../../../shared/worktree/classify-worktree";
 import { resolveHostAuth } from "../internal/host-auth";
-import { resolveEndpoint } from "../internal/host-rpc";
-import { cliError, CLI_ERROR_CODES, type CliError } from "../runner/errors";
+import {
+  callHostRpc,
+  parseHostResponse,
+  parseUserInput,
+  resolveEndpoint,
+} from "../internal/host-rpc";
+import { CliError, cliError, CLI_ERROR_CODES } from "../runner/errors";
 import type { CommandContext, CommandFn } from "../runner/runner";
 
 // Stream timing knobs, mirroring `traycer monitor`. `worktree.deleteByPath`
@@ -73,17 +85,76 @@ export function buildWorktreeDeleteCommand(
         exitCode: 1,
       });
     }
-    const deleted = await runWorktreeDeleteStream(worktreePath, ctx);
+    const canonicalWorktreePath = resolvePath(worktreePath);
+    await preflightWorktreeDelete(canonicalWorktreePath);
+    const deleted = await runWorktreeDeleteStream(canonicalWorktreePath, ctx);
     return {
-      data: { worktreePath, deleted },
+      data: { worktreePath: canonicalWorktreePath, deleted },
       // Output already streamed; add a one-line confirmation for the human
       // path (dropped in JSON mode, where `data` carries `deleted`).
       human: deleted
-        ? `Removed worktree ${worktreePath}.`
-        : `Host reported the worktree was not removed: ${worktreePath}.`,
+        ? `Removed worktree ${canonicalWorktreePath}.`
+        : `Host reported the worktree was not removed: ${canonicalWorktreePath}.`,
       exitCode: deleted ? 0 : 1,
     };
   };
+}
+
+async function preflightWorktreeDelete(worktreePath: string): Promise<void> {
+  let response: { readonly worktrees: readonly WorktreeHostEntryV14[] };
+  try {
+    const request = parseUserInput(worktreeListAllForHostRequestSchemaV14, {
+      includeActivity: false,
+      activityPaths: [worktreePath],
+      cursor: null,
+      limit: null,
+      forceRefresh: true,
+    });
+    const result = await callHostRpc("worktree.listAllForHost", request);
+    response = parseHostResponse(worktreeListAllForHostResponseSchemaV14, result);
+  } catch (err) {
+    if (err instanceof CliError) {
+      throw err;
+    }
+    throw cliError({
+      code: CLI_ERROR_CODES.UNEXPECTED,
+      message: `traycer: could not verify whether ${worktreePath} is safe to delete before opening the delete stream.`,
+      details: { worktreePath },
+      exitCode: 1,
+    });
+  }
+  const target = response.worktrees.find(
+    (entry) => entry.worktreePath === worktreePath,
+  );
+  if (target === undefined) {
+    throw cliError({
+      code: CLI_ERROR_CODES.NOT_FOUND,
+      message: `traycer: worktree delete could not find ${worktreePath} in the host's freshest worktree listing.`,
+      details: { worktreePath },
+      exitCode: 1,
+    });
+  }
+  const deletion = classifyWorktreeDeletion(target);
+  if (deletion.bindingCount === 0) return;
+  const ownerIdentifiers = stableOwnerIdentifiers(target);
+  throw cliError({
+    code: CLI_ERROR_CODES.WORKTREE_BOUND,
+    message: `traycer: WORKTREE_BOUND - ${worktreePath} is still bound to ${deletion.bindingCount} Traycer chat/task binding${deletion.bindingCount === 1 ? "" : "s"} (${ownerIdentifiers.join(", ")}). Remove those bindings before deleting the worktree.`,
+    details: {
+      worktreePath,
+      bindingCount: deletion.bindingCount,
+      ownerIdentifiers,
+    },
+    exitCode: 1,
+  });
+}
+
+function stableOwnerIdentifiers(
+  entry: WorktreeHostEntryV14,
+): readonly string[] {
+  return entry.owners
+    .map((owner) => `${owner.ownerKind}:${owner.ownerId}`)
+    .toSorted((left, right) => left.localeCompare(right));
 }
 
 /**

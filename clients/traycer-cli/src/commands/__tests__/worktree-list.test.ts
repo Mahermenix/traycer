@@ -75,7 +75,20 @@ function row(
   overrides: Partial<WorktreeHostEntryV14>,
   tier: WorktreeTier | null,
 ): WorktreeListRow {
-  return { ...entry(overrides), tier };
+  return {
+    ...entry(overrides),
+    tier,
+    bindingState: "known",
+    bindingCount: overrides.owners?.length ?? 0,
+    deleteEligible:
+      !overrides.inUse && (overrides.owners?.length ?? 0) === 0,
+    deleteBlockers:
+      overrides.inUse
+        ? ["in-use"]
+        : (overrides.owners?.length ?? 0) > 0
+          ? ["bound"]
+          : [],
+  };
 }
 
 // A fake CommandContext is unnecessary for the list command (it ignores ctx),
@@ -170,6 +183,39 @@ describe("formatWorktreeListTable", () => {
     expect(lines[3]).toContain("-");
   });
 
+  it("renders bound rows as visibly blocked instead of relying on the owners count alone", () => {
+    const table = formatWorktreeListTable(
+      [
+        row(
+          {
+            branch: "feat-bound",
+            owners: [
+              {
+                epicId: "epic-1",
+                ownerKind: "chat",
+                ownerId: "chat-1",
+                updatedAt: 1,
+              },
+              {
+                epicId: "epic-2",
+                ownerKind: "terminal-agent",
+                ownerId: "agent-1",
+                updatedAt: 2,
+              },
+            ],
+            atBaseCommit: true,
+          },
+          "at-base-commit",
+        ),
+      ],
+      true,
+      null,
+    );
+    const line = table.split("\n")[1];
+    expect(line).toContain("2");
+    expect(line).toContain("bound (2)");
+  });
+
   it("shows a detached placeholder and a dash for a null last-active", () => {
     const table = formatWorktreeListTable(
       [row({ branch: null, lastActivityAt: null }, "review")],
@@ -236,10 +282,80 @@ describe("buildWorktreeListCommand", () => {
       forceRefresh: true,
     });
     expect(result.data).toEqual({
-      worktrees: [{ ...entry({}), tier: "review" }],
+      worktrees: [
+        {
+          ...entry({}),
+          tier: "review",
+          bindingState: "known",
+          bindingCount: 0,
+          deleteEligible: true,
+          deleteBlockers: [],
+        },
+      ],
       nextCursor: null,
     });
     expect(result.exitCode).toBe(0);
+  });
+
+  it("extends JSON rows with binding-aware delete fields", async () => {
+    rpcMock.mockResolvedValue({
+      worktrees: [
+        entry({
+          worktreePath: "/wt/bound",
+          branch: "feat-bound",
+          atBaseCommit: true,
+          owners: [
+            {
+              epicId: "epic-1",
+              ownerKind: "chat",
+              ownerId: "chat-1",
+              updatedAt: 1,
+            },
+            {
+              epicId: "epic-2",
+              ownerKind: "terminal-agent",
+              ownerId: "agent-1",
+              updatedAt: 2,
+            },
+          ],
+        }),
+      ],
+      nextCursor: null,
+    });
+
+    const result = await buildWorktreeListCommand(defaultOpts)(ctx);
+
+    expect(result.data).toEqual({
+      worktrees: [
+        {
+          ...entry({
+            worktreePath: "/wt/bound",
+            branch: "feat-bound",
+            atBaseCommit: true,
+            owners: [
+              {
+                epicId: "epic-1",
+                ownerKind: "chat",
+                ownerId: "chat-1",
+                updatedAt: 1,
+              },
+              {
+                epicId: "epic-2",
+                ownerKind: "terminal-agent",
+                ownerId: "agent-1",
+                updatedAt: 2,
+              },
+            ],
+          }),
+          tier: "at-base-commit",
+          bindingState: "known",
+          bindingCount: 2,
+          deleteEligible: false,
+          deleteBlockers: ["bound"],
+        },
+      ],
+      nextCursor: null,
+    });
   });
 
   it("classifies with the shared ladder: a validated merged PR rides out as merged", async () => {
@@ -261,6 +377,10 @@ describe("buildWorktreeListCommand", () => {
             prNumber: 7,
           }),
           tier: "merged",
+          bindingState: "known",
+          bindingCount: 0,
+          deleteEligible: true,
+          deleteBlockers: [],
         },
       ],
       nextCursor: null,
@@ -291,6 +411,10 @@ describe("buildWorktreeListCommand", () => {
         {
           ...entry({ prState: "merged", mergedHeadShaMatches: true }),
           tier: null,
+          bindingState: "known",
+          bindingCount: 0,
+          deleteEligible: true,
+          deleteBlockers: [],
         },
       ],
       nextCursor: null,
@@ -334,8 +458,22 @@ describe("buildWorktreeListCommand", () => {
     });
     expect(result.data).toEqual({
       worktrees: [
-        { ...first, tier: "review" },
-        { ...second, tier: "review" },
+        {
+          ...first,
+          tier: "review",
+          bindingState: "known",
+          bindingCount: 0,
+          deleteEligible: true,
+          deleteBlockers: [],
+        },
+        {
+          ...second,
+          tier: "review",
+          bindingState: "known",
+          bindingCount: 0,
+          deleteEligible: true,
+          deleteBlockers: [],
+        },
       ],
       nextCursor: null,
     });
@@ -363,7 +501,16 @@ describe("buildWorktreeListCommand", () => {
       forceRefresh: true,
     });
     expect(result.data).toEqual({
-      worktrees: [{ ...entry({}), tier: "review" }],
+      worktrees: [
+        {
+          ...entry({}),
+          tier: "review",
+          bindingState: "known",
+          bindingCount: 0,
+          deleteEligible: true,
+          deleteBlockers: [],
+        },
+      ],
       nextCursor: "/Users/dev/.traycer/worktrees/acme__web/feature-y",
     });
     expect(result.human).toContain("More worktrees available");
@@ -411,8 +558,22 @@ describe("buildWorktreeListCommand", () => {
     });
     expect(result.data).toEqual({
       worktrees: [
-        { ...first, tier: "review" },
-        { ...second, tier: "review" },
+        {
+          ...first,
+          tier: "review",
+          bindingState: "known",
+          bindingCount: 0,
+          deleteEligible: true,
+          deleteBlockers: [],
+        },
+        {
+          ...second,
+          tier: "review",
+          bindingState: "known",
+          bindingCount: 0,
+          deleteEligible: true,
+          deleteBlockers: [],
+        },
       ],
       nextCursor: null,
     });
@@ -440,7 +601,16 @@ describe("buildWorktreeListCommand", () => {
         `resume with --cursor ${first.worktreePath}`,
       ),
       details: {
-        worktrees: [{ ...first, tier: "review" }],
+        worktrees: [
+          {
+            ...first,
+            tier: "review",
+            bindingState: "known",
+            bindingCount: 0,
+            deleteEligible: true,
+            deleteBlockers: [],
+          },
+        ],
         resumeCursor: first.worktreePath,
       },
       exitCode: 1,

@@ -45,6 +45,18 @@ export interface WorktreeClassification {
   readonly nonPrFacts: readonly string[];
 }
 
+export type WorktreeDeletionBindingState = "known";
+
+export type WorktreeDeleteBlocker = "bound" | "in-use";
+
+export interface WorktreeDeletionDecision {
+  readonly bindingState: WorktreeDeletionBindingState;
+  readonly bindingCount: number;
+  readonly deleteEligible: boolean;
+  readonly deleteBlockers: readonly WorktreeDeleteBlocker[];
+  readonly bulkEligible: boolean;
+}
+
 export const WORKTREE_TIER_LABEL: Record<WorktreeTier, string> = {
   "in-use": "In use",
   review: "Review",
@@ -96,6 +108,28 @@ export const WORKTREE_TIER_ORDER: readonly WorktreeTier[] = [
 export function worktreeTierRank(tier: WorktreeTier): number {
   const index = WORKTREE_TIER_ORDER.indexOf(tier);
   return index === -1 ? WORKTREE_TIER_ORDER.length : index;
+}
+
+export function classifyWorktreeDeletion(
+  entry: WorktreeHostEntryV12,
+): WorktreeDeletionDecision {
+  const bindingCount = entry.owners.length;
+  const deleteBlockers: WorktreeDeleteBlocker[] = [
+    ...(entry.inUse ? ["in-use" as const] : []),
+    ...(bindingCount > 0 ? ["bound" as const] : []),
+  ];
+  const deleteEligible = deleteBlockers.length === 0;
+  const tier = classifyWorktreeTier(entry);
+  const bulkEligible =
+    deleteEligible &&
+    (tier === "merged" || tier === "at-base-commit" || tier === "unreferenced");
+  return {
+    bindingState: "known",
+    bindingCount,
+    deleteEligible,
+    deleteBlockers,
+    bulkEligible,
+  };
 }
 
 /**
@@ -295,10 +329,7 @@ function describeUnprovenSubmodule(
  * user sees and the bulk cohort can never disagree.
  */
 export function provenRemovable(entry: WorktreeHostEntryV12): boolean {
-  const tier = classifyWorktreeTier(entry);
-  return (
-    tier === "merged" || tier === "at-base-commit" || tier === "unreferenced"
-  );
+  return classifyWorktreeDeletion(entry).bulkEligible;
 }
 
 export function classifyWorktree(

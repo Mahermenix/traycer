@@ -54,6 +54,7 @@ import {
   WORKTREE_TIER_LABEL,
   WORKTREE_TIER_ORDER,
   WORKTREE_TIER_TOOLTIP,
+  classifyWorktreeDeletion,
   classifyWorktree,
   classifyWorktreeTier,
   describeReviewReasons,
@@ -144,6 +145,10 @@ import {
 } from "@/stores/settings/worktrees-settings-view-store";
 
 type WorktreeRowDeleteStatus = "deleting";
+type WorktreeActionDisabledReason =
+  | { readonly kind: "in-use" }
+  | { readonly kind: "checking" }
+  | { readonly kind: "bound"; readonly bindingCount: number };
 // Per-row activity-enrichment state, driving ONLY the tier pill's presentation:
 // `ready` = enriched (real tier), `pending` = in flight ("Checking…" spinner),
 // `unknown` = the per-path query settled to an error (non-animated fallback, no
@@ -1634,6 +1639,10 @@ export function WorktreesList(props: {
                             canSelect={selectablePathSet.has(
                               item.entry.worktreePath,
                             )}
+                            selectionDisabledReason={worktreeSelectionDisabledReason(
+                              item.entry,
+                              backgroundedDeleteStatusByPath,
+                            )}
                             onToggleSelection={toggleSelection}
                             onManageScripts={openScriptReviewFor}
                             onDelete={requestDeleteTarget}
@@ -2053,10 +2062,16 @@ const WorktreeRepoHeader = memo(function WorktreeRepoHeader(props: {
 function worktreeDeleteDisabledReason(
   entry: WorktreeHostEntryV14,
   enrichment: WorktreeEnrichmentState,
-): "in-use" | "checking" | null {
-  if (entry.inUse) return "in-use";
-  if (entry.resolvedAt === null) return "checking";
-  if (enrichment === "pending") return "checking";
+) : WorktreeActionDisabledReason | null {
+  const deletion = classifyWorktreeDeletion(entry);
+  if (deletion.deleteBlockers.includes("in-use")) {
+    return { kind: "in-use" };
+  }
+  if (deletion.bindingCount > 0) {
+    return { kind: "bound", bindingCount: deletion.bindingCount };
+  }
+  if (entry.resolvedAt === null) return { kind: "checking" };
+  if (enrichment === "pending") return { kind: "checking" };
   return null;
 }
 
@@ -2075,6 +2090,7 @@ interface WorktreeRowProps {
   readonly deleteStatus: WorktreeRowDeleteStatus | null;
   readonly selected: boolean;
   readonly canSelect: boolean;
+  readonly selectionDisabledReason: WorktreeActionDisabledReason | null;
   readonly onToggleSelection: (worktreePath: string) => void;
   readonly onManageScripts: (target: WorktreeHostEntryV14) => void;
   readonly onDelete: (target: WorktreeHostEntryV14) => void;
@@ -2094,6 +2110,14 @@ function worktreeRowPropsEqual(
   prev: WorktreeRowProps,
   next: WorktreeRowProps,
 ): boolean {
+  const prevBoundCount =
+    prev.selectionDisabledReason?.kind === "bound"
+      ? prev.selectionDisabledReason.bindingCount
+      : null;
+  const nextBoundCount =
+    next.selectionDisabledReason?.kind === "bound"
+      ? next.selectionDisabledReason.bindingCount
+      : null;
   if (
     prev.entry !== next.entry ||
     prev.enrichment !== next.enrichment ||
@@ -2101,6 +2125,8 @@ function worktreeRowPropsEqual(
     prev.deleteStatus !== next.deleteStatus ||
     prev.selected !== next.selected ||
     prev.canSelect !== next.canSelect ||
+    prev.selectionDisabledReason?.kind !== next.selectionDisabledReason?.kind ||
+    prevBoundCount !== nextBoundCount ||
     prev.onToggleSelection !== next.onToggleSelection ||
     prev.onManageScripts !== next.onManageScripts ||
     prev.onDelete !== next.onDelete
@@ -2132,6 +2158,7 @@ const WorktreeRow = memo(function WorktreeRow(
     deleteStatus,
     selected,
     canSelect,
+    selectionDisabledReason,
     onToggleSelection,
     onManageScripts,
     onDelete,
@@ -2143,6 +2170,8 @@ const WorktreeRow = memo(function WorktreeRow(
   // row look clean enough to delete when it is actually still unknown.
   const classification =
     entry.resolvedAt === null ? null : classifyWorktree(entry);
+  const deletion =
+    entry.resolvedAt === null ? null : classifyWorktreeDeletion(entry);
   const navigate = useNavigate();
   const openTask = useCallback(
     (epicId: string): void => {
@@ -2192,6 +2221,7 @@ const WorktreeRow = memo(function WorktreeRow(
           selected={selected}
           canSelect={canSelect}
           deleting={deleting}
+          disabledReason={selectionDisabledReason}
           onToggleSelection={toggleSelection}
         />
       </div>
@@ -2212,10 +2242,17 @@ const WorktreeRow = memo(function WorktreeRow(
             Waiting for host verification…
           </span>
         ) : (
-          <WorktreeSecondaryFacts
-            facts={classification.nonPrFacts}
-            lastActivityAt={entry.lastActivityAt}
-          />
+          <>
+            <WorktreeSecondaryFacts
+              facts={classification.nonPrFacts}
+              lastActivityAt={entry.lastActivityAt}
+            />
+            {deletion !== null && deletion.bindingCount > 0 ? (
+              <p className="text-ui-xs text-muted-foreground">
+                {worktreeBindingBlockedText(deletion.bindingCount)}
+              </p>
+            ) : null}
+          </>
         )}
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <WorktreeTaskAssociation
@@ -2822,6 +2859,7 @@ function WorktreeSelectionControl(props: {
   readonly selected: boolean;
   readonly canSelect: boolean;
   readonly deleting: boolean;
+  readonly disabledReason: WorktreeActionDisabledReason | null;
   readonly onToggleSelection: () => void;
 }): ReactNode {
   const checkbox = (
@@ -2854,7 +2892,7 @@ function WorktreeSelectionControl(props: {
   if (props.canSelect || props.deleting) return checkbox;
   return (
     <TooltipWrapper
-      label="In use by an active agent"
+      label={worktreeSelectionDisabledLabel(props.disabledReason)}
       side="top"
       sideOffset={undefined}
       align="start"
@@ -2882,7 +2920,7 @@ const WORKTREE_DELETE_DISABLED_COPY: Record<
  * destructive and still carries branch-specific accessible copy.
  */
 function WorktreeRowActions(props: {
-  readonly deleteDisabledReason: "in-use" | "checking" | null;
+  readonly deleteDisabledReason: WorktreeActionDisabledReason | null;
   readonly onCopyPath: () => void;
   readonly onManageScripts: () => void;
   readonly onDelete: () => void;
@@ -2894,7 +2932,7 @@ function WorktreeRowActions(props: {
   const deleteLabel =
     props.deleteDisabledReason === null
       ? props.label
-      : WORKTREE_DELETE_DISABLED_COPY[props.deleteDisabledReason].ariaLabel;
+      : worktreeDeleteDisabledLabel(props.deleteDisabledReason);
   return (
     <div className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center gap-1">
       <DropdownMenu>
@@ -2948,6 +2986,36 @@ function WorktreeRowActions(props: {
       </DropdownMenu>
     </div>
   );
+}
+
+function worktreeDeleteDisabledLabel(
+  reason: WorktreeActionDisabledReason,
+): string {
+  if (reason.kind === "bound") {
+    return `Delete worktree (${worktreeBindingPhrase(reason.bindingCount)})`;
+  }
+  return WORKTREE_DELETE_DISABLED_COPY[reason.kind].ariaLabel;
+}
+
+function worktreeSelectionDisabledLabel(
+  reason: WorktreeActionDisabledReason | null,
+): string {
+  if (reason === null) return "";
+  if (reason.kind === "bound") {
+    return worktreeBindingBlockedText(reason.bindingCount);
+  }
+  if (reason.kind === "checking") return "Status is still being checked";
+  return "In use by an active agent";
+}
+
+function worktreeBindingPhrase(bindingCount: number): string {
+  return `bound to ${bindingCount} ${
+    bindingCount === 1 ? "Traycer chat/task" : "Traycer chats/tasks"
+  }`;
+}
+
+function worktreeBindingBlockedText(bindingCount: number): string {
+  return `Deletion blocked while ${worktreeBindingPhrase(bindingCount)}.`;
 }
 
 function WorktreeScriptReviewDialog(props: {
@@ -3386,6 +3454,7 @@ interface WorktreeBulkDeleteSummary {
 // a would-be-lost row is never mislabeled as a proven-clean one.
 type WorktreeDeleteClass =
   | "in-use"
+  | "bound"
   | "merged"
   | "at-base"
   | "clean"
@@ -3396,7 +3465,9 @@ type WorktreeDeleteClass =
   | "dirty";
 
 function worktreeDeleteClass(entry: WorktreeHostEntryV14): WorktreeDeleteClass {
-  if (entry.inUse) return "in-use";
+  const deletion = classifyWorktreeDeletion(entry);
+  if (deletion.deleteBlockers.includes("in-use")) return "in-use";
+  if (deletion.deleteBlockers.includes("bound")) return "bound";
   // Derive the tier-level bucket from the ONE shared classifier so the bulk copy
   // and the row pill can never disagree (no parallel precedence ladder). The
   // green tiers and orphaned map 1:1; in-use is a lock reason, so it is named as
@@ -3434,6 +3505,7 @@ function worktreeReviewLossClass(
 
 const WORKTREE_DELETE_CLASS_LABEL: Record<WorktreeDeleteClass, string> = {
   "in-use": "in use",
+  bound: "bound",
   merged: "merged",
   "at-base": "at base commit",
   clean: "clean (no local-only commits)",
@@ -3447,6 +3519,7 @@ const WORKTREE_DELETE_CLASS_LABEL: Record<WorktreeDeleteClass, string> = {
 // Safe-to-risky for the "Deleting" summary; risky-to-safe for the "not selected"
 // exclusion line (name the reasons a row was left out first).
 const WORKTREE_DELETE_SUMMARY_ORDER: readonly WorktreeDeleteClass[] = [
+  "bound",
   "merged",
   "at-base",
   "clean",
@@ -3459,6 +3532,7 @@ const WORKTREE_DELETE_SUMMARY_ORDER: readonly WorktreeDeleteClass[] = [
 ];
 const WORKTREE_EXCLUSION_ORDER: readonly WorktreeDeleteClass[] = [
   "in-use",
+  "bound",
   "dirty",
   "unmerged",
   "detached",
@@ -3561,11 +3635,21 @@ function worktreeCanBeSelected(
   entry: WorktreeHostEntryV14,
   deleteStatusByPath: ReadonlyMap<string, WorktreeRowDeleteStatus>,
 ): boolean {
-  return (
-    entry.resolvedAt !== null &&
-    !entry.inUse &&
-    !deleteStatusByPath.has(entry.worktreePath)
-  );
+  return worktreeSelectionDisabledReason(entry, deleteStatusByPath) === null;
+}
+
+function worktreeSelectionDisabledReason(
+  entry: WorktreeHostEntryV14,
+  deleteStatusByPath: ReadonlyMap<string, WorktreeRowDeleteStatus>,
+): WorktreeActionDisabledReason | null {
+  if (deleteStatusByPath.has(entry.worktreePath)) return { kind: "checking" };
+  const deletion = classifyWorktreeDeletion(entry);
+  if (deletion.deleteBlockers.includes("in-use")) return { kind: "in-use" };
+  if (deletion.bindingCount > 0) {
+    return { kind: "bound", bindingCount: deletion.bindingCount };
+  }
+  if (entry.resolvedAt === null) return { kind: "checking" };
+  return null;
 }
 
 function worktreeRowDeleteStatus(
