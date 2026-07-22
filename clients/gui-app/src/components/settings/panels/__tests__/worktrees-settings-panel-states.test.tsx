@@ -19,9 +19,11 @@ import { createRequestContextFixture } from "@traycer-clients/shared/test-fixtur
 import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { WorktreeHostEntryV14 } from "@traycer/protocol/host/index";
+import type { WorktreeDeleteStreamCallbacks } from "@traycer-clients/shared/host-transport/worktree-delete-stream-client";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
+import { __resetWorktreeDeleteRunForTests } from "@/components/settings/panels/use-worktree-delete-run";
 
 // `WorktreesSettingsPanel` sits above `WorktreesList` (covered exhaustively by
 // `worktrees-settings-panel.test.tsx`) and owns the host-scoped states from
@@ -50,6 +52,76 @@ const state = vi.hoisted(() => ({
     enriching: false,
   },
 }));
+
+const streamMock = vi.hoisted(() => ({
+  callbacks: null as WorktreeDeleteStreamCallbacks | null,
+  paths: [] as string[],
+}));
+
+const toastMock = vi.hoisted(() => ({ messages: [] as string[] }));
+vi.mock("sonner", () => ({
+  toast: {
+    message: (message: string) => {
+      toastMock.messages.push(message);
+    },
+    success: (message: string) => {
+      toastMock.messages.push(message);
+    },
+    error: (message: string) => {
+      toastMock.messages.push(message);
+    },
+  },
+}));
+
+vi.mock("@/components/ui/dropdown-menu", () => {
+  const passthrough = (props: { readonly children: ReactNode }): ReactNode =>
+    props.children;
+  const item = (props: {
+    readonly children: ReactNode;
+    readonly onSelect?: () => void;
+    readonly disabled?: boolean;
+    readonly "aria-label"?: string;
+    readonly className?: string;
+    readonly title?: string;
+    readonly "data-testid"?: string;
+  }): ReactNode => (
+    <button
+      type="button"
+      aria-label={props["aria-label"]}
+      className={props.className}
+      data-testid={props["data-testid"]}
+      disabled={props.disabled ?? false}
+      onClick={props.onSelect}
+      title={props.title}
+    >
+      {props.children}
+    </button>
+  );
+  const checkboxItem = (props: {
+    readonly children: ReactNode;
+    readonly onSelect?: () => void;
+    readonly checked?: boolean;
+  }): ReactNode => (
+    <button
+      type="button"
+      role="menuitemcheckbox"
+      aria-checked={props.checked ? "true" : "false"}
+      onClick={props.onSelect}
+    >
+      {props.children}
+    </button>
+  );
+  return {
+    DropdownMenu: passthrough,
+    DropdownMenuTrigger: passthrough,
+    DropdownMenuContent: (props: { readonly children: ReactNode }) => (
+      <div>{props.children}</div>
+    ),
+    DropdownMenuItem: item,
+    DropdownMenuCheckboxItem: checkboxItem,
+    DropdownMenuSeparator: () => <div role="separator" />,
+  };
+});
 
 vi.mock("@/hooks/host/use-reactive-active-host-id", () => ({
   useReactiveActiveHostId: () => state.activeHostId,
@@ -82,6 +154,24 @@ vi.mock("@/hooks/epics/use-cloud-epic-tasks-query", () => ({
   useCloudEpicTasksQuery: () => ({ currentUserId: null, tasks: [] }),
 }));
 
+vi.mock(
+  "@traycer-clients/shared/host-transport/worktree-delete-stream-client",
+  () => ({
+    WorktreeDeleteStreamClient: class {
+      constructor(options: {
+        readonly worktreePath: string;
+        readonly callbacks: WorktreeDeleteStreamCallbacks;
+      }) {
+        streamMock.paths.push(options.worktreePath);
+        streamMock.callbacks = options.callbacks;
+      }
+      close(): void {
+        return;
+      }
+    },
+  }),
+);
+
 import { WorktreesSettingsPanel } from "@/components/settings/panels/worktrees-settings-panel";
 import { installWorktreeVirtualizerOffsetHeight } from "./worktrees-virtualizer-test-utils";
 
@@ -100,6 +190,34 @@ function host(
   };
 }
 
+function entry(
+  over: Partial<WorktreeHostEntryV14> & {
+    readonly worktreePath: string;
+    readonly branch: string;
+  },
+): WorktreeHostEntryV14 {
+  return {
+    repoLabel: "acme/app",
+    repoIdentifier: { owner: "acme", repo: "app" },
+    inUse: false,
+    uncommittedCount: 0,
+    gitRemovable: true,
+    scripts: null,
+    owners: [],
+    lastActivityAt: null,
+    branchStatus: { ahead: 0, behind: 0, mergedIntoDefault: true },
+    createdAt: null,
+    prState: null,
+    prNumber: null,
+    prUrl: null,
+    mergedHeadShaMatches: false,
+    submodules: [],
+    atBaseCommit: false,
+    resolvedAt: 1,
+    ...over,
+  };
+}
+
 /**
  * Builds a real, bound `HostClient` around a single-method mock handler for
  * `worktree.listAllForHost`, so `useWorktreeListing`'s real `useInfiniteQuery`
@@ -109,14 +227,22 @@ function host(
 function clientWithHandler(
   handler: MockHandlerMap<HostRpcRegistry>["worktree.listAllForHost"],
 ): HostClient<HostRpcRegistry> {
-  const client = new HostClient<HostRpcRegistry>({
-    registry: hostRpcRegistry,
-    invalidator: { invalidateHostScope: () => undefined },
-    messenger: new MockHostMessenger<HostRpcRegistry>({
+  return clientWithMessenger(
+    new MockHostMessenger<HostRpcRegistry>({
       registry: hostRpcRegistry,
       requestId: () => `req-${Math.random()}`,
       handlers: { "worktree.listAllForHost": handler },
     }),
+  );
+}
+
+function clientWithMessenger(
+  messenger: MockHostMessenger<HostRpcRegistry>,
+): HostClient<HostRpcRegistry> {
+  const client = new HostClient<HostRpcRegistry>({
+    registry: hostRpcRegistry,
+    invalidator: { invalidateHostScope: () => undefined },
+    messenger,
   });
   client.bind(mockLocalHostEntry);
   client.setRequestContext(
@@ -147,6 +273,9 @@ beforeEach(() => {
   state.hosts = [];
   state.reachability = { status: "reachable", hostLabel: "Host A" };
   state.client = null;
+  streamMock.callbacks = null;
+  streamMock.paths = [];
+  toastMock.messages = [];
   state.enrichment = {
     enrichedByPath: new Map(),
     erroredPaths: new Set(),
@@ -158,6 +287,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  __resetWorktreeDeleteRunForTests();
   if (restoreOffsetHeight !== null) {
     restoreOffsetHeight();
   }
@@ -382,5 +512,228 @@ describe("WorktreesSettingsPanel host-scoped states", () => {
     screen.getByTestId("worktrees-filter-trigger");
     screen.getByTestId("worktrees-sort-trigger");
     screen.getByRole("button", { name: "Refresh worktrees" });
+  });
+});
+
+describe("WorktreesSettingsPanel confirm-time authoritative delete recheck", () => {
+  it("blocks a cached ready row that becomes bound before confirm, without rerendering props", async () => {
+    const baseRow = entry({
+      worktreePath: "/wt/ready",
+      branch: "feat-ready",
+    });
+    let authoritativeRow = baseRow;
+    const requests: Array<{
+      readonly activityPaths: readonly string[] | null;
+      readonly forceRefresh: boolean;
+    }> = [];
+    const messenger = new MockHostMessenger<HostRpcRegistry>({
+      registry: hostRpcRegistry,
+      requestId: () => "req-bound-after-open",
+      hostCanonicalManifest: {
+        "worktree.listAllForHost": { major: 1, minor: 4 },
+      },
+      handlers: {
+        "worktree.listAllForHost": (params) => {
+          requests.push({
+            activityPaths: params.activityPaths,
+            forceRefresh: params.forceRefresh,
+          });
+          if (params.activityPaths === null) {
+            return { worktrees: [baseRow], nextCursor: null };
+          }
+          return { worktrees: [authoritativeRow], nextCursor: null };
+        },
+      },
+    });
+    state.hosts = [host({ hostId: "host-a" })];
+    state.activeHostId = "host-a";
+    state.client = clientWithMessenger(messenger);
+    state.enrichment = {
+      enrichedByPath: new Map([[baseRow.worktreePath, baseRow]]),
+      erroredPaths: new Set(),
+      seededPaths: new Set(),
+      reportVisiblePaths: vi.fn(),
+      enriching: false,
+    };
+
+    renderPanel();
+
+    await waitFor(() => {
+      screen.getByText("feat-ready");
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete worktree feat-ready" }),
+    );
+    screen.getByText("Delete worktree?");
+
+    authoritativeRow = {
+      ...baseRow,
+      owners: [
+        {
+          epicId: "epic-1",
+          ownerKind: "chat",
+          ownerId: "chat-1",
+          updatedAt: 1,
+        },
+      ],
+    };
+
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(streamMock.paths).toEqual([]);
+    });
+    expect(requests).toEqual([
+      { activityPaths: null, forceRefresh: false },
+      { activityPaths: ["/wt/ready"], forceRefresh: true },
+    ]);
+    expect(toastMock.messages.join("\n")).toContain("bound");
+  });
+
+  it("blocks confirm-time delete when the fresh exact-path query returns an unresolved row", async () => {
+    const baseRow = entry({
+      worktreePath: "/wt/unresolved",
+      branch: "feat-unresolved",
+    });
+    state.hosts = [host({ hostId: "host-a" })];
+    state.activeHostId = "host-a";
+    state.client = clientWithMessenger(
+      new MockHostMessenger<HostRpcRegistry>({
+        registry: hostRpcRegistry,
+        requestId: () => "req-unresolved",
+        hostCanonicalManifest: {
+          "worktree.listAllForHost": { major: 1, minor: 4 },
+        },
+        handlers: {
+          "worktree.listAllForHost": (params) => {
+            if (params.activityPaths === null) {
+              return { worktrees: [baseRow], nextCursor: null };
+            }
+            return {
+              worktrees: [{ ...baseRow, resolvedAt: null }],
+              nextCursor: null,
+            };
+          },
+        },
+      }),
+    );
+    state.enrichment = {
+      enrichedByPath: new Map([[baseRow.worktreePath, baseRow]]),
+      erroredPaths: new Set(),
+      seededPaths: new Set(),
+      reportVisiblePaths: vi.fn(),
+      enriching: false,
+    };
+
+    renderPanel();
+
+    await waitFor(() => {
+      screen.getByText("feat-unresolved");
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete worktree feat-unresolved" }),
+    );
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(streamMock.paths).toEqual([]);
+    });
+    expect(toastMock.messages.join("\n")).toContain("still checking status");
+  });
+
+  it("blocks confirm-time delete when the fresh exact-path query fails or cannot prove v1.4", async () => {
+    const baseRow = entry({
+      worktreePath: "/wt/fail-closed",
+      branch: "feat-fail-closed",
+    });
+    state.hosts = [host({ hostId: "host-a" })];
+    state.activeHostId = "host-a";
+    state.client = clientWithMessenger(
+      new MockHostMessenger<HostRpcRegistry>({
+        registry: hostRpcRegistry,
+        requestId: () => "req-non-authoritative",
+        hostCanonicalManifest: {
+          "worktree.listAllForHost": { major: 1, minor: 0 },
+        },
+        handlers: {
+          "worktree.listAllForHost": (params) => {
+            if (params.activityPaths === null) {
+              return { worktrees: [baseRow], nextCursor: null };
+            }
+            return { worktrees: [baseRow], nextCursor: null };
+          },
+        },
+      }),
+    );
+    state.enrichment = {
+      enrichedByPath: new Map([[baseRow.worktreePath, baseRow]]),
+      erroredPaths: new Set(),
+      seededPaths: new Set(),
+      reportVisiblePaths: vi.fn(),
+      enriching: false,
+    };
+
+    renderPanel();
+
+    await waitFor(() => {
+      screen.getByText("feat-fail-closed");
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete worktree feat-fail-closed" }),
+    );
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(streamMock.paths).toEqual([]);
+    });
+    expect(toastMock.messages.join("\n")).toContain("re-verified");
+  });
+
+  it("blocks confirm-time delete when the fresh exact-path query no longer returns the target", async () => {
+    const baseRow = entry({
+      worktreePath: "/wt/missing",
+      branch: "feat-missing",
+    });
+    state.hosts = [host({ hostId: "host-a" })];
+    state.activeHostId = "host-a";
+    state.client = clientWithMessenger(
+      new MockHostMessenger<HostRpcRegistry>({
+        registry: hostRpcRegistry,
+        requestId: () => "req-missing",
+        hostCanonicalManifest: {
+          "worktree.listAllForHost": { major: 1, minor: 4 },
+        },
+        handlers: {
+          "worktree.listAllForHost": (params) => {
+            if (params.activityPaths === null) {
+              return { worktrees: [baseRow], nextCursor: null };
+            }
+            return { worktrees: [], nextCursor: null };
+          },
+        },
+      }),
+    );
+    state.enrichment = {
+      enrichedByPath: new Map([[baseRow.worktreePath, baseRow]]),
+      erroredPaths: new Set(),
+      seededPaths: new Set(),
+      reportVisiblePaths: vi.fn(),
+      enriching: false,
+    };
+
+    renderPanel();
+
+    await waitFor(() => {
+      screen.getByText("feat-missing");
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete worktree feat-missing" }),
+    );
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(streamMock.paths).toEqual([]);
+    });
+    expect(toastMock.messages.join("\n")).toContain("freshest host listing");
   });
 });

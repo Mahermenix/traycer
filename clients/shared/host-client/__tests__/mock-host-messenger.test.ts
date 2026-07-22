@@ -10,6 +10,7 @@ import {
 } from "../mock/mock-host-messenger";
 import {
   HostRpcError,
+  type HostRpcRequestOptions,
   type HostRequestAuthority,
 } from "../../host-transport/host-messenger";
 
@@ -42,6 +43,13 @@ function authority(): HostRequestAuthority {
     abortSignal: new AbortController().signal,
   };
 }
+
+const REQUIRE_ECHO_V11: HostRpcRequestOptions = {
+  requiredHostCanonicalVersion: {
+    comparison: "minimum",
+    version: { major: 1, minor: 1 },
+  },
+};
 
 describe("MockHostMessenger", () => {
   it("returns canonical responses for registered handlers", async () => {
@@ -258,5 +266,37 @@ describe("MockHostMessenger", () => {
       "response",
       "close",
     ]);
+  });
+
+  it("fails closed when the mock host cannot prove the required canonical version", async () => {
+    let called = false;
+    const messenger = new MockHostMessenger<typeof registry>({
+      registry,
+      handlers: {
+        "host.echo": () => {
+          called = true;
+          return { echoed: "HI" };
+        },
+      },
+      requestId: () => "req-version-proof",
+      hostCanonicalManifest: {
+        "host.echo": { major: 1, minor: 0 },
+      },
+    });
+
+    await expect(
+      messenger.requestWithOptions(
+        "host.echo",
+        { message: "hi" },
+        authority(),
+        REQUIRE_ECHO_V11,
+      ),
+    ).rejects.toSatisfy(
+      (err: unknown) =>
+        err instanceof HostRpcError &&
+        err.code === "DOWNGRADE_UNSUPPORTED" &&
+        err.message.includes("1.1"),
+    );
+    expect(called).toBe(false);
   });
 });

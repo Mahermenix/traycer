@@ -1,8 +1,15 @@
-import type { VersionedRpcRegistry } from "@traycer/protocol/framework/index";
+import type {
+  MethodVersionRegistry,
+  SchemaVersion,
+  VersionedRpcRegistry,
+} from "@traycer/protocol/framework/index";
 import {
+  hostCanonicalVersionSatisfiesRequirement,
   HostRpcError,
   HostRequestAbortedError,
+  NO_HOST_RPC_REQUEST_OPTIONS,
   type HostRequestAuthority,
+  type HostRpcRequestOptions,
   type IHostMessenger,
   type RequestOfMethod,
   type ResponseOfMethod,
@@ -86,6 +93,9 @@ export interface MockHostMessengerOptions<
 > {
   readonly registry: Registry;
   readonly handlers: MockHandlerMap<Registry>;
+  readonly hostCanonicalManifest?: Partial<
+    Record<keyof Registry & string, SchemaVersion>
+  >;
   readonly requestId: () => string;
 }
 
@@ -104,6 +114,10 @@ export class MockHostMessenger<
   Registry extends VersionedRpcRegistry,
 > implements IHostMessenger<Registry> {
   private handlers: MockHandlerMap<Registry>;
+  private readonly registry: Registry;
+  private readonly hostCanonicalManifest: Partial<
+    Record<keyof Registry & string, SchemaVersion>
+  >;
   private readonly requestIdProvider: () => string;
   private readonly listeners: Set<MockPhaseListener> = new Set();
   readonly calls: Array<{
@@ -115,7 +129,9 @@ export class MockHostMessenger<
   readonly phases: MockPhaseEvent[] = [];
 
   constructor(options: MockHostMessengerOptions<Registry>) {
+    this.registry = options.registry;
     this.handlers = options.handlers;
+    this.hostCanonicalManifest = options.hostCanonicalManifest ?? {};
     this.requestIdProvider = options.requestId;
   }
 
@@ -141,10 +157,26 @@ export class MockHostMessenger<
     responseTimeoutMs: number,
     authority: HostRequestAuthority,
   ): Promise<ResponseOfMethod<Registry, Method>> {
+    return this.requestWithResponseTimeoutAndOptions(
+      method,
+      params,
+      responseTimeoutMs,
+      authority,
+      NO_HOST_RPC_REQUEST_OPTIONS,
+    );
+  }
+
+  requestWithResponseTimeoutAndOptions<Method extends keyof Registry & string>(
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    responseTimeoutMs: number,
+    authority: HostRequestAuthority,
+    options: HostRpcRequestOptions,
+  ): Promise<ResponseOfMethod<Registry, Method>> {
     // The mock runs handlers inline with no transport timers, so the extended
     // response budget has nothing to bound - the call delegates unchanged.
     void responseTimeoutMs;
-    return this.request(method, params, authority);
+    return this.requestWithOptions(method, params, authority, options);
   }
 
   async request<Method extends keyof Registry & string>(
@@ -152,12 +184,32 @@ export class MockHostMessenger<
     params: RequestOfMethod<Registry, Method>,
     authority: HostRequestAuthority,
   ): Promise<ResponseOfMethod<Registry, Method>> {
+    return this.requestWithOptions(
+      method,
+      params,
+      authority,
+      NO_HOST_RPC_REQUEST_OPTIONS,
+    );
+  }
+
+  async requestWithOptions<Method extends keyof Registry & string>(
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    authority: HostRequestAuthority,
+    options: HostRpcRequestOptions,
+  ): Promise<ResponseOfMethod<Registry, Method>> {
     const requestId = this.requestIdProvider();
     this.calls.push({ method, params, requestId, authority });
 
     this.emit({ kind: "open", method, requestId });
     this.emit({ kind: "auth", method, requestId });
     this.emit({ kind: "manifest", method, requestId });
+    assertRequiredHostCanonicalVersion(
+      method,
+      requestId,
+      this.hostCanonicalManifest[method] ?? latestCanonicalVersion(this.registry[method]),
+      options.requiredHostCanonicalVersion,
+    );
     this.emit({ kind: "request", method, requestId, params });
 
     const handler = this.handlers[method];
@@ -259,6 +311,46 @@ export class MockHostMessenger<
       listener(event);
     }
   }
+}
+
+function latestCanonicalVersion(
+  registry: MethodVersionRegistry,
+): SchemaVersion | undefined {
+  const majors = Object.keys(registry)
+    .map((candidate) => Number(candidate))
+    .filter((candidate) => Number.isInteger(candidate));
+  if (majors.length === 0) {
+    return undefined;
+  }
+  const major = Math.max(...majors);
+  return { major, minor: registry[major].latestMinor };
+}
+
+function assertRequiredHostCanonicalVersion(
+  method: string,
+  requestId: string,
+  hostCanonical: SchemaVersion | undefined,
+  requirement: HostRpcRequestOptions["requiredHostCanonicalVersion"],
+): void {
+  if (requirement === undefined) {
+    return;
+  }
+  if (hostCanonicalVersionSatisfiesRequirement(hostCanonical, requirement)) {
+    return;
+  }
+  const negotiated =
+    hostCanonical === undefined
+      ? "none"
+      : `${hostCanonical.major}.${hostCanonical.minor}`;
+  const comparison =
+    requirement.comparison === "exact" ? "exactly" : "at least";
+  throw new HostRpcError({
+    code: "DOWNGRADE_UNSUPPORTED",
+    message: `Host negotiated ${method}@${negotiated}, but this caller requires ${comparison} ${method}@${requirement.version.major}.${requirement.version.minor}.`,
+    requestId,
+    method,
+    fatalDetails: null,
+  });
 }
 
 function awaitAbortableHandler<Response>(

@@ -80,11 +80,39 @@ function fakeInner(outcomes: ReadonlyArray<HostRpcError>): {
       void method;
       return Promise.resolve({ echoed: params.message.toUpperCase() });
     });
+  const requestUnary: IHostMessenger<typeof testRegistry>["request"] = (
+    method,
+    params,
+    authority,
+  ) => request(method, params, authority);
+  const requestUnaryWithOptions: IHostMessenger<
+    typeof testRegistry
+  >["requestWithOptions"] = (method, params, authority, options) => {
+    void options;
+    return request(method, params, authority);
+  };
+  const requestLongPoll: IHostMessenger<
+    typeof testRegistry
+  >["requestWithResponseTimeout"] = (method, params, authority) =>
+    request(method, params, authority);
+  const requestLongPollWithOptions: IHostMessenger<
+    typeof testRegistry
+  >["requestWithResponseTimeoutAndOptions"] = (
+    method,
+    params,
+    authority,
+    options,
+  ) => {
+    void options;
+    return request(method, params, authority);
+  };
   const messenger: IHostMessenger<typeof testRegistry> = {
-    request,
+    request: requestUnary,
+    requestWithOptions: requestUnaryWithOptions,
     // The retry wrapper drives both paths through the same `runWithRetries`,
     // so the long-poll variant shares this mock (and its call counter).
-    requestWithResponseTimeout: request,
+    requestWithResponseTimeout: requestLongPoll,
+    requestWithResponseTimeoutAndOptions: requestLongPollWithOptions,
   };
   return { messenger, calls: () => call };
 }

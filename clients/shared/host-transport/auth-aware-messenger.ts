@@ -9,6 +9,7 @@ import {
   HostAuthoritySupersededError,
   HostRequestAbortedError,
   type HostRequestAuthority,
+  type HostRpcRequestOptions,
   type IHostMessenger,
   type RequestOfMethod,
   type ResponseOfMethod,
@@ -108,6 +109,16 @@ export function createAuthAwareMessenger<Registry extends VersionedRpcRegistry>(
         inner.request(method, params, authority),
       );
     },
+    requestWithOptions<Method extends keyof Registry & string>(
+      method: Method,
+      params: RequestOfMethod<Registry, Method>,
+      authority: HostRequestAuthority,
+      options: HostRpcRequestOptions,
+    ): Promise<ResponseOfMethod<Registry, Method>> {
+      return runWithAuthRecovery(authority, method, () =>
+        inner.requestWithOptions(method, params, authority, options),
+      );
+    },
     requestWithResponseTimeout<Method extends keyof Registry & string>(
       method: Method,
       params: RequestOfMethod<Registry, Method>,
@@ -120,6 +131,23 @@ export function createAuthAwareMessenger<Registry extends VersionedRpcRegistry>(
           params,
           responseTimeoutMs,
           authority,
+        ),
+      );
+    },
+    requestWithResponseTimeoutAndOptions<Method extends keyof Registry & string>(
+      method: Method,
+      params: RequestOfMethod<Registry, Method>,
+      responseTimeoutMs: number,
+      authority: HostRequestAuthority,
+      options: HostRpcRequestOptions,
+    ): Promise<ResponseOfMethod<Registry, Method>> {
+      return runWithAuthRecovery(authority, method, () =>
+        inner.requestWithResponseTimeoutAndOptions(
+          method,
+          params,
+          responseTimeoutMs,
+          authority,
+          options,
         ),
       );
     },

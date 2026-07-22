@@ -725,11 +725,24 @@ describe("provenRemovable - single green / bulk-eligible predicate", () => {
     ).toBe(false);
   });
 
-  it("agrees with the pill: provenRemovable ⇔ classifier is a green tier", () => {
+  it("keeps bulk eligibility equal to green tier plus no delete blockers", () => {
     const samples = [
       entry({ prState: "merged", mergedHeadShaMatches: true }),
+      entry({
+        prState: "merged",
+        mergedHeadShaMatches: true,
+        owners: [owner("epic-bound-merged")],
+      }),
       entry({ atBaseCommit: true }),
+      entry({
+        atBaseCommit: true,
+        owners: [owner("epic-bound-at-base")],
+      }),
       entry({ branchStatus: status({ ahead: 0 }) }),
+      entry({
+        branchStatus: status({ ahead: 0 }),
+        owners: [owner("epic-bound-unreferenced")],
+      }),
       entry({ branchStatus: status({ ahead: 2 }) }),
       entry({ uncommittedCount: 1 }),
       entry({ gitRemovable: false }),
@@ -740,8 +753,10 @@ describe("provenRemovable - single green / bulk-eligible predicate", () => {
       "unreferenced",
     ]);
     for (const sample of samples) {
+      const deletion = classifyWorktreeDeletion(sample);
       expect(provenRemovable(sample)).toBe(
-        greens.has(classifyWorktreeTier(sample)),
+        greens.has(classifyWorktreeTier(sample)) &&
+          deletion.deleteBlockers.length === 0,
       );
     }
   });
@@ -778,6 +793,39 @@ describe("classifyWorktreeDeletion", () => {
     ).toEqual({
       bindingState: "known",
       bindingCount: 3,
+      deleteEligible: false,
+      deleteBlockers: ["bound"],
+      bulkEligible: false,
+    });
+  });
+
+  it("keeps a bound locally-merged row green-tiered but blocks deletion", () => {
+    const boundLocallyMerged = entry({
+      branchStatus: status({ mergedIntoDefault: true, ahead: 2 }),
+      owners: [owner("epic-locally-merged")],
+    });
+
+    expect(classifyWorktreeTier(boundLocallyMerged)).toBe("merged");
+    expect(classifyWorktreeDeletion(boundLocallyMerged)).toEqual({
+      bindingState: "known",
+      bindingCount: 1,
+      deleteEligible: false,
+      deleteBlockers: ["bound"],
+      bulkEligible: false,
+    });
+  });
+
+  it("keeps a bound validated-pr row green-tiered but blocks deletion", () => {
+    const boundValidatedPr = entry({
+      prState: "merged",
+      mergedHeadShaMatches: true,
+      owners: [owner("epic-validated-pr")],
+    });
+
+    expect(classifyWorktreeTier(boundValidatedPr)).toBe("merged");
+    expect(classifyWorktreeDeletion(boundValidatedPr)).toEqual({
+      bindingState: "known",
+      bindingCount: 1,
       deleteEligible: false,
       deleteBlockers: ["bound"],
       bulkEligible: false,

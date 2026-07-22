@@ -396,8 +396,10 @@ codeFontSize` in muted styling while `null`; any tick/type pins an
     the live HEAD, local ancestry into the default branch, or authored owned-
     submodule work proven landed from an otherwise at-base superproject; never
     advanced from the worktree's birth commit with no landed authored submodule
-    work; or clean, fully pushed, and unreferenced by any Task) - and are
-    deliberately kept distinct rather than collapsed into one badge. **Review**
+    work; or clean, fully pushed, and unreferenced) - and are deliberately kept
+    distinct rather than collapsed into one badge. The lifecycle tier stays
+    orthogonal to binding state: a row can remain green-tiered while still being
+    blocked from deletion. **Review**
     is the amber catch-all for anything unproven or
     with would-be-lost state (dirty, unpushed/local-only commits, a detached
     HEAD, an unmerged owned-submodule branch, or unverified branch status).
@@ -424,6 +426,10 @@ codeFontSize` in muted styling while `null`; any tick/type pins an
     unknown-risk confirmation (`unknownRiskDeleteDialogCopy`) that names the
     branch/activity status as unverified, never the generic confirmation a
     proven tier gets.
+  - **Bindings are a hard delete veto.** Any owner in `owners` - chat, task,
+    terminal-agent, or future owner kinds, across any epic - blocks delete and
+    bulk-select immediately. Bound green rows stay green in the lifecycle pill
+    but are excluded from every delete surface until the binding is removed.
   - **Delete is reached through a persistent row overflow**
     (`WorktreeRowActions`: copy path, manage scripts, delete, in that order)
     rather than a hover-only icon, so a resting row never shows a destructive
@@ -431,10 +437,14 @@ codeFontSize` in muted styling while `null`; any tick/type pins an
     discard-N-uncommitted-changes, unpushed/local-only commits, the
     unknown-risk copy above, forced cleanup for orphaned rows, or a plain
     confirmation for a proven-green row (`deleteDialogCopy` /
-    `singleWorktreeDeleteDialogCopy`). On confirm the row is re-checked
-    against current state; if it became ineligible in the interim the delete
-    is skipped and the user is told why instead of proceeding on stale
-    information.
+    `singleWorktreeDeleteDialogCopy`). The destructive action still runs the
+    same host-side CLI-backed delete pipeline (`worktree.deleteByPath`), not a
+    second product-specific delete mechanism. On confirm the row is re-checked
+    against a fresh authoritative exact-path `worktree.listAllForHost@1.4`
+    lookup; if it became ineligible in the interim the delete is skipped and
+    the user is told why instead of proceeding on stale information. This
+    remains a client-side preflight only - the host-side atomic lease / TOCTOU
+    race is still unresolved here because the Host source is not in this repo.
   - **Selection and bulk delete** use always-keyboard-reachable checkboxes
     plus a tri-state toolbar select-all toggle (`WorktreeSelectAllToggle`,
     scoped to currently-visible selectable rows) instead of a permanent
@@ -448,9 +458,10 @@ codeFontSize` in muted styling while `null`; any tick/type pins an
     (never one warning per row), names concrete dirty-loss counts, adds a
     neutral unverified-branch-status caveat and a separate unknown-risk
     caveat for rows whose enrichment failed, and lists what was excluded from
-    the selection (in-use, still-checking, or otherwise not selected).
+    the selection (in-use, bound, still-checking, or otherwise not selected).
     Confirm re-checks every selected row and skips/names any that became
-    ineligible; in-use rows can never be selected or deleted, and explain why
+    ineligible; in-use rows can never be selected or deleted, bound rows stay
+    excluded even when their lifecycle pill is green, and both explain why
     inline.
   - Background delete progress renders as a non-intrusive strip
     (`WorktreeDeleteProgressStrip`) that stays visible through partial

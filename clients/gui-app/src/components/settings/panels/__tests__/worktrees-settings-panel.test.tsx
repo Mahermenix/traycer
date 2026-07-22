@@ -334,6 +334,7 @@ function renderList(args: {
   readonly onVisiblePathsChange:
     ((paths: readonly string[]) => void) | undefined;
   readonly taskTitlesByEpicId: ReadonlyMap<string, string> | undefined;
+  readonly client?: HostClient<HostRpcRegistry> | null;
 }) {
   const Wrapper = (props: { readonly children: ReactNode }): ReactNode => (
     <QueryClientProvider client={args.queryClient}>
@@ -343,6 +344,7 @@ function renderList(args: {
   return render(
     <Wrapper>
       <WorktreesList
+        client={args.client ?? null}
         openStreamTransport={() => stubOpenStreamTransport()}
         hostId={args.hostId}
         worktrees={args.worktrees}
@@ -369,6 +371,7 @@ function renderListWithToolbar(toolbarProps: ToolbarTestProps): void {
   render(
     <Wrapper>
       <WorktreesList
+        client={null}
         openStreamTransport={() => stubOpenStreamTransport()}
         hostId="host-a"
         worktrees={WORKTREES}
@@ -393,6 +396,7 @@ function renderDefault(): void {
     seededPaths: undefined,
     onVisiblePathsChange: undefined,
     taskTitlesByEpicId: undefined,
+    client: undefined,
   });
 }
 
@@ -851,6 +855,7 @@ describe("WorktreesList delete flow", () => {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <WorktreesList
+            client={null}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-a"
             worktrees={[seededRow]}
@@ -1716,6 +1721,7 @@ describe("WorktreesList delete flow", () => {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <WorktreesList
+            client={null}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-b"
             worktrees={WORKTREES}
@@ -1914,6 +1920,7 @@ describe("WorktreesList delete flow", () => {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <WorktreesList
+            client={null}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-a"
             worktrees={WORKTREES.filter(
@@ -2039,6 +2046,7 @@ describe("WorktreesList confirm-time re-check", () => {
       <QueryClientProvider client={queryClient}>
         <TooltipProvider>
           <WorktreesList
+            client={null}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-a"
             worktrees={worktrees}
@@ -3458,6 +3466,7 @@ describe("WorktreesList virtualization + per-viewport enrichment", () => {
       <QueryClientProvider client={new QueryClient()}>
         <TooltipProvider>
           <WorktreesList
+            client={null}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-a"
             worktrees={args.worktrees}
@@ -3793,6 +3802,7 @@ describe("WorktreesList status-aware delete safety", () => {
       <QueryClientProvider client={args.queryClient}>
         <TooltipProvider>
           <WorktreesList
+            client={null}
             openStreamTransport={() => stubOpenStreamTransport()}
             hostId="host-a"
             worktrees={args.worktrees}

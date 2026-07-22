@@ -15,8 +15,10 @@ import {
 import { DEFAULT_DIAL_TIMEOUT_MS } from "../../../shared/host-transport/transport-config";
 import {
   HostRpcError,
+  NO_HOST_RPC_REQUEST_OPTIONS,
   type RequestOfMethod,
   type ResponseOfMethod,
+  type HostRpcRequestOptions,
   HostRequestAuthority,
   HostTransportEndpoint,
 } from "../../../shared/host-transport/host-messenger";
@@ -60,6 +62,20 @@ export async function callHostRpc<
   method: Method,
   params: RequestOfMethod<HostRpcRegistry, Method>,
 ): Promise<ResponseOfMethod<HostRpcRegistry, Method>> {
+  return callHostRpcWithOptions(
+    method,
+    params,
+    NO_HOST_RPC_REQUEST_OPTIONS,
+  );
+}
+
+export async function callHostRpcWithOptions<
+  Method extends keyof HostRpcRegistry & string,
+>(
+  method: Method,
+  params: RequestOfMethod<HostRpcRegistry, Method>,
+  options: HostRpcRequestOptions,
+): Promise<ResponseOfMethod<HostRpcRegistry, Method>> {
   const logger = createCliLogger(config.environment);
   logger.debug("Host RPC requested", {
     environment: config.environment,
@@ -91,6 +107,7 @@ export async function callHostRpc<
     endpoint,
     auth,
     DEFAULT_TRANSPORT_RETRY_POLICY,
+    options,
   );
 }
 
@@ -134,6 +151,7 @@ export async function callHostRpcFastFail<
     endpoint,
     auth,
     NO_RETRY_TRANSPORT_POLICY,
+    NO_HOST_RPC_REQUEST_OPTIONS,
   );
 }
 
@@ -181,6 +199,7 @@ export async function callHostRpcAtEndpoint<
     endpoint,
     auth,
     DEFAULT_TRANSPORT_RETRY_POLICY,
+    NO_HOST_RPC_REQUEST_OPTIONS,
   );
 }
 
@@ -190,6 +209,7 @@ async function requestAtEndpoint<Method extends keyof HostRpcRegistry & string>(
   endpoint: HostTransportEndpoint,
   auth: HostAuth,
   retryPolicy: TransportRetryPolicy,
+  options: HostRpcRequestOptions,
 ): Promise<ResponseOfMethod<HostRpcRegistry, Method>> {
   const logger = createCliLogger(config.environment);
   const lease = new MutableBearerLease(auth.token, auth.userId);
@@ -221,7 +241,12 @@ async function requestAtEndpoint<Method extends keyof HostRpcRegistry & string>(
     abortSignal: callLifetime.signal,
   };
   try {
-    const response = await messenger.request(method, params, authority);
+    const response = await messenger.requestWithOptions(
+      method,
+      params,
+      authority,
+      options,
+    );
     logger.debug("Host RPC completed", {
       environment: config.environment,
       method,

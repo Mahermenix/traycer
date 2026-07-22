@@ -5,6 +5,7 @@ import type {
   ResponseOf,
   RpcErrorCode,
   RpcErrorDetails,
+  SchemaVersion,
   VersionedRpcRegistry,
 } from "@traycer/protocol/framework/index";
 import type { FatalErrorDetails } from "@traycer/protocol/framework/ws-protocol";
@@ -55,6 +56,13 @@ export interface IHostMessenger<Registry extends VersionedRpcRegistry> {
     authority: HostRequestAuthority,
   ): Promise<ResponseOfMethod<Registry, Method>>;
 
+  requestWithOptions<Method extends keyof Registry & string>(
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    authority: HostRequestAuthority,
+    options: HostRpcRequestOptions,
+  ): Promise<ResponseOfMethod<Registry, Method>>;
+
   /**
    * Same as `request`, but waits up to `responseTimeoutMs` for the host's
    * response frame instead of the transport's default frame timeout. For
@@ -71,6 +79,51 @@ export interface IHostMessenger<Registry extends VersionedRpcRegistry> {
     responseTimeoutMs: number,
     authority: HostRequestAuthority,
   ): Promise<ResponseOfMethod<Registry, Method>>;
+
+  requestWithResponseTimeoutAndOptions<
+    Method extends keyof Registry & string,
+  >(
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    responseTimeoutMs: number,
+    authority: HostRequestAuthority,
+    options: HostRpcRequestOptions,
+  ): Promise<ResponseOfMethod<Registry, Method>>;
+}
+
+export interface HostCanonicalVersionRequirement {
+  /**
+   * `minimum` means "same major, and at least this minor". A newer major is
+   * NOT accepted - fail closed until the caller explicitly opts into it.
+   */
+  readonly comparison: "minimum" | "exact";
+  readonly version: SchemaVersion;
+}
+
+export interface HostRpcRequestOptions {
+  readonly requiredHostCanonicalVersion:
+    | HostCanonicalVersionRequirement
+    | undefined;
+}
+
+export const NO_HOST_RPC_REQUEST_OPTIONS: HostRpcRequestOptions = {
+  requiredHostCanonicalVersion: undefined,
+};
+
+export function hostCanonicalVersionSatisfiesRequirement(
+  hostCanonical: SchemaVersion | undefined,
+  requirement: HostCanonicalVersionRequirement,
+): boolean {
+  if (hostCanonical === undefined) {
+    return false;
+  }
+  if (hostCanonical.major !== requirement.version.major) {
+    return false;
+  }
+  if (requirement.comparison === "exact") {
+    return hostCanonical.minor === requirement.version.minor;
+  }
+  return hostCanonical.minor >= requirement.version.minor;
 }
 
 /**

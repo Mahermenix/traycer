@@ -71,6 +71,20 @@ function uncalledLongPoll() {
   });
 }
 
+function unaryInner(request: IHostMessenger<Registry>["request"]): IHostMessenger<Registry> {
+  const requestUnaryWithOptions: IHostMessenger<Registry>["requestWithOptions"] =
+    (method, params, authority, options) => {
+      void options;
+      return request(method, params, authority);
+    };
+  return {
+    request,
+    requestWithOptions: requestUnaryWithOptions,
+    requestWithResponseTimeout: uncalledLongPoll(),
+    requestWithResponseTimeoutAndOptions: uncalledLongPoll(),
+  };
+}
+
 function authorityFor(bearer: MutableBearerLease): HostRequestAuthority {
   return {
     endpoint: {
@@ -96,25 +110,25 @@ describe("createAuthAwareMessenger", () => {
   it("passes results through without revalidating on success", async () => {
     const revalidate = vi.fn();
     const auth = authRevalidator(revalidate);
-    const inner: IHostMessenger<Registry> = {
-      request: vi.fn().mockResolvedValue(undefined),
-      requestWithResponseTimeout: uncalledLongPoll(),
-    };
+    const request = vi.fn().mockResolvedValue(undefined);
+    const inner = unaryInner((method, params, authority) =>
+      request(method, params, authority),
+    );
 
     const lease = defaultLease();
     const wrapped = createAuthAwareMessenger(inner, auth);
     await wrapped.request(METHOD, PARAMS, authorityFor(lease));
     expect(revalidate).not.toHaveBeenCalled();
-    expect(inner.request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("renderer mode: revalidates on UNAUTHORIZED then rethrows (no retry)", async () => {
     const revalidate = vi.fn().mockResolvedValue("rejected");
     const auth = authRevalidator(revalidate);
-    const inner: IHostMessenger<Registry> = {
-      request: vi.fn().mockRejectedValue(unauthorizedError()),
-      requestWithResponseTimeout: uncalledLongPoll(),
-    };
+    const request = vi.fn().mockRejectedValue(unauthorizedError());
+    const inner = unaryInner((method, params, authority) =>
+      request(method, params, authority),
+    );
 
     const lease = defaultLease();
     const wrapped = createAuthAwareMessenger(inner, auth);
@@ -122,17 +136,17 @@ describe("createAuthAwareMessenger", () => {
       wrapped.request(METHOD, PARAMS, authorityFor(lease)),
     ).rejects.toBeInstanceOf(HostRpcError);
     expect(revalidate).toHaveBeenCalledTimes(1);
-    expect(inner.request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("does not revalidate a retryable transient UNAUTHORIZED (rethrows for the caller to retry)", async () => {
     const revalidate = vi.fn();
     const auth = authRevalidator(revalidate);
     const original = retryableUnauthorizedError();
-    const inner: IHostMessenger<Registry> = {
-      request: vi.fn().mockRejectedValue(original),
-      requestWithResponseTimeout: uncalledLongPoll(),
-    };
+    const request = vi.fn().mockRejectedValue(original);
+    const inner = unaryInner((method, params, authority) =>
+      request(method, params, authority),
+    );
 
     const lease = defaultLease();
     const wrapped = createAuthAwareMessenger(inner, auth);
@@ -142,15 +156,15 @@ describe("createAuthAwareMessenger", () => {
     // Transient host-side failure - the bearer is fine, so no authn churn.
     expect(thrown).toBe(original);
     expect(revalidate).not.toHaveBeenCalled();
-    expect(inner.request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces the original UNAUTHORIZED when revalidation itself throws", async () => {
     const original = unauthorizedError();
-    const inner: IHostMessenger<Registry> = {
-      request: vi.fn().mockRejectedValue(original),
-      requestWithResponseTimeout: uncalledLongPoll(),
-    };
+    const request = vi.fn().mockRejectedValue(original);
+    const inner = unaryInner((method, params, authority) =>
+      request(method, params, authority),
+    );
     const auth = authRevalidator(
       vi
         .fn()
@@ -172,10 +186,10 @@ describe("createAuthAwareMessenger", () => {
   it("does not revalidate on a non-UNAUTHORIZED error", async () => {
     const revalidate = vi.fn();
     const auth = authRevalidator(revalidate);
-    const inner: IHostMessenger<Registry> = {
-      request: vi.fn().mockRejectedValue(rpcError()),
-      requestWithResponseTimeout: uncalledLongPoll(),
-    };
+    const request = vi.fn().mockRejectedValue(rpcError());
+    const inner = unaryInner((method, params, authority) =>
+      request(method, params, authority),
+    );
 
     const lease = defaultLease();
     const wrapped = createAuthAwareMessenger(inner, auth);
@@ -190,10 +204,9 @@ describe("createAuthAwareMessenger", () => {
     const request = vi.fn();
     request.mockRejectedValueOnce(unauthorizedError());
     request.mockResolvedValueOnce(undefined);
-    const inner: IHostMessenger<Registry> = {
-      request,
-      requestWithResponseTimeout: uncalledLongPoll(),
-    };
+    const inner = unaryInner((method, params, authority) =>
+      request(method, params, authority),
+    );
     const revalidate = vi
       .fn()
       .mockImplementation((expected: MutableBearerLease) => {
@@ -206,15 +219,15 @@ describe("createAuthAwareMessenger", () => {
     const wrapped = createAuthAwareMessenger(inner, auth);
     await wrapped.request(METHOD, PARAMS, authorityFor(lease));
     expect(revalidate).toHaveBeenCalledTimes(1);
-    expect(inner.request).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledTimes(2);
   });
 
   it("CLI mode: does not retry when the bearer did not rotate", async () => {
     const lease = new MutableBearerLease("stale", "u1");
-    const inner: IHostMessenger<Registry> = {
-      request: vi.fn().mockRejectedValue(unauthorizedError()),
-      requestWithResponseTimeout: uncalledLongPoll(),
-    };
+    const request = vi.fn().mockRejectedValue(unauthorizedError());
+    const inner = unaryInner((method, params, authority) =>
+      request(method, params, authority),
+    );
     // refresh failed → lease unchanged, so no retry.
     const revalidate = vi.fn().mockResolvedValue("rejected");
     const auth = authRevalidator(revalidate);
@@ -224,16 +237,16 @@ describe("createAuthAwareMessenger", () => {
       wrapped.request(METHOD, PARAMS, authorityFor(lease)),
     ).rejects.toBeInstanceOf(HostRpcError);
     expect(revalidate).toHaveBeenCalledTimes(1);
-    expect(inner.request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces a typed superseded result without touching a replacement session", async () => {
     const staleLease = new MutableBearerLease("stale", "u1");
     const replacementLease = new MutableBearerLease("replacement", "u2");
-    const inner: IHostMessenger<Registry> = {
-      request: vi.fn().mockRejectedValue(unauthorizedError()),
-      requestWithResponseTimeout: uncalledLongPoll(),
-    };
+    const request = vi.fn().mockRejectedValue(unauthorizedError());
+    const inner = unaryInner((method, params, authority) =>
+      request(method, params, authority),
+    );
     const revalidateExpectedBearer = vi
       .fn()
       .mockImplementation((expected: MutableBearerLease) => {
@@ -249,6 +262,6 @@ describe("createAuthAwareMessenger", () => {
       wrapped.request(METHOD, PARAMS, authorityFor(staleLease)),
     ).rejects.toBeInstanceOf(HostAuthoritySupersededError);
     expect(replacementLease.getBearerToken()).toBe("replacement");
-    expect(inner.request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 });

@@ -61,8 +61,14 @@ import {
   provenRemovable,
   type WorktreeTier,
 } from "@traycer-clients/shared/worktree/classify-worktree";
+import {
+  buildWorktreeDeletePreflightRequest,
+  decideAuthoritativeDeletePreflightTarget,
+  WORKTREE_DELETE_PRECHECK_REQUEST_OPTIONS,
+} from "@traycer-clients/shared/worktree/authoritative-delete-preflight";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
+import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import {
   buildTaskMergeRollups,
   taskMergeRollupEqual,
@@ -666,6 +672,7 @@ function WorktreesBody(props: {
       // effective selection on its own.)
       <WorktreesList
         key={hostId}
+        client={client}
         openStreamTransport={openStreamTransport}
         hostId={hostId}
         worktrees={listing.worktrees}
@@ -818,6 +825,7 @@ function useStableRowCallback<Args extends readonly unknown[]>(
 }
 
 export function WorktreesList(props: {
+  readonly client: HostClient<HostRpcRegistry> | null;
   readonly openStreamTransport: (hostId: string) => DurableStreamTransport;
   readonly hostId: string;
   // The BASE listing (cheap fields for every row). Per-row activity enrichment
@@ -857,6 +865,7 @@ export function WorktreesList(props: {
   };
 }): ReactNode {
   const {
+    client,
     hostId,
     worktrees,
     enrichedByPath,
@@ -1068,6 +1077,7 @@ export function WorktreesList(props: {
   );
   const [pendingDeleteTargets, setPendingDeleteTargets] =
     useState<ReadonlyArray<WorktreeHostEntryV14> | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [pendingScriptReview, setPendingScriptReview] =
     useState<WorktreeScriptReviewDraft | null>(null);
   const reviewedScriptsByPathRef = useRef<ReadonlyMap<
@@ -1338,32 +1348,88 @@ export function WorktreesList(props: {
     setPendingDeleteTargets(null);
   };
 
-  const handleConfirm = (): void => {
-    if (pendingResolution === null || pendingDeleteTargets === null) return;
-    // `pendingResolution` already re-resolved each pending path to its freshest
-    // entry and split kept vs. dropped (gone from the list, now in-use / mid-
-    // delete, or regressed to Checking). Start the run on the FRESHEST kept
-    // entries, and name the drops.
-    const { kept, dropped } = pendingResolution;
-    if (dropped.length > 0) {
-      toast.message(
-        worktreeDropMessage(
-          dropped,
-          (worktreePath) =>
-            deleteEnrichmentStateFor(worktreePath) === "pending",
+  const handleConfirm = useCallback(async (): Promise<void> => {
+    if (
+      confirmingDelete ||
+      pendingResolution === null ||
+      pendingDeleteTargets === null
+    ) {
+      return;
+    }
+    if (client === null) {
+      const { kept, dropped } = pendingResolution;
+      if (dropped.length > 0) {
+        toast.message(
+          worktreeDropMessage(
+            dropped,
+            (worktreePath) =>
+              deleteEnrichmentStateFor(worktreePath) === "pending",
+          ),
+        );
+      }
+      if (kept.length === 1) {
+        start(kept[0], reviewedScriptsByPath.get(kept[0].worktreePath) ?? null);
+      } else if (kept.length > 1) {
+        startBatchBackgrounded(kept, reviewedScriptsByPath);
+      }
+      clearSelectionForTargets(pendingDeleteTargets);
+      return;
+    }
+    setConfirmingDelete(true);
+    try {
+      const { kept: cachedKept, dropped: cachedDropped } = pendingResolution;
+      const authoritativeResults = await Promise.all(
+        cachedKept.map((entry) =>
+          confirmTimeAuthoritativeDeleteCheck(client, entry.worktreePath),
         ),
       );
+      const kept: WorktreeHostEntryV14[] = [];
+      const dropped: ConfirmTimeAuthoritativeDrop[] = [];
+      for (const result of authoritativeResults) {
+        switch (result.kind) {
+          case "ready":
+            kept.push(result.target);
+            break;
+          case "missing":
+          case "unresolved":
+          case "bound":
+          case "query-failed":
+          case "non-authoritative-version":
+            dropped.push(result);
+            break;
+        }
+      }
+      if (cachedDropped.length > 0) {
+        toast.message(
+          worktreeDropMessage(
+            cachedDropped,
+            (worktreePath) =>
+              deleteEnrichmentStateFor(worktreePath) === "pending",
+          ),
+        );
+      }
+      if (dropped.length > 0) {
+        toast.message(confirmTimeAuthoritativeDropMessage(dropped));
+      }
+      if (kept.length === 1) {
+        start(kept[0], reviewedScriptsByPath.get(kept[0].worktreePath) ?? null);
+      } else if (kept.length > 1) {
+        startBatchBackgrounded(kept, reviewedScriptsByPath);
+      }
+      clearSelectionForTargets(pendingDeleteTargets);
+    } finally {
+      setConfirmingDelete(false);
     }
-    if (kept.length === 1) {
-      start(kept[0], reviewedScriptsByPath.get(kept[0].worktreePath) ?? null);
-    } else if (kept.length > 1) {
-      startBatchBackgrounded(kept, reviewedScriptsByPath);
-    }
-    // Prune the ENTIRE confirmed cohort - kept AND dropped - from the selection
-    // bookkeeping (even in the all-dropped case), so a dropped row can't linger
-    // as stale selected state / counts when selection mode is re-entered.
-    clearSelectionForTargets(pendingDeleteTargets);
-  };
+  }, [
+    client,
+    confirmingDelete,
+    deleteEnrichmentStateFor,
+    pendingDeleteTargets,
+    pendingResolution,
+    reviewedScriptsByPath,
+    start,
+    startBatchBackgrounded,
+  ]);
 
   const handleCloseModal = (): void => {
     // While the delete is still running, "Run in background" keeps the stream
@@ -1680,15 +1746,20 @@ export function WorktreesList(props: {
           description={singleDialog.description}
           cascadeSummary={null}
           actionLabel={singleDialog.actionLabel}
-          isPending={false}
-          onConfirm={handleConfirm}
+          isPending={confirmingDelete}
+          onConfirm={() => {
+            void handleConfirm();
+          }}
         />
         <WorktreeBulkDeleteDialog
           summary={bulkDeleteSummary}
+          isPending={confirmingDelete}
           onOpenChange={(open) => {
             if (!open) setPendingDeleteTargets(null);
           }}
-          onConfirm={handleConfirm}
+          onConfirm={() => {
+            void handleConfirm();
+          }}
         />
         <WorktreeScriptReviewDialog
           target={pendingScriptReview?.target ?? null}
@@ -1899,6 +1970,7 @@ function worktreeSearchCheckingNoticeText(checkingCount: number): string {
  */
 function WorktreeBulkDeleteDialog(props: {
   readonly summary: WorktreeBulkDeleteSummary | null;
+  readonly isPending: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly onConfirm: () => void;
 }): ReactNode {
@@ -1971,6 +2043,7 @@ function WorktreeBulkDeleteDialog(props: {
                 type="button"
                 variant="ghost"
                 size="sm"
+                disabled={props.isPending}
                 onClick={() => props.onOpenChange(false)}
                 data-testid="confirm-cancel"
               >
@@ -1980,9 +2053,17 @@ function WorktreeBulkDeleteDialog(props: {
                 type="button"
                 variant="destructive"
                 size="sm"
+                disabled={props.isPending}
                 onClick={props.onConfirm}
                 data-testid="confirm-action"
               >
+                {props.isPending ? (
+                  <AgentSpinningDots
+                    className={undefined}
+                    testId={undefined}
+                    variant={undefined}
+                  />
+                ) : null}
                 {summary.actionLabel}
               </Button>
             </div>
@@ -3420,7 +3501,7 @@ function worktreeDropMessage(
   isChecking: (worktreePath: string) => boolean,
 ): string {
   const checkingDropped = dropped.filter((entry) =>
-    isChecking(entry.worktreePath),
+    entry.resolvedAt === null || isChecking(entry.worktreePath),
   );
   const otherDropped = dropped.filter(
     (entry) => !isChecking(entry.worktreePath),
@@ -3436,6 +3517,103 @@ function worktreeDropMessage(
   const plural = dropped.length === 1 ? "" : "s";
   const verb = dropped.length === 1 ? "was" : "were";
   return `${dropped.length} worktree${plural} became ineligible and ${verb} skipped: ${parts.join(", ")}.`;
+}
+
+type ConfirmTimeAuthoritativeDrop =
+  | { readonly kind: "missing"; readonly worktreePath: string }
+  | { readonly kind: "query-failed"; readonly worktreePath: string }
+  | {
+      readonly kind: "non-authoritative-version";
+      readonly worktreePath: string;
+    }
+  | { readonly kind: "unresolved"; readonly target: WorktreeHostEntryV14 }
+  | {
+      readonly kind: "bound";
+      readonly target: WorktreeHostEntryV14;
+      readonly bindingCount: number;
+    };
+
+async function confirmTimeAuthoritativeDeleteCheck(
+  client: HostClient<HostRpcRegistry> | null,
+  worktreePath: string,
+): Promise<
+  | { readonly kind: "ready"; readonly target: WorktreeHostEntryV14 }
+  | ConfirmTimeAuthoritativeDrop
+> {
+  if (client === null) {
+    return { kind: "query-failed", worktreePath };
+  }
+  try {
+    const response = await client.requestWithOptions(
+      "worktree.listAllForHost",
+      buildWorktreeDeletePreflightRequest(worktreePath),
+      WORKTREE_DELETE_PRECHECK_REQUEST_OPTIONS,
+    );
+    const decision = decideAuthoritativeDeletePreflightTarget(
+      response.worktrees.find((entry) => entry.worktreePath === worktreePath),
+    );
+    switch (decision.kind) {
+      case "ready":
+        return decision;
+      case "missing":
+        return { kind: "missing", worktreePath };
+      case "unresolved":
+        return { kind: "unresolved", target: decision.target };
+      case "bound":
+        return {
+          kind: "bound",
+          target: decision.target,
+          bindingCount: decision.bindingCount,
+        };
+    }
+  } catch (error) {
+    if (error instanceof HostRpcError && error.code === "DOWNGRADE_UNSUPPORTED") {
+      return { kind: "non-authoritative-version", worktreePath };
+    }
+    return { kind: "query-failed", worktreePath };
+  }
+}
+
+function confirmTimeAuthoritativeDropMessage(
+  drops: readonly ConfirmTimeAuthoritativeDrop[],
+): string {
+  const unresolvedCount = drops.filter((drop) => drop.kind === "unresolved").length;
+  const boundDrops = drops
+    .filter((drop): drop is Extract<ConfirmTimeAuthoritativeDrop, { kind: "bound" }> =>
+      drop.kind === "bound",
+    )
+    .map((drop) => drop.target);
+  const missingCount = drops.filter((drop) => drop.kind === "missing").length;
+  const versionCount = drops.filter(
+    (drop) => drop.kind === "non-authoritative-version",
+  ).length;
+  const queryFailureCount = drops.filter(
+    (drop) => drop.kind === "query-failed",
+  ).length;
+  const parts = [
+    ...(unresolvedCount === 0
+      ? []
+      : [
+          `${unresolvedCount} still checking status`,
+        ]),
+    ...(boundDrops.length === 0
+      ? []
+      : [countWorktreeClasses(boundDrops, WORKTREE_EXCLUSION_ORDER)]),
+    ...(missingCount === 0
+      ? []
+      : [`${missingCount} missing from the freshest host listing`]),
+    ...(versionCount === 0
+      ? []
+      : [
+          `${versionCount} could not be re-verified against an authoritative worktree.listAllForHost@1.4 host response`,
+        ]),
+    ...(queryFailureCount === 0
+      ? []
+      : [`${queryFailureCount} could not be re-verified before delete`]),
+  ];
+  const plural = drops.length === 1 ? "" : "s";
+  const verb = drops.length === 1 ? "was" : "were";
+  return `${drops.length} worktree${plural} became ineligible and ${verb} skipped: ${parts.join(", ")}.`;
 }
 
 interface WorktreeBulkDeleteSummary {

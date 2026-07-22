@@ -16,11 +16,15 @@ import { RELEASED_FLOOR_METHOD_NAMES } from "@traycer/protocol/host/released-flo
 import { CredentialLeaseReleasedError } from "@traycer/protocol/auth/request-context";
 import type { OpenFrameBearerSource } from "@traycer-clients/shared/auth/bearer-source";
 import {
+  hostCanonicalVersionSatisfiesRequirement,
+  NO_HOST_RPC_REQUEST_OPTIONS,
   HostRequestAbortedError,
   HostRpcError,
   HostTransportFailureError,
   RetryableTransportError,
+  type HostCanonicalVersionRequirement,
   type HostRequestAuthority,
+  type HostRpcRequestOptions,
   type HostTransportEndpoint,
   type IHostMessenger,
   type RequestOfMethod,
@@ -149,11 +153,26 @@ export class WsRpcClient<
     params: RequestOfMethod<Registry, Method>,
     authority: HostRequestAuthority,
   ): Promise<ResponseOfMethod<Registry, Method>> {
-    return this.requestWithResponseTimeout(
+    return this.requestWithOptions(
+      method,
+      params,
+      authority,
+      NO_HOST_RPC_REQUEST_OPTIONS,
+    );
+  }
+
+  async requestWithOptions<Method extends keyof Registry & string>(
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    authority: HostRequestAuthority,
+    options: HostRpcRequestOptions,
+  ): Promise<ResponseOfMethod<Registry, Method>> {
+    return this.requestWithResponseTimeoutAndOptions(
       method,
       params,
       this.frameTimeoutMs,
       authority,
+      options,
     );
   }
 
@@ -162,6 +181,24 @@ export class WsRpcClient<
     params: RequestOfMethod<Registry, Method>,
     responseTimeoutMs: number,
     authority: HostRequestAuthority,
+  ): Promise<ResponseOfMethod<Registry, Method>> {
+    return this.requestWithResponseTimeoutAndOptions(
+      method,
+      params,
+      responseTimeoutMs,
+      authority,
+      NO_HOST_RPC_REQUEST_OPTIONS,
+    );
+  }
+
+  async requestWithResponseTimeoutAndOptions<
+    Method extends keyof Registry & string,
+  >(
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    responseTimeoutMs: number,
+    authority: HostRequestAuthority,
+    options: HostRpcRequestOptions,
   ): Promise<ResponseOfMethod<Registry, Method>> {
     const requestId = this.requestIdProvider();
     const selected = authority.endpoint;
@@ -273,6 +310,12 @@ export class WsRpcClient<
       }
 
       const methodRegistry = this.registry[method] as MethodVersionRegistry;
+      assertRequiredHostCanonicalVersion(
+        method,
+        requestId,
+        hostCanonical,
+        options.requiredHostCanonicalVersion,
+      );
       if (hostCanonical === undefined) {
         return await executeUnavailableMethodDegrade(
           this.registry,
@@ -310,6 +353,33 @@ export class WsRpcClient<
   private buildManifest(): SplitConnectionManifest {
     return splitConnectionManifest(this.registry, RELEASED_FLOOR_METHOD_NAMES);
   }
+}
+
+function assertRequiredHostCanonicalVersion(
+  method: string,
+  requestId: string,
+  hostCanonical: SchemaVersion | undefined,
+  requirement: HostCanonicalVersionRequirement | undefined,
+): void {
+  if (requirement === undefined) {
+    return;
+  }
+  if (hostCanonicalVersionSatisfiesRequirement(hostCanonical, requirement)) {
+    return;
+  }
+  const negotiated =
+    hostCanonical === undefined
+      ? "none"
+      : `${hostCanonical.major}.${hostCanonical.minor}`;
+  const comparison =
+    requirement.comparison === "exact" ? "exactly" : "at least";
+  throw new HostRpcError({
+    code: "DOWNGRADE_UNSUPPORTED",
+    message: `Host negotiated ${method}@${negotiated}, but this caller requires ${comparison} ${method}@${requirement.version.major}.${requirement.version.minor}.`,
+    requestId,
+    method,
+    fatalDetails: null,
+  });
 }
 
 async function executeAvailableMethodRequest<Payload, Response>(

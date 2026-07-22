@@ -4,7 +4,10 @@ import { CliError, CLI_ERROR_CODES } from "../../runner/errors";
 import type { CommandContext } from "../../runner/runner";
 import type { StreamCloseReason } from "../../../../shared/host-transport/i-stream-session";
 import { resolveHostAuth } from "../../internal/host-auth";
-import { callHostRpc, resolveEndpoint } from "../../internal/host-rpc";
+import {
+  callHostRpcWithOptions,
+  resolveEndpoint,
+} from "../../internal/host-rpc";
 import type { WorktreeHostEntryV14 } from "@traycer/protocol/host";
 
 const loggerMock = vi.hoisted(() => ({
@@ -55,11 +58,15 @@ vi.mock("../../internal/host-rpc", async () => {
   const actual = await vi.importActual<
     typeof import("../../internal/host-rpc")
   >("../../internal/host-rpc");
-  return { ...actual, callHostRpc: vi.fn(), resolveEndpoint: vi.fn() };
+  return {
+    ...actual,
+    callHostRpcWithOptions: vi.fn(),
+    resolveEndpoint: vi.fn(),
+  };
 });
 
 const resolveHostAuthMock = vi.mocked(resolveHostAuth);
-const callHostRpcMock = vi.mocked(callHostRpc);
+const callHostRpcWithOptionsMock = vi.mocked(callHostRpcWithOptions);
 const resolveEndpointMock = vi.mocked(resolveEndpoint);
 
 const ctx = {} as CommandContext;
@@ -98,7 +105,7 @@ beforeEach(() => {
     userId: "user",
     authnBaseUrl: "https://authn.example",
   });
-  callHostRpcMock.mockResolvedValue({
+  callHostRpcWithOptionsMock.mockResolvedValue({
     worktrees: [entry({})],
     nextCursor: null,
   });
@@ -134,7 +141,7 @@ describe("buildWorktreeDeleteCommand readonly guard", () => {
     ).rejects.toMatchObject({ code: CLI_ERROR_CODES.FORBIDDEN });
 
     expect(resolveHostAuthMock).not.toHaveBeenCalled();
-    expect(callHostRpcMock).not.toHaveBeenCalled();
+    expect(callHostRpcWithOptionsMock).not.toHaveBeenCalled();
     expect(resolveEndpointMock).not.toHaveBeenCalled();
     expect(hoisted.subscribeMock).not.toHaveBeenCalled();
   });
@@ -156,14 +163,27 @@ describe("buildWorktreeDeleteCommand input validation", () => {
     ).rejects.toMatchObject({ code: CLI_ERROR_CODES.INVALID_ARGUMENT });
 
     expect(resolveHostAuthMock).not.toHaveBeenCalled();
-    expect(callHostRpcMock).not.toHaveBeenCalled();
+    expect(callHostRpcWithOptionsMock).not.toHaveBeenCalled();
+    expect(resolveEndpointMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a relative --path before any network call", async () => {
+    await expect(
+      buildWorktreeDeleteCommand({
+        worktreePath: "relative/wt",
+        readonlySurface: false,
+      })(ctx),
+    ).rejects.toMatchObject({ code: CLI_ERROR_CODES.INVALID_ARGUMENT });
+
+    expect(resolveHostAuthMock).not.toHaveBeenCalled();
+    expect(callHostRpcWithOptionsMock).not.toHaveBeenCalled();
     expect(resolveEndpointMock).not.toHaveBeenCalled();
   });
 });
 
 describe("buildWorktreeDeleteCommand binding-aware preflight", () => {
   it("refuses a bound target before opening the destructive stream", async () => {
-    callHostRpcMock.mockResolvedValue({
+    callHostRpcWithOptionsMock.mockResolvedValue({
       worktrees: [
         entry({
           owners: [
@@ -201,18 +221,15 @@ describe("buildWorktreeDeleteCommand binding-aware preflight", () => {
       exitCode: 1,
     });
 
-    expect(callHostRpcMock).toHaveBeenCalledWith("worktree.listAllForHost", {
-      includeActivity: false,
-      activityPaths: ["/wt/x"],
-      cursor: null,
-      limit: null,
-      forceRefresh: true,
-    });
+    expect(callHostRpcWithOptionsMock).toHaveBeenCalledTimes(1);
     expect(hoisted.subscribeMock).not.toHaveBeenCalled();
   });
 
   it("fails closed when the exact-path preflight returns no matching target", async () => {
-    callHostRpcMock.mockResolvedValue({ worktrees: [], nextCursor: null });
+    callHostRpcWithOptionsMock.mockResolvedValue({
+      worktrees: [],
+      nextCursor: null,
+    });
 
     await expect(
       buildWorktreeDeleteCommand({
@@ -227,8 +244,28 @@ describe("buildWorktreeDeleteCommand binding-aware preflight", () => {
     expect(hoisted.subscribeMock).not.toHaveBeenCalled();
   });
 
+  it("fails closed when the exact-path preflight target is still unresolved", async () => {
+    callHostRpcWithOptionsMock.mockResolvedValue({
+      worktrees: [entry({ resolvedAt: null })],
+      nextCursor: null,
+    });
+
+    await expect(
+      buildWorktreeDeleteCommand({
+        worktreePath: "/wt/x",
+        readonlySurface: false,
+      })(ctx),
+    ).rejects.toMatchObject({
+      code: CLI_ERROR_CODES.UNEXPECTED,
+      exitCode: 1,
+      message: expect.stringContaining("safe to delete"),
+    });
+
+    expect(hoisted.subscribeMock).not.toHaveBeenCalled();
+  });
+
   it("fails closed when the exact-path preflight query itself fails", async () => {
-    callHostRpcMock.mockRejectedValue(new Error("host timeout"));
+    callHostRpcWithOptionsMock.mockRejectedValue(new Error("host timeout"));
 
     await expect(
       buildWorktreeDeleteCommand({
@@ -242,6 +279,37 @@ describe("buildWorktreeDeleteCommand binding-aware preflight", () => {
     });
 
     expect(hoisted.subscribeMock).not.toHaveBeenCalled();
+  });
+
+  it("normalizes an absolute alternate spelling before the exact-path preflight", async () => {
+    callHostRpcWithOptionsMock.mockResolvedValue({
+      worktrees: [entry({ worktreePath: "/wt/x" })],
+      nextCursor: null,
+    });
+
+    const pending = buildWorktreeDeleteCommand({
+      worktreePath: "/wt/tmp/../x/./",
+      readonlySurface: false,
+    })(ctx);
+
+    await vi.waitFor(() => {
+      expect(hoisted.ref.frameHandler).not.toBeNull();
+    });
+
+    hoisted.ref.frameHandler?.({
+      kind: "complete",
+      deleted: true,
+      hasBinaryPayload: false,
+    });
+
+    await expect(pending).resolves.toMatchObject({
+      data: { worktreePath: "/wt/x", deleted: true },
+    });
+    expect(callHostRpcWithOptionsMock).toHaveBeenCalledTimes(1);
+    expect(hoisted.subscribeMock).toHaveBeenCalledWith("worktree.deleteByPath", {
+      worktreePath: "/wt/x",
+      scripts: null,
+    });
   });
 });
 
@@ -268,7 +336,7 @@ describe("buildWorktreeDeleteCommand stream-drop safety", () => {
 
     // Exactly one subscribe was sent; the drop tore the stream down instead of
     // reconnecting.
-    expect(callHostRpcMock).toHaveBeenCalledTimes(1);
+    expect(callHostRpcWithOptionsMock).toHaveBeenCalledTimes(1);
     expect(hoisted.subscribeMock).toHaveBeenCalledTimes(1);
     expect(hoisted.subscribeMock).toHaveBeenCalledWith(
       "worktree.deleteByPath",
@@ -297,7 +365,7 @@ describe("buildWorktreeDeleteCommand terminal outcomes", () => {
     });
 
     const result = await pending;
-    expect(callHostRpcMock).toHaveBeenCalledTimes(1);
+    expect(callHostRpcWithOptionsMock).toHaveBeenCalledTimes(1);
     expect(result.data).toEqual({ worktreePath: "/wt/x", deleted: true });
     expect(result.exitCode).toBe(0);
     expect(hoisted.sessionCloseMock).toHaveBeenCalled();

@@ -69,6 +69,7 @@ function renderSingleRow(
   render(
     <Wrapper>
       <WorktreesList
+        client={null}
         openStreamTransport={() => {
           throw new Error("delete is not exercised in this test file");
         }}

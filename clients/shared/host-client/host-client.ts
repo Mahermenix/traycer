@@ -3,6 +3,7 @@ import type { RequestContext } from "@traycer/protocol/auth/request-context";
 import type {
   HostRpcError,
   HostRequestAuthority,
+  HostRpcRequestOptions,
   IHostMessenger,
   RequestOfMethod,
   ResponseOfMethod,
@@ -87,6 +88,11 @@ export interface HostRequester<Registry extends VersionedRpcRegistry> {
     method: Method,
     params: RequestOfMethod<Registry, Method>,
     signal: AbortSignal | undefined,
+  ): Promise<ResponseOfMethod<Registry, Method>>;
+  requestWithOptions<Method extends keyof Registry & string>(
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    options: HostRpcRequestOptions,
   ): Promise<ResponseOfMethod<Registry, Method>>;
   requestWithResponseTimeout<Method extends keyof Registry & string>(
     method: Method,
@@ -222,6 +228,9 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
         }
         if (property === "requestWithSignal") {
           return target.requestForWithSignal.bind(target, entry);
+        }
+        if (property === "requestWithOptions") {
+          return target.requestForWithOptions.bind(target, entry);
         }
         if (property === "requestWithResponseTimeout") {
           return target.requestForWithResponseTimeout.bind(target, entry);
@@ -431,6 +440,14 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
     );
   }
 
+  requestWithOptions<Method extends keyof Registry & string>(
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    options: HostRpcRequestOptions,
+  ): Promise<ResponseOfMethod<Registry, Method>> {
+    return this.requestForWithOptions(this.activeHost, method, params, options);
+  }
+
   requestFor<Method extends keyof Registry & string>(
     entry: HostDirectoryEntry,
     method: Method,
@@ -447,6 +464,17 @@ export class HostClient<Registry extends VersionedRpcRegistry> {
   ): Promise<ResponseOfMethod<Registry, Method>> {
     return this.scheduleRequest(entry, method, params, signal, (authority) =>
       this.messenger.request(method, params, authority),
+    );
+  }
+
+  requestForWithOptions<Method extends keyof Registry & string>(
+    entry: HostDirectoryEntry | null,
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    options: HostRpcRequestOptions,
+  ): Promise<ResponseOfMethod<Registry, Method>> {
+    return this.scheduleRequest(entry, method, params, undefined, (authority) =>
+      this.messenger.requestWithOptions(method, params, authority, options),
     );
   }
 

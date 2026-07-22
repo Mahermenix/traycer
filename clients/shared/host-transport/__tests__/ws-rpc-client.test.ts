@@ -13,6 +13,7 @@ import {
   HostRequestAbortedError,
   HostRpcError,
   HostTransportFailureError,
+  type HostRpcRequestOptions,
   RetryableTransportError,
   type HostRequestAuthority,
   type RequestOfMethod,
@@ -72,6 +73,117 @@ const testRegistry = defineVersionedRpcRegistry({
       latestMinor: 0,
       versions: {
         0: { contract: statusV10, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+});
+
+const versionProofRequestSchema = z.object({ worktreePath: z.string() });
+const versionProofResponseSchema = z.object({
+  verified: z.boolean(),
+});
+
+const versionProofV10 = defineRpcContract({
+  method: "worktree.listAllForHost",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: versionProofRequestSchema,
+  responseSchema: versionProofResponseSchema,
+});
+
+const versionProofV11 = defineRpcContract({
+  method: "worktree.listAllForHost",
+  schemaVersion: { major: 1, minor: 1 } as const,
+  requestSchema: versionProofRequestSchema,
+  responseSchema: versionProofResponseSchema,
+});
+
+const versionProofV12 = defineRpcContract({
+  method: "worktree.listAllForHost",
+  schemaVersion: { major: 1, minor: 2 } as const,
+  requestSchema: versionProofRequestSchema,
+  responseSchema: versionProofResponseSchema,
+});
+
+const versionProofV13 = defineRpcContract({
+  method: "worktree.listAllForHost",
+  schemaVersion: { major: 1, minor: 3 } as const,
+  requestSchema: versionProofRequestSchema,
+  responseSchema: versionProofResponseSchema,
+});
+
+const versionProofV14 = defineRpcContract({
+  method: "worktree.listAllForHost",
+  schemaVersion: { major: 1, minor: 4 } as const,
+  requestSchema: versionProofRequestSchema,
+  responseSchema: versionProofResponseSchema,
+});
+
+const upgradeVersionProofV10ToV11 = defineUpgradePath<
+  typeof versionProofV10,
+  typeof versionProofV11
+>({
+  from: versionProofV10.schemaVersion,
+  to: versionProofV11.schemaVersion,
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
+});
+
+const upgradeVersionProofV11ToV12 = defineUpgradePath<
+  typeof versionProofV11,
+  typeof versionProofV12
+>({
+  from: versionProofV11.schemaVersion,
+  to: versionProofV12.schemaVersion,
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
+});
+
+const upgradeVersionProofV12ToV13 = defineUpgradePath<
+  typeof versionProofV12,
+  typeof versionProofV13
+>({
+  from: versionProofV12.schemaVersion,
+  to: versionProofV13.schemaVersion,
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
+});
+
+const upgradeVersionProofV13ToV14 = defineUpgradePath<
+  typeof versionProofV13,
+  typeof versionProofV14
+>({
+  from: versionProofV13.schemaVersion,
+  to: versionProofV14.schemaVersion,
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
+});
+
+const versionProofRegistry = defineVersionedRpcRegistry({
+  "worktree.listAllForHost": {
+    1: {
+      latestMinor: 4,
+      versions: {
+        0: {
+          contract: versionProofV10,
+          upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: versionProofV11,
+          upgradeFromPreviousVersion: upgradeVersionProofV10ToV11,
+        },
+        2: {
+          contract: versionProofV12,
+          upgradeFromPreviousVersion: upgradeVersionProofV11ToV12,
+        },
+        3: {
+          contract: versionProofV13,
+          upgradeFromPreviousVersion: upgradeVersionProofV12ToV13,
+        },
+        4: {
+          contract: versionProofV14,
+          upgradeFromPreviousVersion: upgradeVersionProofV13ToV14,
+        },
       },
       downgradePathsFromLatest: {},
     },
@@ -178,6 +290,14 @@ class BoundWsRpcClient<Registry extends VersionedRpcRegistry> {
     return this.inner.request(method, params, this.authority);
   }
 
+  requestWithOptions<Method extends keyof Registry & string>(
+    method: Method,
+    params: RequestOfMethod<Registry, Method>,
+    options: HostRpcRequestOptions,
+  ): Promise<ResponseOfMethod<Registry, Method>> {
+    return this.inner.requestWithOptions(method, params, this.authority, options);
+  }
+
   requestWithResponseTimeout<Method extends keyof Registry & string>(
     method: Method,
     params: RequestOfMethod<Registry, Method>,
@@ -220,6 +340,13 @@ function makeRequestContext(bearer: string): RequestContext {
     externalAbortSignal: undefined,
   });
 }
+
+const AUTHORITATIVE_V14_OPTIONS: HostRpcRequestOptions = {
+  requiredHostCanonicalVersion: {
+    comparison: "minimum",
+    version: { major: 1, minor: 4 },
+  },
+};
 
 async function flush(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -873,6 +1000,93 @@ describe("WsRpcClient", () => {
         !(error instanceof RetryableTransportError) &&
         error.message.includes("frame timed out after 50ms"),
     );
+  });
+
+  it("fails closed before sending a request when the host negotiates an older canonical minor than required", async () => {
+    const { factory, sockets } = makeFactory();
+    const ctx = makeRequestContext("t");
+    const client = new BoundWsRpcClient(
+      new WsRpcClient<typeof versionProofRegistry>({
+        registry: versionProofRegistry,
+        requestId: () => "req-version-proof-old-host",
+        webSocketFactory: factory,
+        dialTimeoutMs: 1000,
+        frameTimeoutMs: 1000,
+      }),
+      authorityForBearer(ctx.credentials),
+    );
+
+    const pending = client.requestWithOptions(
+      "worktree.listAllForHost",
+      { worktreePath: "/wt/x" },
+      AUTHORITATIVE_V14_OPTIONS,
+    );
+    await flush();
+    sockets[0].socket.fireOpen();
+    await flush();
+    sockets[0].socket.fireMessage({
+      kind: "openAck",
+      manifest: {
+        "worktree.listAllForHost": { major: 1, minor: 0 },
+      },
+    });
+
+    await expect(pending).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof HostRpcError &&
+        error.code === "DOWNGRADE_UNSUPPORTED" &&
+        error.method === "worktree.listAllForHost" &&
+        error.message.includes("1.4"),
+    );
+    expect(sockets[0].sent.map((frame) => frame.kind)).not.toContain("request");
+  });
+
+  it("allows the request once the host proves the required canonical minor", async () => {
+    const { factory, sockets } = makeFactory();
+    const ctx = makeRequestContext("t");
+    const client = new BoundWsRpcClient(
+      new WsRpcClient<typeof versionProofRegistry>({
+        registry: versionProofRegistry,
+        requestId: () => "req-version-proof-v14",
+        webSocketFactory: factory,
+        dialTimeoutMs: 1000,
+        frameTimeoutMs: 1000,
+      }),
+      authorityForBearer(ctx.credentials),
+    );
+
+    const pending = client.requestWithOptions(
+      "worktree.listAllForHost",
+      { worktreePath: "/wt/x" },
+      AUTHORITATIVE_V14_OPTIONS,
+    );
+    await flush();
+    sockets[0].socket.fireOpen();
+    await flush();
+    sockets[0].socket.fireMessage({
+      kind: "openAck",
+      manifest: {
+        "worktree.listAllForHost": { major: 1, minor: 4 },
+      },
+    });
+    await flush();
+
+    expect(sockets[0].sent).toHaveLength(2);
+    const requestFrame = expectRequestFrame(sockets[0].sent[1]);
+    expect(requestFrame.method).toBe("worktree.listAllForHost");
+    expect(requestFrame.schemaVersion).toEqual({ major: 1, minor: 4 });
+    expect(requestFrame.params).toEqual({ worktreePath: "/wt/x" });
+
+    sockets[0].socket.fireMessage({
+      kind: "response",
+      requestId: "req-version-proof-v14",
+      method: "worktree.listAllForHost",
+      schemaVersion: { major: 1, minor: 4 },
+      result: { verified: true },
+      error: null,
+    });
+
+    await expect(pending).resolves.toEqual({ verified: true });
   });
 
   it("does NOT classify a malformed frame as retryable", async () => {
